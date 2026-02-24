@@ -1,120 +1,127 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
 import glob
 import os
+import gc
 import time
-import torch
-from torch import nn, amp
 from torch.utils.data import DataLoader, TensorDataset
-from torchvision import transforms
 
-BATCH_SIZE, EPOCHS, LR = 1024, 30, 1e-3
+# ============ PRODUCTION CONFIG ============
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-CHECKPOINT, BEST_MODEL = "models/checkpoint_v3.pt", "models/model_v3_beast.pt"
+GPU_COUNT = torch.cuda.device_count()
+# Scaled batch size for Dual GPU (adjust if you hit memory limits)
+BATCH_SIZE = 512 * max(1, GPU_COUNT) 
+LEARNING_RATE = 1e-4
+EPOCHS = 50
+DATA_DIR = "tensors_v3"
+MODEL_SAVE_PATH = "model_hybrid_beast.pt"
 
-
-class StandaloneBeastClassifier(nn.Module):
-    def __init__(self, num_classes=13):
-        super().__init__()
-        self.conv1 = self._blk(3, 64)
-        self.conv2 = self._blk(64, 128)
-        self.conv3 = self._blk(128, 256)
-        self.conv4 = self._blk(256, 512)
-        self.classifier = nn.Sequential(nn.Flatten(), nn.Linear(512 * 4 * 4, 1024), nn.ReLU(True),
-                                        nn.Dropout(0.4), nn.Linear(1024, 512), nn.ReLU(True), nn.Linear(512, num_classes))
-
-    @staticmethod
-    def _blk(ic, oc):
-        return nn.Sequential(nn.Conv2d(ic, oc, 3, padding=1), nn.BatchNorm2d(
-            oc), nn.ReLU(True), nn.MaxPool2d(2))
+# ============ MODEL ARCHITECTURE ============
+class ChessCNN(nn.Module):
+    def __init__(self):
+        super(ChessCNN, self).__init__()
+        # Input: (3, 64, 64)
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 64, 3, padding=1), nn.BatchNorm2d(64), nn.ReLU(), nn.MaxPool2d(2), # 32
+            nn.Conv2d(64, 128, 3, padding=1), nn.BatchNorm2d(128), nn.ReLU(), nn.MaxPool2d(2), # 16
+            nn.Conv2d(128, 256, 3, padding=1), nn.BatchNorm2d(256), nn.ReLU(), nn.MaxPool2d(2), # 8
+            nn.Conv2d(256, 512, 3, padding=1), nn.BatchNorm2d(512), nn.ReLU(), nn.MaxPool2d(2)  # 4
+        )
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.5),
+            nn.Linear(512 * 4 * 4, 1024),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(1024, 13)
+        )
 
     def forward(self, x):
-        return self.classifier(self.conv4(
-            self.conv3(self.conv2(self.conv1(x)))))
-
+        return self.classifier(torch.flatten(self.features(x), 1))
 
 def train():
-    print(f"🚀 HYBRID BEAST STARTING ON {DEVICE}")
-    files = sorted(glob.glob("tensors_v3/train_chunk_*.pt"))
-    x = torch.cat([torch.load(f, map_location='cpu')['x'] for f in files])
-    y = torch.cat([torch.load(f, map_location='cpu')['y']
-                  for f in files]).long()
-    if x.shape[-1] == 3:
-        x = x.permute(0, 3, 1, 2)
-
-    loader = DataLoader(
-        TensorDataset(
-            x,
-            y),
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        num_workers=4,
-        pin_memory=True)
-    model = StandaloneBeastClassifier(num_classes=13).to(DEVICE)
-
-    # 0.8/1.2 BALANCED WEIGHTS
-    weights = torch.ones(13).to(DEVICE)
-    weights[0], weights[1:] = 0.8, 1.2
-    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=0.05)
-    criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.1)
-    scaler, start_epoch, best_loss = amp.GradScaler('cuda'), 0, float('inf')
-
-    # RESUME & DATA PARALLEL
-    if os.path.exists(CHECKPOINT):
-        ckpt = torch.load(CHECKPOINT, map_location=DEVICE)
-        model.load_state_dict(ckpt['model_state_dict'])
-        start_epoch = ckpt['epoch'] + 1
-        optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-        best_loss = ckpt.get('best_loss', 1e6)
-    if torch.cuda.device_count() > 1:
+    print(f"\n🚀 STARTING PRODUCTION TRAINING")
+    print(f"💻 Hardware: {DEVICE} ({GPU_COUNT} GPUs)")
+    print(f"📊 Batch Size: {BATCH_SIZE} | Learning Rate: {LEARNING_RATE}")
+    
+    # 1. Initialize Model & Multi-GPU support
+    model = ChessCNN()
+    if GPU_COUNT > 1:
+        print(f"💡 Parallelizing model across {GPU_COUNT} GPUs")
         model = nn.DataParallel(model)
+    model.to(DEVICE)
 
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer,
-        max_lr=LR * 2,
-        steps_per_epoch=len(loader),
-        epochs=max(
-            EPOCHS - start_epoch,
-            1))
-    augmenter = nn.Sequential(
-        transforms.RandomAffine(
-            0, translate=(
-                0.07, 0.07), scale=(
-                0.95, 1.05))).to(DEVICE)
+    # 2. Weighted Loss (Crucial: prioritize pieces over empty squares)
+    weights = torch.tensor([0.7] + [1.3]*12).to(DEVICE)
+    criterion = nn.CrossEntropyLoss(weight=weights)
+    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=0.01)
+    
+    # 3. Find Data
+    train_files = sorted(glob.glob(f"{DATA_DIR}/train_*.pt"))
+    val_files = sorted(glob.glob(f"{DATA_DIR}/val_*.pt"))
+    
+    if not train_files:
+        print(f"❌ ERROR: No tensors found in {DATA_DIR}")
+        return
 
-    for epoch in range(start_epoch, EPOCHS):
+    # 4. Training Loop
+    for epoch in range(EPOCHS):
         model.train()
-        t_start, r_loss = time.time(), 0
-        for i, (imgs, lbls) in enumerate(loader):
-            imgs, lbls = imgs.to(DEVICE, non_blocking=True), lbls.to(DEVICE)
-            imgs = augmenter((imgs.float() / 127.5) - 1.0)
-            with amp.autocast('cuda'):
-                loss = criterion(model(imgs), lbls)
-            optimizer.zero_grad(set_to_none=True)
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            scheduler.step()
-            r_loss += loss.item()
-            if i % 100 == 0:
-                sps = (i * BATCH_SIZE) / (time.time() - t_start + 1e-6)
-                print(
-                    f"   Epoch {epoch + 1} | {i}/{len(loader)} | {sps:.0f} img/s | Loss: {loss.item():.4f}")
+        epoch_start = time.time()
+        total_loss = 0
+        processed_chunks = 0
 
-        avg_l = r_loss / len(loader)
-        print(f"✅ Epoch {epoch + 1} | Avg Loss: {avg_l:.4f}")
-        os.makedirs("models", exist_ok=True)
-        raw = model.module if hasattr(model, 'module') else model
-        torch.save({'epoch': epoch,
-                    'model_state_dict': raw.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'scaler_state_dict': scaler.state_dict(),
-                    'best_loss': min(best_loss,
-                                     avg_l)},
-                   CHECKPOINT)
-        if avg_l < best_loss:
-            best_loss = avg_l
-            torch.save(raw.state_dict(), BEST_MODEL)
-            print("✨ Saved Best Model")
+        for f in train_files:
+            # Load chunk into CPU RAM first
+            data = torch.load(f, map_location='cpu')
+            
+            # NORMALIZATION LAW: uint8 -> float32 [-1, 1]
+            x = (data['x'].float() / 127.5) - 1.0
+            y = data['y'].long()
+            
+            loader = DataLoader(TensorDataset(x, y), batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
+            
+            chunk_loss = 0
+            for bx, by in loader:
+                bx, by = bx.to(DEVICE), by.to(DEVICE)
+                optimizer.zero_grad()
+                out = model(bx)
+                loss = criterion(out, by)
+                loss.backward()
+                optimizer.step()
+                chunk_loss += loss.item()
+            
+            total_loss += (chunk_loss / len(loader))
+            processed_chunks += 1
+            
+            # Print intermediate progress
+            if processed_chunks % 2 == 0:
+                print(f"   Epoch {epoch+1} | Progress: {processed_chunks}/{len(train_files)} chunks | Current Loss: {chunk_loss/len(loader):.4f}")
 
+            # Strict Memory Cleanup
+            del data, x, y, loader
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        # 5. Validation Phase
+        model.eval()
+        v_acc = 0
+        with torch.no_grad():
+            v_data = torch.load(val_files[0], map_location='cpu')
+            vx = (v_data['x'].float().to(DEVICE) / 127.5) - 1.0
+            vy = v_data['y'].to(DEVICE)
+            v_out = model(vx)
+            v_acc = (torch.argmax(v_out, 1) == vy).float().mean().item()
+            del v_data, vx, vy
+            gc.collect()
+
+        # 6. Epoch Summary
+        duration = time.time() - epoch_start
+        print(f"✅ EPOCH {epoch+1:02d} | Loss: {total_loss/len(train_files):.4f} | Val Acc: {v_acc:.4f} | Time: {duration:.1f}s")
+        
+        # Save Model (handling DataParallel wrapper)
+        save_obj = model.module.state_dict() if GPU_COUNT > 1 else model.state_dict()
+        torch.save(save_obj, MODEL_SAVE_PATH)
 
 if __name__ == "__main__":
     train()
