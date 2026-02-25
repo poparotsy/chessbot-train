@@ -1,5 +1,5 @@
 import os, io, random, chess, torch, numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageEnhance
 
 # THE GLOBAL LABEL LAW (Aligned with audit_dataset.py)
 FEN_CHARS = "1PNBRQKpnbrqk" 
@@ -10,6 +10,43 @@ BOARDS_PER_CHUNK = 1000
 CHUNKS_TRAIN, CHUNKS_VAL = 10, 2
 OUTPUT_DIR = "tensors_v3"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+def augment_image(img):
+    """Apply random augmentations to fight memorization"""
+    # Rotation (90, 180, 270 degrees)
+    if random.random() > 0.7:
+        img = img.rotate(random.choice([90, 180, 270]), expand=False)
+    
+    # Flip
+    if random.random() > 0.5:
+        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+    if random.random() > 0.5:
+        img = img.transpose(Image.FLIP_TOP_BOTTOM)
+    
+    # Brightness
+    if random.random() > 0.5:
+        img = ImageEnhance.Brightness(img).enhance(random.uniform(0.7, 1.3))
+    
+    # Contrast
+    if random.random() > 0.5:
+        img = ImageEnhance.Contrast(img).enhance(random.uniform(0.8, 1.2))
+    
+    # Color saturation
+    if random.random() > 0.5:
+        img = ImageEnhance.Color(img).enhance(random.uniform(0.8, 1.2))
+    
+    # Gaussian blur
+    if random.random() > 0.7:
+        img = img.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.5, 1.5)))
+    
+    # Gaussian noise
+    if random.random() > 0.6:
+        arr = np.array(img)
+        noise = np.random.normal(0, random.randint(5, 15), arr.shape)
+        arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
+        img = Image.fromarray(arr)
+    
+    return img
 
 def vandalize(img):
     draw = ImageDraw.Draw(img, "RGBA")
@@ -47,8 +84,14 @@ def render_board(fen):
                 background.paste(p_img, (c*ts, r*ts), p_img)
 
     background = vandalize(background)
-    if random.random() > 0.5:
-        buf = io.BytesIO(); background.save(buf, "JPEG", quality=random.randint(30, 80))
+    
+    # Apply augmentation BEFORE compression
+    background = augment_image(background)
+    
+    # More aggressive JPEG compression
+    if random.random() > 0.3:
+        buf = io.BytesIO()
+        background.save(buf, "JPEG", quality=random.randint(20, 85))
         background = Image.open(buf).copy()
 
     tiles, labels = [], []
