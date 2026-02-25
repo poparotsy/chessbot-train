@@ -12,53 +12,93 @@ OUTPUT_DIR = "tensors_v3"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def augment_image(img):
-    """Apply random augmentations to fight memorization"""
-    # Rotation (90, 180, 270 degrees)
-    if random.random() > 0.7:
-        img = img.rotate(random.choice([90, 180, 270]), expand=False)
+    """Balanced augmentation: variety without destroying visibility"""
+    # Grayscale conversion (25% chance) - for B&W diagrams
+    if random.random() > 0.75:
+        img = img.convert('L').convert('RGB')  # Convert to grayscale but keep 3 channels
     
-    # Flip
+    # Brightness - wider range
     if random.random() > 0.5:
-        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+        img = ImageEnhance.Brightness(img).enhance(random.uniform(0.75, 1.25))
+    
+    # Contrast - wider range
     if random.random() > 0.5:
-        img = img.transpose(Image.FLIP_TOP_BOTTOM)
+        img = ImageEnhance.Contrast(img).enhance(random.uniform(0.85, 1.15))
     
-    # Brightness
+    # Color saturation - wider range (only if not grayscale)
     if random.random() > 0.5:
-        img = ImageEnhance.Brightness(img).enhance(random.uniform(0.7, 1.3))
+        img = ImageEnhance.Color(img).enhance(random.uniform(0.85, 1.15))
     
-    # Contrast
+    # Gaussian noise - moderate
     if random.random() > 0.5:
-        img = ImageEnhance.Contrast(img).enhance(random.uniform(0.8, 1.2))
-    
-    # Color saturation
-    if random.random() > 0.5:
-        img = ImageEnhance.Color(img).enhance(random.uniform(0.8, 1.2))
-    
-    # Gaussian blur
-    if random.random() > 0.7:
-        img = img.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.5, 1.5)))
-    
-    # Gaussian noise
-    if random.random() > 0.6:
         arr = np.array(img)
-        noise = np.random.normal(0, random.randint(5, 15), arr.shape)
+        noise = np.random.normal(0, random.randint(5, 12), arr.shape)
         arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
         img = Image.fromarray(arr)
     
+    # Light blur occasionally
+    if random.random() > 0.8:
+        img = img.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.3, 1.0)))
+    
     return img
 
+def draw_arrow(draw, start_square, end_square, color, ts):
+    """Draw a proper chess arrow with arrowhead"""
+    # Calculate center points
+    start_x = start_square[1] * ts + ts // 2
+    start_y = start_square[0] * ts + ts // 2
+    end_x = end_square[1] * ts + ts // 2
+    end_y = end_square[0] * ts + ts // 2
+    
+    # Draw thick line
+    draw.line([start_x, start_y, end_x, end_y], fill=color, width=random.randint(8, 15))
+    
+    # Draw arrowhead (simple triangle)
+    import math
+    angle = math.atan2(end_y - start_y, end_x - start_x)
+    arrow_size = 20
+    
+    # Three points of triangle
+    p1 = (end_x, end_y)
+    p2 = (end_x - arrow_size * math.cos(angle - math.pi/6),
+          end_y - arrow_size * math.sin(angle - math.pi/6))
+    p3 = (end_x - arrow_size * math.cos(angle + math.pi/6),
+          end_y - arrow_size * math.sin(angle + math.pi/6))
+    
+    draw.polygon([p1, p2, p3], fill=color)
+
 def vandalize(img):
+    """Add arrows/highlights like real chess sites - but keep pieces visible"""
     draw = ImageDraw.Draw(img, "RGBA")
     w = img.size[0]
-    for _ in range(random.randint(0, 5)):
-        ts = w // 8
+    ts = w // 8
+    
+    # Square highlights (1-3 squares) - moderate opacity
+    for _ in range(random.randint(1, 3)):
         r, c = random.randint(0, 7), random.randint(0, 7)
-        color = random.choice([(0,255,0,100), (255,255,0,100), (255,0,0,100)])
+        # Opacity 70 - visible but not overwhelming
+        color = random.choice([(0,255,0,70), (255,255,0,70), (255,0,0,70), (0,150,255,70)])
         draw.rectangle([c*ts, r*ts, (c+1)*ts, (r+1)*ts], fill=color)
-    for _ in range(random.randint(0, 3)):
-        c = random.choice([(0,0,255,160), (255,165,0,160), (0,255,0,160)])
-        draw.line([random.randint(0,w) for _ in range(4)], fill=c, width=random.randint(4,12))
+    
+    # Proper chess arrows (1-3) - with arrowheads - ALWAYS have at least 1
+    for _ in range(random.randint(1, 3)):
+        start_r, start_c = random.randint(0, 7), random.randint(0, 7)
+        # Arrow goes 1-3 squares away
+        end_r = max(0, min(7, start_r + random.randint(-3, 3)))
+        end_c = max(0, min(7, start_c + random.randint(-3, 3)))
+        
+        if (start_r, start_c) != (end_r, end_c):  # Don't draw arrow to same square
+            color = random.choice([(0,255,0,120), (255,165,0,120), (255,0,0,120), (0,150,255,120)])
+            draw_arrow(draw, (start_r, start_c), (end_r, end_c), color, ts)
+    
+    # Red circles (0-1) - like puzzle highlights
+    if random.random() > 0.8:
+        r, c = random.randint(0, 7), random.randint(0, 7)
+        center_x, center_y = c*ts + ts//2, r*ts + ts//2
+        radius = ts // 2 - 5
+        draw.ellipse([center_x-radius, center_y-radius, center_x+radius, center_y+radius], 
+                     outline=(255,0,0,150), width=4)
+    
     return img
 
 def render_board(fen):
@@ -83,15 +123,37 @@ def render_board(fen):
                 p_img = Image.open(f"piece_sets/{p_set}/{p_name}").convert("RGBA").resize((ts, ts))
                 background.paste(p_img, (c*ts, r*ts), p_img)
 
+    # Add coordinate labels (30% chance) - like real chess boards
+    if random.random() > 0.7:
+        draw = ImageDraw.Draw(background)
+        # Try to use a font, fallback to default if not available
+        try:
+            from PIL import ImageFont
+            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 14)
+        except:
+            font = None
+        
+        # File labels (a-h) at bottom
+        for i, letter in enumerate('abcdefgh'):
+            x = i * ts + ts - 12
+            y = 512 - 16
+            draw.text((x, y), letter, fill=(128, 128, 128, 180), font=font)
+        
+        # Rank labels (1-8) on right
+        for i in range(8):
+            x = 512 - 14
+            y = i * ts + 4
+            draw.text((x, y), str(8-i), fill=(128, 128, 128, 180), font=font)
+
     background = vandalize(background)
     
     # Apply augmentation BEFORE compression
     background = augment_image(background)
     
-    # More aggressive JPEG compression
+    # JPEG compression - wider range for variety
     if random.random() > 0.3:
         buf = io.BytesIO()
-        background.save(buf, "JPEG", quality=random.randint(20, 85))
+        background.save(buf, "JPEG", quality=random.randint(30, 90))
         background = Image.open(buf).copy()
 
     tiles, labels = [], []
