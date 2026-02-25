@@ -32,17 +32,18 @@ def audit():
             total_stats[u] += c
             
         # 3. Grab samples of PIECES (Label > 0)
+                    ################
         piece_indices = (y > 0).nonzero(as_tuple=True)[0]
         if len(piece_indices) > 0 and len(sample_pieces) < 16:
-            for idx in piece_indices[:4]: # Grab up to 4 pieces per file
-                if len(sample_pieces) < 16:
-                    img = x[idx]
-                    # Ensure channel first for processing, then channel last for plt
-                    if img.shape[0] == 3: 
-                        img = img.permute(1, 2, 0)
-                    sample_pieces.append(img.numpy())
-                    sample_labels.append(label_names[y[idx].item()])
-
+           selected_indices = np.random.choice(piece_indices.numpy(), size=min(4, len(piece_indices)), replace=False)
+           for idx in selected_indices:
+               if len(sample_pieces) < 16:
+                  img = x[idx]
+                  if img.shape[0] == 3: 
+                     img = img.permute(1, 2, 0)
+                  sample_pieces.append(img.numpy())
+                  sample_labels.append(label_names[y[idx].item()])
+                    ################
         print(f"File: {os.path.basename(f)} | Range: [{v_min:.2f}, {v_max:.2f}] | Pieces: {len(piece_indices)}")
 
     # --- FINAL REPORT ---
