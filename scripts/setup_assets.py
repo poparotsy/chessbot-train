@@ -3,14 +3,17 @@ import os, urllib.request, cairosvg
 def setup_lichess_assets():
     # 1. PIECE SETTINGS
     piece_base_url = "https://raw.githubusercontent.com/lichess-org/lila/master/public/piece/"
-    sets = ['alpha', 'cburnett', 'merida', 'california', 'cardinal', 'gioco', 'dubrovny' , 'caliente', 'celtic', 'companion', 'cooke', 'dubrovny', 'governor' , 'maestro', 'staunty']
+    sets = [
+        'alpha', 'cburnett', 'merida', 'california', 'cardinal', 'gioco', 'dubrovny', 'chessnut', 'fantasy', 'tatiana',
+        'caliente', 'celtic', 'companion', 'cooke', 'dubrovny', 'governor' , 'maestro', 'staunty', 'fresca', 'kosal'
+    ]
     pieces = ['wP','wN','wB','wR','wQ','wK','bP','bN','bB','bR','bQ','bK']
     
     # 2. BOARD SETTINGS (Exact filenames from Lichess Repo)
     board_base_url = "https://raw.githubusercontent.com/lichess-org/lila/master/public/images/board/"
     boards = [
-        'blue.jpg', 'blue2.jpg', 'canvas2.jpg', 'green.jpg', 'grey.jpg', 'green-plastic.png',
-        'leather.jpg', 'marble.jpg', 'metal.jpg', 'olive.jpg', 'purple.jpg', 'leather.jpg',
+        'blue.png', 'blue2.jpg', 'blue3.jpg', 'canvas2.jpg', 'green.png', 'grey.jpg', 'green-plastic.png', 'brown.png',
+        'leather.jpg', 'marble.jpg', 'metal.jpg', 'olive.jpg', 'purple.png', 'leather.jpg', 'horsey.jpg', 'ic.png',
         'wood.jpg', 'wood2.jpg', 'wood3.jpg', 'wood4.jpg', 'maple.jpg', 'maple2.jpg'
     ]
 
