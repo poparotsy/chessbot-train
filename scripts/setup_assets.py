@@ -5,7 +5,7 @@ def setup_lichess_assets():
     piece_base_url = "https://raw.githubusercontent.com/lichess-org/lila/master/public/piece/"
     sets = [
         'alpha', 'cburnett', 'merida', 'california', 'cardinal', 'gioco', 'dubrovny', 'chessnut', 'fantasy', 'tatiana',
-        'caliente', 'celtic', 'companion', 'cooke', 'dubrovny', 'governor' , 'maestro', 'staunty', 'fresca', 'kosal'
+        'caliente', 'celtic', 'companion', 'cooke', 'dubrovny', 'governor' , 'maestro', 'staunty', 'fresca', 'kosal', 'mpchess'
     ]
     pieces = ['wP','wN','wB','wR','wQ','wK','bP','bN','bB','bR','bQ','bK']
     
@@ -14,7 +14,7 @@ def setup_lichess_assets():
     boards = [
         'blue.png', 'blue2.jpg', 'blue3.jpg', 'canvas2.jpg', 'green.png', 'grey.jpg', 'green-plastic.png', 'brown.png',
         'leather.jpg', 'marble.jpg', 'metal.jpg', 'olive.jpg', 'purple.png', 'leather.jpg', 'horsey.jpg', 'ic.png',
-        'wood.jpg', 'wood2.jpg', 'wood3.jpg', 'wood4.jpg', 'maple.jpg', 'maple2.jpg'
+        'wood.jpg', 'wood2.jpg', 'wood3.jpg', 'wood4.jpg', 'maple.jpg', 'maple2.jpg', 'pink-pyramid.png'
     ]
 
     os.makedirs("piece_sets", exist_ok=True)
