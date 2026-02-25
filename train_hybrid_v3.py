@@ -51,10 +51,10 @@ class ChessCNN(nn.Module):
                 512), nn.ReLU(), nn.MaxPool2d(2)
         )
         self.classifier = nn.Sequential(
-            nn.Dropout(0.5),
+            nn.Dropout(0.6),
             nn.Linear(512 * 4 * 4, 1024),
             nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.5),
             nn.Linear(1024, 13)
         )
 
@@ -86,7 +86,7 @@ def train():
     model.to(DEVICE)
 
     weights = torch.tensor([0.7] + [1.3] * 12).to(DEVICE)
-    criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.1)
+    criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.2)
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=0.01)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-6)
 
