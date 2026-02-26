@@ -51,7 +51,10 @@ class ChessCNN(nn.Module):
             nn.Linear(512 * 4 * 4, 1024),
             nn.ReLU(),
             nn.Dropout(0.6),
-            nn.Linear(1024, 13)
+            nn.Linear(1024, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, 13)
         )
 
     def forward(self, x):
@@ -181,9 +184,8 @@ def train():
             'loss': total_loss / len(train_files)
         }
         torch.save(checkpoint, checkpoint_path)
-        torch.save(save_obj, f"{CHECKPOINT_DIR}/epoch_{epoch + 1:02d}.pt")
         
-        # Save best model
+        # Save best model only
         if epoch == 0 or accuracy > train.best_acc:
             train.best_acc = accuracy
             torch.save(save_obj, MODEL_SAVE_PATH)

@@ -121,6 +121,17 @@ def render_board(fen):
                 # Standard Lichess filename mapping: wP, bK, etc.
                 p_name = f"{'w' if char.isupper() else 'b'}{char.upper()}.png"
                 p_img = Image.open(f"piece_sets/{p_set}/{p_name}").convert("RGBA").resize((ts, ts))
+                
+                # 20% chance: Convert piece to outline style
+                if random.random() > 0.8:
+                    # Extract edges to create outline effect
+                    p_img_gray = p_img.convert('L')
+                    edges = p_img_gray.filter(ImageFilter.FIND_EDGES)
+                    # Enhance edges
+                    edges = ImageEnhance.Contrast(edges).enhance(2.0)
+                    # Convert back to RGBA with original alpha
+                    p_img = Image.merge('RGBA', (edges, edges, edges, p_img.split()[3]))
+                
                 background.paste(p_img, (c*ts, r*ts), p_img)
 
     # Add coordinate labels (30% chance) - like real chess boards

@@ -25,7 +25,10 @@ class StandaloneBeastClassifier(nn.Module):
             nn.Linear(512 * 4 * 4, 1024),
             nn.ReLU(),
             nn.Dropout(0.6),
-            nn.Linear(1024, num_classes)
+            nn.Linear(1024, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, 13)
         )
 
     def forward(self, x):
@@ -84,7 +87,12 @@ def predict_board(image_path):
                 out = torch.softmax(model(it), dim=1)
                 prob, pred = torch.max(out, 1)
                 
-                row += FEN_CHARS[pred.item()]
+                # Empty square confidence threshold (prevent hallucination)
+                if prob.item() < 0.35:
+                    row += '1'  # Low confidence = empty square
+                else:
+                    row += FEN_CHARS[pred.item()]
+                
                 confs.append(prob.item())
             fen.append(row)
     # ... rest of your FEN compression logic ...
