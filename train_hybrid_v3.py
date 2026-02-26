@@ -36,6 +36,20 @@ signal.signal(signal.SIGINT, signal_handler)
 
 # ============ MODEL ARCHITECTURE ============
 
+class FocalLoss(nn.Module):
+    """Focal Loss - focuses on hard examples"""
+    def __init__(self, alpha=1, gamma=2, weight=None):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.weight = weight
+        
+    def forward(self, inputs, targets):
+        ce_loss = nn.functional.cross_entropy(inputs, targets, weight=self.weight, reduction='none')
+        pt = torch.exp(-ce_loss)
+        focal_loss = self.alpha * (1-pt)**self.gamma * ce_loss
+        return focal_loss.mean()
+
 
 class ChessCNN(nn.Module):
     def __init__(self):
@@ -85,7 +99,8 @@ def train():
     model.to(DEVICE)
 
     weights = torch.tensor([0.7] + [1.3] * 12).to(DEVICE)
-    criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.2)
+    # Use Focal Loss instead of CrossEntropy - focuses on hard examples
+    criterion = FocalLoss(alpha=1, gamma=2, weight=weights)
     optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=0.01)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-6)
 

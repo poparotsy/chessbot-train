@@ -123,10 +123,10 @@ def render_board(fen):
                 p_img = Image.open(f"piece_sets/{p_set}/{p_name}").convert("RGBA").resize((ts, ts))
                 background.paste(p_img, (c*ts, r*ts), p_img)
 
-    # Add coordinate labels (30% chance) - like real chess boards
-    if random.random() > 0.7:
+    # Add coordinate labels - randomize position to match real-world variety
+    label_choice = random.random()
+    if label_choice > 0.4:  # 60% chance of having labels
         draw = ImageDraw.Draw(background)
-        # Try to use a font, fallback to default if not available
         try:
             from PIL import ImageFont
             font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 14)
@@ -139,11 +139,16 @@ def render_board(fen):
             y = 512 - 16
             draw.text((x, y), letter, fill=(128, 128, 128, 180), font=font)
         
-        # Rank labels (1-8) on right
-        for i in range(8):
+        # Rank labels on left (most common) or right
+        if label_choice > 0.7:  # 30% on left
+            x = 4
+        else:  # 30% on right
             x = 512 - 14
+        
+        for i in range(8):
             y = i * ts + 4
             draw.text((x, y), str(8-i), fill=(128, 128, 128, 180), font=font)
+    # 40% have no labels at all
 
     background = vandalize(background)
     
