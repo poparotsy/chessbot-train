@@ -3,12 +3,15 @@ import os, urllib.request, cairosvg
 def setup_lichess_assets():
     # 1. PIECE SETTINGS
     piece_base_url = "https://raw.githubusercontent.com/lichess-org/lila/master/public/piece/"
+    #piece_base_url = "https://raw.githubusercontent.com/pychess/pychess/master/pieces/"
     sets = [
         'alpha', 'cburnett', 'merida', 'california', 'cardinal', 'gioco', 'dubrovny', 'chessnut', 'fantasy', 'tatiana',
         'caliente', 'celtic', 'companion', 'cooke', 'dubrovny', 'governor' , 'maestro', 'staunty', 'fresca', 'kosal', 'mpchess',
-        'chess7', 'firi', 'icpieces', 'pirouetti', 'rhosgfx', 'riohacha', 'spatial', 'xkcd'
+        'chess7', 'firi', 'icpieces', 'pirouetti', 'rhosgfx', 'riohacha', 'spatial', 'xkcd',
+        'chessicons', 'chessmonk', 'libra', 'magnetic', 'regular'
     ]
     pieces = ['wP','wN','wB','wR','wQ','wK','bP','bN','bB','bR','bQ','bK']
+    #pieces = ['wp','wn','wb','wr','wq','wk','bp','bn','bb','br','bq','bk']
     
     # 2. BOARD SETTINGS (Exact filenames from Lichess Repo)
     board_base_url = "https://raw.githubusercontent.com/lichess-org/lila/master/public/images/board/"
