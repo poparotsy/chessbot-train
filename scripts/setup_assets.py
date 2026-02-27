@@ -5,7 +5,8 @@ def setup_lichess_assets():
     piece_base_url = "https://raw.githubusercontent.com/lichess-org/lila/master/public/piece/"
     sets = [
         'alpha', 'cburnett', 'merida', 'california', 'cardinal', 'gioco', 'dubrovny', 'chessnut', 'fantasy', 'tatiana',
-        'caliente', 'celtic', 'companion', 'cooke', 'dubrovny', 'governor' , 'maestro', 'staunty', 'fresca', 'kosal', 'mpchess'
+        'caliente', 'celtic', 'companion', 'cooke', 'dubrovny', 'governor' , 'maestro', 'staunty', 'fresca', 'kosal', 'mpchess',
+        'chess7', 'firi', 'icpieces', 'pirouetti', 'rhosgfx', 'riohacha', 'spatial', 'xkcd'
     ]
     pieces = ['wP','wN','wB','wR','wQ','wK','bP','bN','bB','bR','bQ','bK']
     
