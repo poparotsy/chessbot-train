@@ -19,20 +19,20 @@ def augment_image(img):
     
     # Brightness - WIDER range to handle bright/washed out images
     if random.random() > 0.5:
-        img = ImageEnhance.Brightness(img).enhance(random.uniform(0.6, 1.5))
+        img = ImageEnhance.Brightness(img).enhance(random.uniform(0.5, 1.7))
     
     # Contrast - wider range
     if random.random() > 0.5:
-        img = ImageEnhance.Contrast(img).enhance(random.uniform(0.7, 1.3))
+        img = ImageEnhance.Contrast(img).enhance(random.uniform(0.6, 1.4))
     
     # Color saturation - wider range (only if not grayscale)
-    if random.random() > 0.5:
+    if random.random() > 0.6:
         img = ImageEnhance.Color(img).enhance(random.uniform(0.85, 1.15))
     
     # Gaussian noise - moderate
     if random.random() > 0.5:
         arr = np.array(img)
-        noise = np.random.normal(0, random.randint(5, 12), arr.shape)
+        noise = np.random.normal(0, random.randint(8, 20), arr.shape)
         arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
         img = Image.fromarray(arr)
     
@@ -92,7 +92,7 @@ def vandalize(img):
             draw_arrow(draw, (start_r, start_c), (end_r, end_c), color, ts)
     
     # Red circles (0-1) - like puzzle highlights
-    if random.random() > 0.8:
+    if random.random() > 0.3:
         r, c = random.randint(0, 7), random.randint(0, 7)
         center_x, center_y = c*ts + ts//2, r*ts + ts//2
         radius = ts // 2 - 5
