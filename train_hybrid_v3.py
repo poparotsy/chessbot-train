@@ -18,9 +18,9 @@ GPU_COUNT = torch.cuda.device_count()
 # Conservative batching for 14GB-16GB GPUs
 BATCH_SIZE = 256 * max(1, GPU_COUNT)
 LEARNING_RATE = 1e-4
-EPOCHS = 50
+EPOCHS = 100
 DATA_DIR = "tensors_v3"
-MODEL_SAVE_PATH = "models/model_hybrid_beast.pt"
+MODEL_SAVE_PATH = "models/model_hybrid_100e.pt"
 CHECKPOINT_DIR = "models/checkpoints"
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
