@@ -9,10 +9,15 @@ from PIL import Image
 
 IMG_SIZE, FEN_CHARS = 64, "1PNBRQKpnbrqk"
 import os
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "model_hybrid_100e.pt")
-# Fallback to current dir models
-if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "models/model_hybrid_100e.pt"
+#_MODEL_CANDIDATES = [
+#    os.path.join(os.path.dirname(__file__), "..", "models", "model_hybrid_v4_150e.pt"),
+#    os.path.join(os.path.dirname(__file__), "..", "models", "model_hybrid_100e.pt"),
+#    "models/model_hybrid_v4_150e.pt",
+#    "models/model_hybrid_100e.pt",
+#]
+#MODEL_PATH = next((path for path in _MODEL_CANDIDATES if os.path.exists(path)), _MODEL_CANDIDATES[0])
+
+MODEL_PATH = "models/model_hybrid_v4_150e.pt"
 
 # Edge detection parameters (tune these if needed)
 CANNY_LOW = 50

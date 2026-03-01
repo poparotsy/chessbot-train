@@ -1,37 +1,56 @@
-import sys
+import argparse
 import json
+import os
 import re
-import torch
-import numpy as np
+import sys
+
 import cv2
-from torch import nn
+import numpy as np
+import torch
 from PIL import Image
+from torch import nn
 
 IMG_SIZE, FEN_CHARS = 64, "1PNBRQKpnbrqk"
-import os
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "model_hybrid_100e.pt")
-# Fallback to current dir models
-if not os.path.exists(MODEL_PATH):
-    MODEL_PATH = "models/model_hybrid_100e.pt"
 
-# Edge detection parameters (tune these if needed)
+MODEL_CANDIDATES = [
+    os.path.join(os.path.dirname(__file__), "..", "models", "model_hybrid_v4_150e.pt"),
+    "models/model_hybrid_v4_150e.pt",
+]
+MODEL_PATH = next((path for path in MODEL_CANDIDATES if os.path.exists(path)), None)
+
+# Edge detection parameters
 CANNY_LOW = 50
 CANNY_HIGH = 150
-CONTOUR_EPSILON = 0.02  # Lower = more precise, Higher = more tolerant
-USE_EDGE_DETECTION = True  # Global flag, overridden by command-line
-USE_SQUARE_DETECTION = False  # Detect individual squares (experimental)
-DEBUG_MODE = False  # Save debug images
+CONTOUR_EPSILON = 0.02
+USE_EDGE_DETECTION = True
+USE_SQUARE_DETECTION = False
+DEBUG_MODE = False
 
 
-############
 class StandaloneBeastClassifier(nn.Module):
     def __init__(self, num_classes=13):
         super(StandaloneBeastClassifier, self).__init__()
         self.features = nn.Sequential(
-            nn.Conv2d(3, 64, 3, padding=1), nn.BatchNorm2d(64), nn.ReLU(), nn.MaxPool2d(2), nn.Dropout2d(0.1),
-            nn.Conv2d(64, 128, 3, padding=1), nn.BatchNorm2d(128), nn.ReLU(), nn.MaxPool2d(2), nn.Dropout2d(0.1),
-            nn.Conv2d(128, 256, 3, padding=1), nn.BatchNorm2d(256), nn.ReLU(), nn.MaxPool2d(2), nn.Dropout2d(0.2),
-            nn.Conv2d(256, 512, 3, padding=1), nn.BatchNorm2d(512), nn.ReLU(), nn.MaxPool2d(2), nn.Dropout2d(0.2)
+            nn.Conv2d(3, 64, 3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.1),
+            nn.Conv2d(64, 128, 3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.1),
+            nn.Conv2d(128, 256, 3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.2),
+            nn.Conv2d(256, 512, 3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.2),
         )
 
         self.classifier = nn.Sequential(
@@ -42,120 +61,154 @@ class StandaloneBeastClassifier(nn.Module):
             nn.Linear(1024, 512),
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(512, 13)
+            nn.Linear(512, 13),
         )
 
     def forward(self, x):
         x = self.features(x)
-        # Flatten here so it doesn't mess up the classifier indexing
         x = torch.flatten(x, 1)
         return self.classifier(x)
 
-############
-# Board Detection Functions
-
 
 def order_corners(corners):
-    """Order corners as: top-left, top-right, bottom-right, bottom-left"""
+    """Order corners as: top-left, top-right, bottom-right, bottom-left."""
     rect = np.zeros((4, 2), dtype=np.float32)
     s = corners.sum(axis=1)
-    rect[0] = corners[np.argmin(s)]  # top-left (smallest sum)
-    rect[2] = corners[np.argmax(s)]  # bottom-right (largest sum)
+    rect[0] = corners[np.argmin(s)]
+    rect[2] = corners[np.argmax(s)]
     diff = np.diff(corners, axis=1)
-    rect[1] = corners[np.argmin(diff)]  # top-right
-    rect[3] = corners[np.argmax(diff)]  # bottom-left
+    rect[1] = corners[np.argmin(diff)]
+    rect[3] = corners[np.argmax(diff)]
     return rect
 
 
 def find_board_corners(img):
-    """Find chessboard using edge detection, robust to borders."""
+    """Find chessboard corners with multi-pass edge search and geometric scoring."""
     gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
-    
-    # 1. Standard approach (works for puzzle-00004 and clean images)
-    edges = cv2.Canny(gray, CANNY_LOW, CANNY_HIGH)
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    h, w = gray.shape
+    img_area = float(h * w)
 
-    # Find largest quadrilateral
-    for contour in sorted(contours, key=cv2.contourArea, reverse=True):
-        peri = cv2.arcLength(contour, True)
-        approx = cv2.approxPolyDP(contour, CONTOUR_EPSILON * peri, True)
-        if len(approx) == 4:
-            # Check if contour is large enough (at least 20% of image)
-            area = cv2.contourArea(approx)
-            img_area = img.size[0] * img.size[1]
-            if area > img_area * 0.20:
-                return order_corners(approx.reshape(4, 2))
-                
-    # 2. Fallbacks for noisy images (puzzle-00002)
-    thresholds = [(50, 150), (30, 100), (20, 80)]
-    for low, high in thresholds:
+    def quad_area(corners):
+        x = corners[:, 0]
+        y = corners[:, 1]
+        return 0.5 * abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
+
+    def score_quad(corners):
+        top = np.linalg.norm(corners[1] - corners[0])
+        right = np.linalg.norm(corners[2] - corners[1])
+        bottom = np.linalg.norm(corners[3] - corners[2])
+        left = np.linalg.norm(corners[0] - corners[3])
+        min_side = min(top, right, bottom, left)
+        if min_side <= 0:
+            return -1.0
+
+        area_ratio = quad_area(corners) / img_area
+        if area_ratio < 0.20:
+            return -1.0
+
+        opposite_similarity = min(top / bottom, bottom / top) * min(left / right, right / left)
+        aspect_similarity = min(top / left, left / top) * min(right / bottom, bottom / right)
+        xs = corners[:, 0]
+        ys = corners[:, 1]
+        margin = min(xs.min(), w - xs.max(), ys.min(), h - ys.max()) / max(w, h)
+
+        # Favor board-like quadrilaterals with a margin over full-frame rectangles.
+        return area_ratio * 10.0 + opposite_similarity * 5.0 + aspect_similarity * 5.0 + margin * 20.0
+
+    candidates = []
+    param_sets = [
+        (CANNY_LOW, CANNY_HIGH, None, cv2.RETR_EXTERNAL),
+        (30, 100, None, cv2.RETR_EXTERNAL),
+        (20, 80, None, cv2.RETR_EXTERNAL),
+        (70, 200, None, cv2.RETR_EXTERNAL),
+        (CANNY_LOW, CANNY_HIGH, 3, cv2.RETR_LIST),
+        (30, 100, 3, cv2.RETR_LIST),
+        (20, 80, 3, cv2.RETR_LIST),
+    ]
+
+    for low, high, dilate_kernel, retrieval in param_sets:
         edges = cv2.Canny(gray, low, high)
-        kernel = np.ones((3, 3), np.uint8)
-        edges = cv2.dilate(edges, kernel, iterations=1)
-        contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        
+        if dilate_kernel:
+            kernel = np.ones((dilate_kernel, dilate_kernel), np.uint8)
+            edges = cv2.dilate(edges, kernel, iterations=1)
+        contours, _ = cv2.findContours(edges, retrieval, cv2.CHAIN_APPROX_SIMPLE)
+
         for contour in sorted(contours, key=cv2.contourArea, reverse=True):
-            area = cv2.contourArea(contour)
-            img_area = img.size[0] * img.size[1]
-            if area < img_area * 0.25:
-                continue
-                
             peri = cv2.arcLength(contour, True)
-            for eps_mult in [0.01, 0.02, 0.05, 0.08]:
-                approx = cv2.approxPolyDP(contour, eps_mult * peri, True)
-                if len(approx) == 4:
-                    return order_corners(approx.reshape(4, 2))
+            for eps in (0.01, 0.02, CONTOUR_EPSILON, 0.05, 0.08):
+                approx = cv2.approxPolyDP(contour, eps * peri, True)
+                if len(approx) != 4:
+                    continue
+                corners = order_corners(approx.reshape(4, 2))
+                score = score_quad(corners)
+                if score > 0:
+                    candidates.append((score, corners))
+                break
+
+    if candidates:
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        best_corners = candidates[0][1]
+        if DEBUG_MODE:
+            print(f"DEBUG: Selected board corners score={candidates[0][0]:.3f}", file=sys.stderr)
+        return best_corners
 
     return None
 
 
+def find_board_corners_legacy(img):
+    """Original corner detector kept as fallback candidate."""
+    gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
+    edges = cv2.Canny(gray, CANNY_LOW, CANNY_HIGH)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for contour in sorted(contours, key=cv2.contourArea, reverse=True):
+        peri = cv2.arcLength(contour, True)
+        approx = cv2.approxPolyDP(contour, CONTOUR_EPSILON * peri, True)
+        if len(approx) == 4:
+            area = cv2.contourArea(approx)
+            image_area = img.size[0] * img.size[1]
+            if area > image_area * 0.25:
+                return order_corners(approx.reshape(4, 2))
+    return None
+
+
 def perspective_transform(img, corners):
-    """Deskew board to perfect square"""
+    """Deskew board to a square image."""
     width = height = 512
-    dst = np.array([[0, 0], [width, 0], [width, height],
-                   [0, height]], dtype=np.float32)
-    M = cv2.getPerspectiveTransform(corners.astype(np.float32), dst)
-    warped = cv2.warpPerspective(np.array(img), M, (width, height))
+    dst = np.array([[0, 0], [width, 0], [width, height], [0, height]], dtype=np.float32)
+    matrix = cv2.getPerspectiveTransform(corners.astype(np.float32), dst)
+    warped = cv2.warpPerspective(np.array(img), matrix, (width, height))
     return Image.fromarray(warped)
 
 
 def detect_grid_lines(img):
-    """Detect chessboard grid lines to find exact square boundaries"""
+    """Detect chessboard grid lines to infer exact tile boundaries."""
     gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
-
-    # Detect edges
     edges = cv2.Canny(gray, 30, 100, apertureSize=3)
 
-    # Use Hough Line Transform to detect lines
     lines = cv2.HoughLinesP(
         edges,
         1,
         np.pi / 180,
         threshold=50,
         minLineLength=img.size[0] // 3,
-        maxLineGap=20)
-
+        maxLineGap=20,
+    )
     if lines is None:
         return None
 
-    h_lines = []  # Horizontal lines (y positions)
-    v_lines = []  # Vertical lines (x positions)
-
+    h_lines = []
+    v_lines = []
     for line in lines:
         x1, y1, x2, y2 = line[0]
         angle = np.abs(np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi)
-
-        # Horizontal line (angle close to 0 or 180)
         if angle < 15 or angle > 165:
             h_lines.append((y1 + y2) // 2)
-        # Vertical line (angle close to 90)
         elif 75 < angle < 105:
             v_lines.append((x1 + x2) // 2)
 
     if not h_lines or not v_lines:
         return None
 
-    # Cluster nearby lines (within 10 pixels)
     def cluster_lines(lines, threshold=10):
         lines = sorted(lines)
         clusters = []
@@ -172,223 +225,143 @@ def detect_grid_lines(img):
     h_lines = cluster_lines(h_lines)
     v_lines = cluster_lines(v_lines)
 
-    # We need exactly 9 lines (or close to it)
     if 7 <= len(h_lines) <= 11 and 7 <= len(v_lines) <= 11:
-        # If we have more than 9, take the most evenly spaced 9
         if len(h_lines) > 9:
             h_lines = h_lines[:9]
         if len(v_lines) > 9:
             v_lines = v_lines[:9]
-
-        # If we have less than 9, fall back to uniform
         if len(h_lines) == 9 and len(v_lines) == 9:
             return v_lines, h_lines
 
     return None
 
-############
-# Preprocessing
 
-
-def preprocess_image(img):
-    """Phase 3 Preprocessing: Applies CLAHE and Denoising to match v4 Training Data"""
-    from PIL import ImageEnhance, ImageFilter
-    import cv2
-    import numpy as np
-
-    # 1. CLAHE (Contrast Limited Adaptive Histogram Equalization)
-    # This precisely matches the augmentation applied in generate_hybrid_v4.py.
-    # It aggressively NORMALIZES lighting, flattening contrast across the entire board.
-    img_np = np.array(img)
-    lab = cv2.cvtColor(img_np, cv2.COLOR_RGB2LAB)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    lab[:, :, 0] = clahe.apply(lab[:, :, 0])
-    img_np = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
-    img = Image.fromarray(img_np)
-
-    # 2. Sharpening - pulls out the piece textures so they don't wash out from CLAHE
-    img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=150, threshold=3))
-    
-    return img
-
-
-def predict_board(image_path):
-    global USE_EDGE_DETECTION, USE_SQUARE_DETECTION  # Declare global variables
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = StandaloneBeastClassifier(num_classes=13).to(device)
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
-    model.eval()
-
-    # Setup debug directory
-    debug_dir = None
-    if DEBUG_MODE:
-        import os
-        debug_dir = os.path.join(os.path.dirname(image_path), "debug")
-        os.makedirs(debug_dir, exist_ok=True)
-        base_name = os.path.basename(image_path).rsplit('.', 1)[0]
-
-    # Load image
-    img = Image.open(image_path).convert("RGB")
-    original_img = img.copy()
-    edge_detection_used = False
-
-    # Try edge detection (if enabled)
-    if USE_EDGE_DETECTION:
-        corners = find_board_corners(img)
-        if corners is not None:
-            print(
-                f"DEBUG: Board corners detected, applying perspective transform",
-                file=sys.stderr)
-
-            # Save image with detected corners
-            if DEBUG_MODE:
-                debug_img = np.array(original_img.copy())
-                cv2.polylines(
-                    debug_img, [
-                        corners.astype(
-                            np.int32)], True, (0, 255, 0), 3)
-                debug_path = os.path.join(
-                    debug_dir, f"{base_name}_detected_board.png")
-                Image.fromarray(debug_img).save(debug_path)
-                print(
-                    f"DEBUG: Detected board outline saved to {debug_path}",
-                    file=sys.stderr)
-
-            img = perspective_transform(img, corners)
-            edge_detection_used = True
-        else:
-            print(
-                f"DEBUG: No board corners detected, using full image",
-                file=sys.stderr)
-    else:
-        print(
-            f"DEBUG: Edge detection disabled, using full image",
-            file=sys.stderr)
-
-    # Apply preprocessing (CLAHE permanently enabled for v4)
-    img = preprocess_image(img)
-
-    # Save preprocessed image
-    if DEBUG_MODE:
-        preprocessed_path = os.path.join(
-            debug_dir, f"{base_name}_preprocessed.png")
-        img.save(preprocessed_path)
-        suffix = " (with edge detection)" if edge_detection_used else " (no edge detection)"
-        print(
-            f"DEBUG: Preprocessed image saved to {preprocessed_path}{suffix}",
-            file=sys.stderr)
-
+def infer_fen_on_image(img, model, device, use_square_detection):
+    """Run tile inference on a prepared board image and return fen + mean confidence."""
     w, h = img.size
-
-    # Try to detect grid lines for precise square boundaries
-    grid_detected = False
-    if USE_SQUARE_DETECTION:
+    if use_square_detection:
         grid = detect_grid_lines(img)
         if grid is not None:
             xe, ye = grid
-            grid_detected = True
-            print(
-                f"DEBUG: Grid lines detected: {
-                    len(xe)}x{
-                    len(ye)}",
-                file=sys.stderr)
         else:
-            print(
-                f"DEBUG: Grid detection failed, using uniform division",
-                file=sys.stderr)
-            xe, ye = np.linspace(
-                0, w, 9).astype(int), np.linspace(
-                0, h, 9).astype(int)
+            xe = np.linspace(0, w, 9).astype(int)
+            ye = np.linspace(0, h, 9).astype(int)
     else:
-        xe, ye = np.linspace(
-            0, w, 9).astype(int), np.linspace(
-            0, h, 9).astype(int)
-
-    # Save grid visualization (always in debug mode)
-    if DEBUG_MODE:
-        grid_img = np.array(img.copy())
-        for x in xe:
-            # Red vertical lines
-            cv2.line(grid_img, (x, 0), (x, h), (0, 0, 255), 2)
-        for y in ye:
-            # Red horizontal lines
-            cv2.line(grid_img, (0, y), (w, y), (0, 0, 255), 2)
-        grid_path = os.path.join(debug_dir, f"{base_name}_grid.png")
-        Image.fromarray(grid_img).save(grid_path)
-        grid_type = "detected" if grid_detected else "uniform"
-        print(
-            f"DEBUG: Grid visualization ({grid_type}) saved to {grid_path}",
-            file=sys.stderr)
+        xe = np.linspace(0, w, 9).astype(int)
+        ye = np.linspace(0, h, 9).astype(int)
 
     fen, confs = [], []
     with torch.no_grad():
         for r in range(8):
             row = ""
             for c in range(8):
-                # Crop and resize with preprocessing
-                tile = img.crop(
-                    (xe[c], ye[r], xe[c + 1], ye[r + 1])).resize((64, 64), Image.LANCZOS)
-
-                # Per-tile normalization (critical for varying brightness)
-                # tile_np = np.array(tile)
-                # tile_np = cv2.normalize(tile_np, None, 0, 255, cv2.NORM_MINMAX)
-                # tile = Image.fromarray(tile_np)
-
-                # Apply "THE LAW" Normalization exactly as in Trainer
+                tile = img.crop((xe[c], ye[r], xe[c + 1], ye[r + 1])).resize((IMG_SIZE, IMG_SIZE), Image.LANCZOS)
                 img_np = np.array(tile).transpose(2, 0, 1)
-                it = torch.from_numpy(img_np).float().to(device)
-                it = (it / 127.5) - 1.0
-                it = it.unsqueeze(0)
+                tensor = torch.from_numpy(img_np).float().to(device)
+                tensor = (tensor / 127.5) - 1.0
+                tensor = tensor.unsqueeze(0)
 
-                # Inference
-                out = torch.softmax(model(it), dim=1)
+                out = torch.softmax(model(tensor), dim=1)
                 prob, pred = torch.max(out, 1)
-
-                # Empty square confidence threshold (prevent hallucination)
                 if prob.item() < 0.35:
-                    row += '1'  # Low confidence = empty square
+                    row += "1"
                 else:
                     row += FEN_CHARS[pred.item()]
-
                 confs.append(prob.item())
             fen.append(row)
-    # ... rest of your FEN compression logic ...
-    res = "/".join(fen)
-    res = "/".join([re.sub(r'1+', lambda m: str(len(m.group())), r)
-                   for r in res.split('/')])
-    return res, np.mean(confs)
+
+    result = "/".join(fen)
+    result = "/".join([re.sub(r"1+", lambda m: str(len(m.group())), row) for row in result.split("/")])
+    return result, float(np.mean(confs))
+
+
+def inset_board(img, px):
+    w, h = img.size
+    if w <= 2 * px or h <= 2 * px:
+        return img
+    return img.crop((px, px, w - px, h - px)).resize((w, h), Image.LANCZOS)
+
+
+def predict_board(image_path, model_path=None):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    resolved_model_path = model_path or MODEL_PATH
+    if not resolved_model_path:
+        raise FileNotFoundError(
+            "No default model found. Expected models/model_hybrid_v4_150e.pt. "
+            "Use --model-path to provide an explicit checkpoint."
+        )
+
+    model = StandaloneBeastClassifier(num_classes=13).to(device)
+    model.load_state_dict(torch.load(resolved_model_path, map_location=device))
+    model.eval()
+
+    debug_dir = None
+    if DEBUG_MODE:
+        debug_dir = os.path.join(os.path.dirname(image_path), "debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        base_name = os.path.basename(image_path).rsplit(".", 1)[0]
+
+    img = Image.open(image_path).convert("RGB")
+    original_img = img.copy()
+    candidates = [("full", img)]
+
+    if USE_EDGE_DETECTION:
+        robust_corners = find_board_corners(original_img)
+        if robust_corners is not None:
+            robust_img = perspective_transform(original_img, robust_corners)
+            candidates.append(("robust", robust_img))
+            candidates.append(("robust_inset2", inset_board(robust_img, 2)))
+
+        legacy_corners = find_board_corners_legacy(original_img)
+        if legacy_corners is not None:
+            legacy_img = perspective_transform(original_img, legacy_corners)
+            candidates.append(("legacy", legacy_img))
+            candidates.append(("legacy_inset2", inset_board(legacy_img, 2)))
+
+    best_fen = None
+    best_conf = -1.0
+    best_tag = "full"
+    best_img = original_img
+    for tag, candidate_img in candidates:
+        fen, conf = infer_fen_on_image(candidate_img, model, device, USE_SQUARE_DETECTION)
+        if conf > best_conf:
+            best_fen = fen
+            best_conf = conf
+            best_tag = tag
+            best_img = candidate_img
+
+    if DEBUG_MODE:
+        print(f"DEBUG: Using model={resolved_model_path}", file=sys.stderr)
+        print(f"DEBUG: Selected candidate={best_tag} confidence={best_conf:.4f}", file=sys.stderr)
+        preprocessed_path = os.path.join(debug_dir, f"{base_name}_preprocessed.png")
+        best_img.save(preprocessed_path)
+        print(f"DEBUG: Selected board image saved to {preprocessed_path}", file=sys.stderr)
+
+    return best_fen, best_conf
 
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(
-        description='Recognize chess position from image')
-    parser.add_argument('image', help='Path to chess board image')
-    parser.add_argument('--no-edge-detection', action='store_true',
-                        help='Disable edge detection (use full image)')
-    parser.add_argument('--detect-squares', action='store_true',
-                        help='Enable square grid detection (experimental)')
-    parser.add_argument('--debug', action='store_true',
-                        help='Save debug images to debug/ folder')
+    parser = argparse.ArgumentParser(description="Recognize chess position from image")
+    parser.add_argument("image", help="Path to chess board image")
+    parser.add_argument("--model-path", default=None, help="Override model path")
+    parser.add_argument("--no-edge-detection", action="store_true", help="Disable edge detection")
+    parser.add_argument("--detect-squares", action="store_true", help="Enable square grid detection")
+    parser.add_argument("--debug", action="store_true", help="Save debug images")
     args = parser.parse_args()
 
-    # Global flags
     USE_EDGE_DETECTION = not args.no_edge_detection
     USE_SQUARE_DETECTION = args.detect_squares
     DEBUG_MODE = args.debug
 
     try:
-        f, c = predict_board(args.image)
+        fen, conf = predict_board(args.image, model_path=args.model_path)
         result = {
             "success": True,
-            "fen": f"{f} w - - 0 1",
-            "confidence": round(c, 4)
+            "fen": f"{fen} w - - 0 1",
+            "confidence": round(conf, 4),
         }
-
-        # Add warning for low confidence predictions
-        if c < 0.67:
+        if conf < 0.67:
             result["warning"] = "Low confidence - prediction may be incorrect"
-
         print(json.dumps(result))
     except Exception as e:
         print(json.dumps({"success": False, "error": str(e)}))

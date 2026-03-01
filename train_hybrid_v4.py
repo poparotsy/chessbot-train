@@ -17,10 +17,11 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 GPU_COUNT = torch.cuda.device_count()
 # Conservative batching for 14GB-16GB GPUs
 BATCH_SIZE = 256 * max(1, GPU_COUNT)
-LEARNING_RATE = 3e-5
-EPOCHS = 150
+LEARNING_RATE = 1e-5
+EPOCHS = 200
 DATA_DIR = "tensors_v4"
 MODEL_SAVE_PATH = "models/model_hybrid_v4_150e.pt"
+FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v4_final.pt"
 CHECKPOINT_DIR = "models/checkpoints"
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 CHECKPOINT_PATH = f"{CHECKPOINT_DIR}/latest.pt"
@@ -134,6 +135,11 @@ def train():
         start_epoch = checkpoint['epoch'] + 1
         train.best_acc = checkpoint.get('accuracy', 0.0)
         print(f"✅ Resumed from epoch {start_epoch}")
+        # Ensure there is always at least one exported model file on resume.
+        if not os.path.exists(MODEL_SAVE_PATH):
+            save_obj = model.module.state_dict() if GPU_COUNT > 1 else model.state_dict()
+            torch.save(save_obj, MODEL_SAVE_PATH)
+            print(f"💾 Seeded best-model file from resumed checkpoint: {MODEL_SAVE_PATH}")
 
     if not train_files or not val_files:
         raise RuntimeError(f"Missing dataset chunks in {DATA_DIR}. Found train={len(train_files)}, val={len(val_files)}")
@@ -227,7 +233,10 @@ def train():
     if INTERRUPTED:
         print(f"\n✅ Training interrupted. Checkpoint saved at epoch {epoch + 1}")
     else:
-        print(f"\n🎉 Training complete!")
+        # Always export final model snapshot regardless of best-accuracy improvements.
+        final_obj = model.module.state_dict() if GPU_COUNT > 1 else model.state_dict()
+        torch.save(final_obj, FINAL_MODEL_SAVE_PATH)
+        print(f"\n🎉 Training complete! Final model saved: {FINAL_MODEL_SAVE_PATH}")
 
 train.best_acc = 0.0
 
