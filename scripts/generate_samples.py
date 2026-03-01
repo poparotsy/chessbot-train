@@ -1,89 +1,119 @@
 #!/usr/bin/env python3
-"""Generate 5 sample boards to visually verify augmentation"""
-import os, io, random, chess, torch, numpy as np
-from PIL import Image, ImageDraw
-import math
+"""Generate visual sample boards using v4 augmentation pipeline."""
 
-# Import from generate script
-exec(open('generate_hybrid_v3.py').read())
+import argparse
+import io
+import random
+from pathlib import Path
 
-print("Generating 5 sample boards with augmentation...\n")
+import chess
+from PIL import Image
 
-for i in range(10):
-    # Generate random position
-    b = chess.Board()
-    for _ in range(random.randint(10, 30)):
-        if not b.is_game_over(): 
-            b.push(random.choice(list(b.legal_moves)))
-    
-    fen = b.fen().split()[0]
-    
-    # Render board (this applies all augmentation)
-    board_file = random.choice(os.listdir("board_themes"))
-    background = Image.open(f"board_themes/{board_file}").convert("RGB").resize((512, 512))
-    p_set = random.choice(os.listdir("piece_sets"))
-    ts = 64
-    
-    grid = [[None]*8 for _ in range(8)]
-    for r, row_str in enumerate(fen.split('/')):
+import sys
+
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+import generate_hybrid_v4 as gen4
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Generate sample board images with v4 data augmentations.")
+    parser.add_argument("--count", type=int, default=12, help="Number of samples to generate.")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=ROOT_DIR / "sample_boards_v4",
+        help="Directory to save sample images.")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible sampling.")
+    parser.add_argument("--min-plies", type=int, default=10, help="Min random plies per board.")
+    parser.add_argument("--max-plies", type=int, default=40, help="Max random plies per board.")
+    return parser.parse_args()
+
+
+def board_to_grid(fen_board):
+    grid = [[None] * 8 for _ in range(8)]
+    for r, row_str in enumerate(fen_board.split("/")):
         c = 0
         for char in row_str:
-            if char.isdigit(): c += int(char)
-            else: grid[r][c] = char; c += 1
+            if char.isdigit():
+                c += int(char)
+            else:
+                grid[r][c] = char
+                c += 1
+    return grid
+
+
+def render_board_image(fen_board):
+    board_theme = random.choice(list((ROOT_DIR / "board_themes").iterdir())).name
+    piece_set = random.choice(list((ROOT_DIR / "piece_sets").iterdir())).name
+
+    background = Image.open(ROOT_DIR / "board_themes" / board_theme).convert("RGB").resize((512, 512))
+    grid = board_to_grid(fen_board)
+    tile_size = 64
 
     for r in range(8):
         for c in range(8):
             char = grid[r][c]
-            if char:
-                p_name = f"{'w' if char.isupper() else 'b'}{char.upper()}.png"
-                p_img = Image.open(f"piece_sets/{p_set}/{p_name}").convert("RGBA").resize((ts, ts))
-                background.paste(p_img, (c*ts, r*ts), p_img)
+            if not char:
+                continue
+            piece_name = f"{'w' if char.isupper() else 'b'}{char.upper()}.png"
+            piece = Image.open(ROOT_DIR / "piece_sets" / piece_set / piece_name).convert("RGBA").resize((tile_size, tile_size))
+            background.paste(piece, (c * tile_size, r * tile_size), piece)
 
-    # Add coordinate labels - randomize to test variety
-    label_choice = random.random()
-    if label_choice > 0.4:  # 60% chance of having labels
-        draw = ImageDraw.Draw(background)
-        try:
-            from PIL import ImageFont
-            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 14)
-        except:
-            font = None
-        
-        # File labels (a-h) at bottom
-        for j, letter in enumerate('abcdefgh'):
-            x = j * ts + ts - 12
-            y = 512 - 16
-            draw.text((x, y), letter, fill=(128, 128, 128, 180), font=font)
-        
-        # Rank labels on left or right
-        if label_choice > 0.7:  # 30% on left
-            x = 4
-        else:  # 30% on right
-            x = 512 - 14
-        
-        for j in range(8):
-            y = j * ts + 4
-            draw.text((x, y), str(8-j), fill=(128, 128, 128, 180), font=font)
-    # 40% have no labels
+    background = gen4.vandalize(background)
+    background = gen4.augment_image(background)
 
-    # Apply vandalization (arrows, highlights)
-    background = vandalize(background)
-    
-    # Apply augmentation
-    background = augment_image(background)
-    
-    # JPEG compression
     if random.random() > 0.3:
         buf = io.BytesIO()
         background.save(buf, "JPEG", quality=random.randint(30, 90))
         background = Image.open(buf).copy()
-    
-    background.save(f"sample_board_{i+1}.png")
-    print(f"✅ Saved sample_board_{i+1}.png")
 
-print("\n📊 Check sample_board_*.png files to verify:")
-print("   - Arrows with arrowheads")
-print("   - Square highlights")
-print("   - Coordinate labels (a-h, 1-8)")
-print("   - Mix of color and grayscale")
-print("   - Noise/compression artifacts")
+    return background, board_theme, piece_set
+
+
+def random_position(min_plies, max_plies):
+    board = chess.Board()
+    for _ in range(random.randint(min_plies, max_plies)):
+        if board.is_game_over():
+            break
+        board.push(random.choice(list(board.legal_moves)))
+    return board.fen().split()[0]
+
+
+def main():
+    args = parse_args()
+    random.seed(args.seed)
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    manifest = []
+
+    print(f"Generating {args.count} v4 sample boards into: {args.output_dir}")
+    for i in range(args.count):
+        fen_board = random_position(args.min_plies, args.max_plies)
+        image, board_theme, piece_set = render_board_image(fen_board)
+        out_path = args.output_dir / f"sample_v4_{i + 1:03d}.png"
+        image.save(out_path)
+        manifest.append(
+            {
+                "file": out_path.name,
+                "fen_board": fen_board,
+                "board_theme": board_theme,
+                "piece_set": piece_set,
+            })
+        print(f"  ✅ {out_path.name} | theme={board_theme} | pieces={piece_set}")
+
+    manifest_path = args.output_dir / "manifest.txt"
+    with manifest_path.open("w", encoding="utf-8") as handle:
+        for item in manifest:
+            handle.write(
+                f"{item['file']} | fen={item['fen_board']} | theme={item['board_theme']} | pieces={item['piece_set']}\n")
+
+    print(f"\nSaved manifest: {manifest_path}")
+
+
+if __name__ == "__main__":
+    main()

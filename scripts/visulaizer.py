@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # 1. Load the first chunk
-data_path = "tensors_v3/train_chunk_3.pt"
+data_path = "tensors_v4/val_0.pt"
 data = torch.load(data_path, map_location='cpu')
 x = data['x']  # The images
 y = data['y']  # The labels

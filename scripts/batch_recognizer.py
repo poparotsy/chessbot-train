@@ -6,25 +6,21 @@ Compatible with V3 Synced Recognizer.
 
 import os
 import glob
-import json
 import sys
-from PIL import Image
 
-# Correct Import (only 2 values)
-from chess_recognizer_v3 import get_inference_tools, process_tiles, compress_fen
+# Fixed import for v3
+from recognizer_v3 import predict_board
 
 
 def run_batch(folder_path):
     """Processes every image in the folder and prints a table."""
-    try:
-        # Fixed: Unpacks 2 values to match recognizer script
-        device, model = get_inference_tools()
-        print(f"🚀 Model loaded on {device}. Thresholding noise...\n")
-    except Exception as err:
-        print(f"❌ Failed to load model: {err}")
-        return
+    print(f"🚀 Running batch inference with recognizer_v3...\n")
 
-    images = sorted(glob.glob(os.path.join(folder_path, "*.[jp][pn]g")))
+    patterns = ("*.png", "*.jpg", "*.jpeg", "*.JPG", "*.JPEG", "*.PNG")
+    images = []
+    for pattern in patterns:
+        images.extend(glob.glob(os.path.join(folder_path, pattern)))
+    images = sorted(set(images))
     if not images:
         print(f"❓ No images found in {folder_path}")
         return
@@ -35,10 +31,10 @@ def run_batch(folder_path):
     for img_path in images:
         name = os.path.basename(img_path)
         try:
-            img = Image.open(img_path).convert("RGB")
-            # Fixed: Only passes img, model, device
-            raw_fen, confidence = process_tiles(img, model, device)
-            print(f"{name:<25} | {confidence:.4f} | {compress_fen(raw_fen)}")
+            raw_fen, confidence = predict_board(img_path)
+            # Add implicit turn since original FEN doesn't have it
+            fen_with_turn = f"{raw_fen} w - - 0 1"
+            print(f"{name:<25} | {confidence:.4f} | {fen_with_turn}")
         except Exception as err:
             print(f"{name:<25} | ERROR  | {str(err)}")
 

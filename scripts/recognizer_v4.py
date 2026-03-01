@@ -68,94 +68,45 @@ def order_corners(corners):
 
 
 def find_board_corners(img):
-    """Find chessboard corners with multi-pass edge search and geometric scoring."""
+    """Find chessboard using edge detection, robust to borders."""
     gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
-    h, w = gray.shape
-    img_area = float(h * w)
-
-    def quad_area(corners):
-        x = corners[:, 0]
-        y = corners[:, 1]
-        return 0.5 * abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
-
-    def score_quad(corners):
-        top = np.linalg.norm(corners[1] - corners[0])
-        right = np.linalg.norm(corners[2] - corners[1])
-        bottom = np.linalg.norm(corners[3] - corners[2])
-        left = np.linalg.norm(corners[0] - corners[3])
-        min_side = min(top, right, bottom, left)
-        if min_side <= 0:
-            return -1.0
-
-        area_ratio = quad_area(corners) / img_area
-        if area_ratio < 0.20:
-            return -1.0
-
-        opposite_similarity = min(top / bottom, bottom / top) * min(left / right, right / left)
-        aspect_similarity = min(top / left, left / top) * min(right / bottom, bottom / right)
-        xs = corners[:, 0]
-        ys = corners[:, 1]
-        margin = min(xs.min(), w - xs.max(), ys.min(), h - ys.max()) / max(w, h)
-
-        # Favor board-like quadrilaterals with decent margin over full-frame boxes.
-        return area_ratio * 10.0 + opposite_similarity * 5.0 + aspect_similarity * 5.0 + margin * 20.0
-
-    candidates = []
-    param_sets = [
-        (CANNY_LOW, CANNY_HIGH, None, cv2.RETR_EXTERNAL),
-        (30, 100, None, cv2.RETR_EXTERNAL),
-        (20, 80, None, cv2.RETR_EXTERNAL),
-        (70, 200, None, cv2.RETR_EXTERNAL),
-        (CANNY_LOW, CANNY_HIGH, 3, cv2.RETR_LIST),
-        (30, 100, 3, cv2.RETR_LIST),
-        (20, 80, 3, cv2.RETR_LIST),
-    ]
-
-    for low, high, dilate_kernel, retrieval in param_sets:
-        edges = cv2.Canny(gray, low, high)
-        if dilate_kernel:
-            kernel = np.ones((dilate_kernel, dilate_kernel), np.uint8)
-            edges = cv2.dilate(edges, kernel, iterations=1)
-        contours, _ = cv2.findContours(edges, retrieval, cv2.CHAIN_APPROX_SIMPLE)
-
-        for contour in sorted(contours, key=cv2.contourArea, reverse=True):
-            peri = cv2.arcLength(contour, True)
-            for eps in (0.01, 0.02, CONTOUR_EPSILON, 0.05, 0.08):
-                approx = cv2.approxPolyDP(contour, eps * peri, True)
-                if len(approx) != 4:
-                    continue
-                corners = order_corners(approx.reshape(4, 2))
-                score = score_quad(corners)
-                if score > 0:
-                    candidates.append((score, corners))
-                break
-
-    if candidates:
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        best_corners = candidates[0][1]
-        if DEBUG_MODE:
-            print(f"DEBUG: Selected board corners score={candidates[0][0]:.3f}", file=sys.stderr)
-        return best_corners
-
-    return None
-
-
-def find_board_corners_legacy(img):
-    """Original v3 corner detector kept as fallback candidate."""
-    gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
+    
+    # 1. Standard approach (works for puzzle-00004 and clean images)
     edges = cv2.Canny(gray, CANNY_LOW, CANNY_HIGH)
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Find largest quadrilateral
     for contour in sorted(contours, key=cv2.contourArea, reverse=True):
         peri = cv2.arcLength(contour, True)
         approx = cv2.approxPolyDP(contour, CONTOUR_EPSILON * peri, True)
         if len(approx) == 4:
+            # Check if contour is large enough (at least 20% of image)
             area = cv2.contourArea(approx)
             img_area = img.size[0] * img.size[1]
-            if area > img_area * 0.25:
+            if area > img_area * 0.20:
                 return order_corners(approx.reshape(4, 2))
+                
+    # 2. Fallbacks for noisy images (puzzle-00002)
+    thresholds = [(50, 150), (30, 100), (20, 80)]
+    for low, high in thresholds:
+        edges = cv2.Canny(gray, low, high)
+        kernel = np.ones((3, 3), np.uint8)
+        edges = cv2.dilate(edges, kernel, iterations=1)
+        contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        
+        for contour in sorted(contours, key=cv2.contourArea, reverse=True):
+            area = cv2.contourArea(contour)
+            img_area = img.size[0] * img.size[1]
+            if area < img_area * 0.25:
+                continue
+                
+            peri = cv2.arcLength(contour, True)
+            for eps_mult in [0.01, 0.02, 0.05, 0.08]:
+                approx = cv2.approxPolyDP(contour, eps_mult * peri, True)
+                if len(approx) == 4:
+                    return order_corners(approx.reshape(4, 2))
+
     return None
-
-
 
 
 def perspective_transform(img, corners):
@@ -240,82 +191,25 @@ def detect_grid_lines(img):
 
 
 def preprocess_image(img):
-    """Apply aggressive preprocessing to improve recognition"""
+    """Phase 3 Preprocessing: Applies CLAHE and Denoising to match v4 Training Data"""
     from PIL import ImageEnhance, ImageFilter
     import cv2
+    import numpy as np
 
-    # Convert to numpy for OpenCV processing
+    # 1. CLAHE (Contrast Limited Adaptive Histogram Equalization)
+    # This precisely matches the augmentation applied in generate_hybrid_v4.py.
+    # It aggressively NORMALIZES lighting, flattening contrast across the entire board.
     img_np = np.array(img)
-
-    # 1. Adaptive Histogram Equalization (CLAHE) - Critical for brightness
-    # normalization
     lab = cv2.cvtColor(img_np, cv2.COLOR_RGB2LAB)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     lab[:, :, 0] = clahe.apply(lab[:, :, 0])
     img_np = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
     img = Image.fromarray(img_np)
 
-    # 2. Denoising - helps with scanned/printed images
-    img_np = cv2.fastNlMeansDenoisingColored(
-        np.array(img), None, 10, 10, 7, 21)
-    img = Image.fromarray(img_np)
-
-    # 3. Sharpening - enhance edges
-    img = img.filter(
-        ImageFilter.UnsharpMask(
-            radius=1,
-            percent=150,
-            threshold=3))
-
-    # 4. Contrast enhancement
-    enhancer = ImageEnhance.Contrast(img)
-    img = enhancer.enhance(1.2)
-
+    # 2. Sharpening - pulls out the piece textures so they don't wash out from CLAHE
+    img = img.filter(ImageFilter.UnsharpMask(radius=1.5, percent=150, threshold=3))
+    
     return img
-
-
-def infer_fen_on_image(img, model, device, use_square_detection):
-    """Run tile inference on a prepared board image and return fen + mean confidence."""
-    w, h = img.size
-    if use_square_detection:
-        grid = detect_grid_lines(img)
-        if grid is not None:
-            xe, ye = grid
-        else:
-            xe, ye = np.linspace(0, w, 9).astype(int), np.linspace(0, h, 9).astype(int)
-    else:
-        xe, ye = np.linspace(0, w, 9).astype(int), np.linspace(0, h, 9).astype(int)
-
-    fen, confs = [], []
-    with torch.no_grad():
-        for r in range(8):
-            row = ""
-            for c in range(8):
-                tile = img.crop((xe[c], ye[r], xe[c + 1], ye[r + 1])).resize((64, 64), Image.LANCZOS)
-                img_np = np.array(tile).transpose(2, 0, 1)
-                it = torch.from_numpy(img_np).float().to(device)
-                it = (it / 127.5) - 1.0
-                it = it.unsqueeze(0)
-
-                out = torch.softmax(model(it), dim=1)
-                prob, pred = torch.max(out, 1)
-                if prob.item() < 0.35:
-                    row += '1'
-                else:
-                    row += FEN_CHARS[pred.item()]
-                confs.append(prob.item())
-            fen.append(row)
-
-    res = "/".join(fen)
-    res = "/".join([re.sub(r'1+', lambda m: str(len(m.group())), r) for r in res.split('/')])
-    return res, float(np.mean(confs))
-
-
-def inset_board(img, px):
-    w, h = img.size
-    if w <= 2 * px or h <= 2 * px:
-        return img
-    return img.crop((px, px, w - px, h - px)).resize((w, h), Image.LANCZOS)
 
 
 def predict_board(image_path):
@@ -336,44 +230,133 @@ def predict_board(image_path):
     # Load image
     img = Image.open(image_path).convert("RGB")
     original_img = img.copy()
-    candidates = [("full", img)]
+    edge_detection_used = False
 
+    # Try edge detection (if enabled)
     if USE_EDGE_DETECTION:
-        robust_corners = find_board_corners(original_img)
-        if robust_corners is not None:
-            robust_img = perspective_transform(original_img, robust_corners)
-            candidates.append(("robust", robust_img))
-            candidates.append(("robust_inset2", inset_board(robust_img, 2)))
-        legacy_corners = find_board_corners_legacy(original_img)
-        if legacy_corners is not None:
-            legacy_img = perspective_transform(original_img, legacy_corners)
-            candidates.append(("legacy", legacy_img))
-            candidates.append(("legacy_inset2", inset_board(legacy_img, 2)))
+        corners = find_board_corners(img)
+        if corners is not None:
+            print(
+                f"DEBUG: Board corners detected, applying perspective transform",
+                file=sys.stderr)
 
-    best_fen = None
-    best_conf = -1.0
-    best_tag = "full"
-    for tag, candidate_img in candidates:
-        fen, conf = infer_fen_on_image(candidate_img, model, device, USE_SQUARE_DETECTION)
-        if conf > best_conf:
-            best_fen = fen
-            best_conf = conf
-            best_tag = tag
+            # Save image with detected corners
+            if DEBUG_MODE:
+                debug_img = np.array(original_img.copy())
+                cv2.polylines(
+                    debug_img, [
+                        corners.astype(
+                            np.int32)], True, (0, 255, 0), 3)
+                debug_path = os.path.join(
+                    debug_dir, f"{base_name}_detected_board.png")
+                Image.fromarray(debug_img).save(debug_path)
+                print(
+                    f"DEBUG: Detected board outline saved to {debug_path}",
+                    file=sys.stderr)
 
+            img = perspective_transform(img, corners)
+            edge_detection_used = True
+        else:
+            print(
+                f"DEBUG: No board corners detected, using full image",
+                file=sys.stderr)
+    else:
+        print(
+            f"DEBUG: Edge detection disabled, using full image",
+            file=sys.stderr)
+
+    # Apply preprocessing (CLAHE permanently enabled for v4)
+    img = preprocess_image(img)
+
+    # Save preprocessed image
     if DEBUG_MODE:
-        print(f"DEBUG: Selected candidate={best_tag} confidence={best_conf:.4f}", file=sys.stderr)
-        selected_img = None
-        for tag, img_candidate in candidates:
-            if tag == best_tag:
-                selected_img = img_candidate
-                break
-        if selected_img is None:
-            selected_img = original_img
-        preprocessed_path = os.path.join(debug_dir, f"{base_name}_preprocessed.png")
-        selected_img.save(preprocessed_path)
-        print(f"DEBUG: Selected board image saved to {preprocessed_path}", file=sys.stderr)
+        preprocessed_path = os.path.join(
+            debug_dir, f"{base_name}_preprocessed.png")
+        img.save(preprocessed_path)
+        suffix = " (with edge detection)" if edge_detection_used else " (no edge detection)"
+        print(
+            f"DEBUG: Preprocessed image saved to {preprocessed_path}{suffix}",
+            file=sys.stderr)
 
-    return best_fen, best_conf
+    w, h = img.size
+
+    # Try to detect grid lines for precise square boundaries
+    grid_detected = False
+    if USE_SQUARE_DETECTION:
+        grid = detect_grid_lines(img)
+        if grid is not None:
+            xe, ye = grid
+            grid_detected = True
+            print(
+                f"DEBUG: Grid lines detected: {
+                    len(xe)}x{
+                    len(ye)}",
+                file=sys.stderr)
+        else:
+            print(
+                f"DEBUG: Grid detection failed, using uniform division",
+                file=sys.stderr)
+            xe, ye = np.linspace(
+                0, w, 9).astype(int), np.linspace(
+                0, h, 9).astype(int)
+    else:
+        xe, ye = np.linspace(
+            0, w, 9).astype(int), np.linspace(
+            0, h, 9).astype(int)
+
+    # Save grid visualization (always in debug mode)
+    if DEBUG_MODE:
+        grid_img = np.array(img.copy())
+        for x in xe:
+            # Red vertical lines
+            cv2.line(grid_img, (x, 0), (x, h), (0, 0, 255), 2)
+        for y in ye:
+            # Red horizontal lines
+            cv2.line(grid_img, (0, y), (w, y), (0, 0, 255), 2)
+        grid_path = os.path.join(debug_dir, f"{base_name}_grid.png")
+        Image.fromarray(grid_img).save(grid_path)
+        grid_type = "detected" if grid_detected else "uniform"
+        print(
+            f"DEBUG: Grid visualization ({grid_type}) saved to {grid_path}",
+            file=sys.stderr)
+
+    fen, confs = [], []
+    with torch.no_grad():
+        for r in range(8):
+            row = ""
+            for c in range(8):
+                # Crop and resize with preprocessing
+                tile = img.crop(
+                    (xe[c], ye[r], xe[c + 1], ye[r + 1])).resize((64, 64), Image.LANCZOS)
+
+                # Per-tile normalization (critical for varying brightness)
+                # tile_np = np.array(tile)
+                # tile_np = cv2.normalize(tile_np, None, 0, 255, cv2.NORM_MINMAX)
+                # tile = Image.fromarray(tile_np)
+
+                # Apply "THE LAW" Normalization exactly as in Trainer
+                img_np = np.array(tile).transpose(2, 0, 1)
+                it = torch.from_numpy(img_np).float().to(device)
+                it = (it / 127.5) - 1.0
+                it = it.unsqueeze(0)
+
+                # Inference
+                out = torch.softmax(model(it), dim=1)
+                prob, pred = torch.max(out, 1)
+
+                # Empty square confidence threshold (prevent hallucination)
+                if prob.item() < 0.35:
+                    row += '1'  # Low confidence = empty square
+                else:
+                    row += FEN_CHARS[pred.item()]
+
+                confs.append(prob.item())
+            fen.append(row)
+    # ... rest of your FEN compression logic ...
+    res = "/".join(fen)
+    res = "/".join([re.sub(r'1+', lambda m: str(len(m.group())), r)
+                   for r in res.split('/')])
+    return res, np.mean(confs)
 
 
 if __name__ == "__main__":
