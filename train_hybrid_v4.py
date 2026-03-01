@@ -18,14 +18,14 @@ GPU_COUNT = torch.cuda.device_count()
 # Conservative batching for 14GB-16GB GPUs
 BATCH_SIZE = 256 * max(1, GPU_COUNT)
 LEARNING_RATE = 1e-5
-EPOCHS = 200
+EPOCHS = 250
 DATA_DIR = "tensors_v4"
-MODEL_SAVE_PATH = "models/model_hybrid_v4_150e.pt"
-FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v4_final.pt"
+MODEL_SAVE_PATH = "models/model_hybrid_v4_250e_best.pt"
+FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v4_250e_final.pt"
 CHECKPOINT_DIR = "models/checkpoints"
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 CHECKPOINT_PATH = f"{CHECKPOINT_DIR}/latest.pt"
-BASE_MODEL_PATH = "models/model_hybrid_100e.pt"
+BASE_MODEL_PATH = "models/model_hybrid_v4_200e_final.pt"
 
 # Global flag for graceful shutdown
 INTERRUPTED = False
