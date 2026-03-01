@@ -110,7 +110,7 @@ def draw_annotation_marker(draw, square_rc, ts):
     # Corner-biased placement, often overlapping piece/tile boundary like puzzle UIs.
     corner = random.choice(("tr", "tl", "br", "bl"))
     offset = max(6, ts // 8)
-    jitter = 6
+    jitter = 4
     if corner == "tr":
         center_x = x0 + ts - offset + random.randint(-jitter, jitter)
         center_y = y0 + offset + random.randint(-jitter, jitter)
@@ -157,11 +157,38 @@ def draw_annotation_marker(draw, square_rc, ts):
         fill=(20, 20, 20, 255),
         font=font)
 
-def vandalize(img):
-    """Add arrows/highlights like chess sites with a balanced hard-data ratio."""
+
+def draw_empty_artifact(draw, square_rc, ts):
+    """Draw artifact fragments on an empty square without adding piece-like silhouettes."""
+    r, c = square_rc
+    x0, y0 = c * ts, r * ts
+
+    mode = random.choice(("marker", "short_arrow", "small_highlight"))
+    if mode == "marker":
+        draw_annotation_marker(draw, square_rc, ts)
+        return
+
+    if mode == "small_highlight":
+        pad = random.randint(10, 18)
+        color = random.choice([(255, 230, 0, 70), (0, 190, 255, 65), (120, 255, 120, 65)])
+        draw.rectangle([x0 + pad, y0 + pad, x0 + ts - pad, y0 + ts - pad], fill=color)
+        return
+
+    # Short local arrow-like stroke confined inside one tile.
+    cx, cy = x0 + ts // 2, y0 + ts // 2
+    dx, dy = random.randint(-12, 12), random.randint(-12, 12)
+    sx, sy = cx - dx, cy - dy
+    ex, ey = cx + dx, cy + dy
+    color = random.choice([(255, 165, 0, 110), (0, 255, 0, 105), (0, 150, 255, 105)])
+    draw.line([sx, sy, ex, ey], fill=color, width=random.randint(4, 7))
+
+
+def vandalize(img, grid):
+    """Add arrows/highlights like chess sites with artifact-on-empty oversampling."""
     draw = ImageDraw.Draw(img, "RGBA")
     w = img.size[0]
     ts = w // 8
+    empty_squares = [(rr, cc) for rr in range(8) for cc in range(8) if not grid[rr][cc]]
 
     # Square highlights are common but not universal.
     if random.random() < 0.70:
@@ -185,6 +212,12 @@ def vandalize(img):
         for _ in range(random.choices([1, 2, 3], weights=[0.60, 0.30, 0.10], k=1)[0]):
             r, c = random.randint(0, 7), random.randint(0, 7)
             draw_annotation_marker(draw, (r, c), ts)
+
+    # Targeted hardening: artifact-only empty tiles to reduce empty->piece hallucination.
+    if empty_squares and random.random() < 0.25:
+        random.shuffle(empty_squares)
+        for sq in empty_squares[:random.randint(2, 4)]:
+            draw_empty_artifact(draw, sq, ts)
 
     return img
 
@@ -262,7 +295,7 @@ def render_board(fen):
             draw.text((x, y), str(8-i), fill=(128, 128, 128, 180), font=font)
     # 40% have no labels at all
 
-    background = vandalize(background)
+    background = vandalize(background, grid)
     
     # Apply augmentation BEFORE compression
     background = augment_image(background)

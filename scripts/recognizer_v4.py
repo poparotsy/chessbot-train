@@ -13,7 +13,9 @@ from torch import nn
 IMG_SIZE, FEN_CHARS = 64, "1PNBRQKpnbrqk"
 
 MODEL_CANDIDATES = [
+    os.path.join(os.path.dirname(__file__), "..", "models", "model_hybrid_v4_final.pt"),
     os.path.join(os.path.dirname(__file__), "..", "models", "model_hybrid_v4_150e.pt"),
+    "models/model_hybrid_v4_final.pt",
     "models/model_hybrid_v4_150e.pt",
 ]
 MODEL_PATH = next((path for path in MODEL_CANDIDATES if os.path.exists(path)), None)
@@ -32,6 +34,7 @@ WARP_MIN_ANGLE_DEG = 50.0
 WARP_MAX_ANGLE_DEG = 130.0
 WARP_PIECE_COVERAGE_RATIO = 0.45
 WARP_PIECE_COVERAGE_MIN_FULL = 8
+FULL_CONF_FOR_COVERAGE_GUARD = 0.95
 
 
 class StandaloneBeastClassifier(nn.Module):
@@ -425,11 +428,13 @@ def predict_board(image_path, model_path=None):
             )
 
     full_piece_count = next((item[4] for item in scored if item[0] == "full"), 0)
+    full_conf = next((item[3] for item in scored if item[0] == "full"), 0.0)
     filtered = []
     for item in scored:
         tag, _, _, _, piece_count = item
         if (
             tag != "full"
+            and full_conf >= FULL_CONF_FOR_COVERAGE_GUARD
             and full_piece_count >= WARP_PIECE_COVERAGE_MIN_FULL
             and piece_count <= int(full_piece_count * WARP_PIECE_COVERAGE_RATIO)
         ):

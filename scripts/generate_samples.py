@@ -64,13 +64,15 @@ def render_board_image(fen_board):
             piece = Image.open(ROOT_DIR / "piece_sets" / piece_set / piece_name).convert("RGBA").resize((tile_size, tile_size))
             background.paste(piece, (c * tile_size, r * tile_size), piece)
 
-    background = gen4.vandalize(background)
+    background = gen4.vandalize(background, grid)
     background = gen4.augment_image(background)
 
-    if random.random() > 0.3:
+    if random.random() < 0.60:
         buf = io.BytesIO()
-        background.save(buf, "JPEG", quality=random.randint(30, 90))
+        background.save(buf, "JPEG", quality=random.randint(45, 92))
         background = Image.open(buf).copy()
+
+    background = gen4.simulate_trimmed_capture(background)
 
     return background, board_theme, piece_set
 
