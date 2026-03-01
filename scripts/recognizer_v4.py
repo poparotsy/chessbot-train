@@ -25,6 +25,13 @@ CONTOUR_EPSILON = 0.02
 USE_EDGE_DETECTION = True
 USE_SQUARE_DETECTION = False
 DEBUG_MODE = False
+WARP_MIN_AREA_RATIO = 0.30
+WARP_MIN_OPPOSITE_SIMILARITY = 0.50
+WARP_MIN_ASPECT_SIMILARITY = 0.50
+WARP_MIN_ANGLE_DEG = 50.0
+WARP_MAX_ANGLE_DEG = 130.0
+WARP_PIECE_COVERAGE_RATIO = 0.45
+WARP_PIECE_COVERAGE_MIN_FULL = 8
 
 
 class StandaloneBeastClassifier(nn.Module):
@@ -180,6 +187,64 @@ def perspective_transform(img, corners):
     return Image.fromarray(warped)
 
 
+def compute_quad_metrics(corners, width, height):
+    """Compute geometric quality metrics for a detected board quadrilateral."""
+    pts = corners.astype(np.float32)
+
+    top = np.linalg.norm(pts[1] - pts[0])
+    right = np.linalg.norm(pts[2] - pts[1])
+    bottom = np.linalg.norm(pts[3] - pts[2])
+    left = np.linalg.norm(pts[0] - pts[3])
+
+    def safe_ratio(a, b):
+        if a <= 1e-6 or b <= 1e-6:
+            return 0.0
+        return min(a / b, b / a)
+
+    def quad_area(points):
+        x = points[:, 0]
+        y = points[:, 1]
+        return 0.5 * abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
+
+    def angle_deg(a, b, c):
+        v1 = a - b
+        v2 = c - b
+        n1 = np.linalg.norm(v1)
+        n2 = np.linalg.norm(v2)
+        if n1 <= 1e-6 or n2 <= 1e-6:
+            return 0.0
+        cos_t = np.clip(np.dot(v1, v2) / (n1 * n2), -1.0, 1.0)
+        return float(np.degrees(np.arccos(cos_t)))
+
+    area_ratio = quad_area(pts) / float(width * height)
+    opposite_similarity = safe_ratio(top, bottom) * safe_ratio(left, right)
+    aspect_similarity = safe_ratio(top, left) * safe_ratio(right, bottom)
+    angles = [
+        angle_deg(pts[3], pts[0], pts[1]),
+        angle_deg(pts[0], pts[1], pts[2]),
+        angle_deg(pts[1], pts[2], pts[3]),
+        angle_deg(pts[2], pts[3], pts[0]),
+    ]
+
+    return {
+        "area_ratio": float(area_ratio),
+        "opposite_similarity": float(opposite_similarity),
+        "aspect_similarity": float(aspect_similarity),
+        "min_angle": float(min(angles)),
+        "max_angle": float(max(angles)),
+    }
+
+
+def is_warp_geometry_trustworthy(metrics):
+    return (
+        metrics["area_ratio"] >= WARP_MIN_AREA_RATIO
+        and metrics["opposite_similarity"] >= WARP_MIN_OPPOSITE_SIMILARITY
+        and metrics["aspect_similarity"] >= WARP_MIN_ASPECT_SIMILARITY
+        and metrics["min_angle"] >= WARP_MIN_ANGLE_DEG
+        and metrics["max_angle"] <= WARP_MAX_ANGLE_DEG
+    )
+
+
 def detect_grid_lines(img):
     """Detect chessboard grid lines to infer exact tile boundaries."""
     gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
@@ -237,7 +302,7 @@ def detect_grid_lines(img):
 
 
 def infer_fen_on_image(img, model, device, use_square_detection):
-    """Run tile inference on a prepared board image and return fen + mean confidence."""
+    """Run tile inference on a prepared board image and return fen stats."""
     w, h = img.size
     if use_square_detection:
         grid = detect_grid_lines(img)
@@ -251,6 +316,7 @@ def infer_fen_on_image(img, model, device, use_square_detection):
         ye = np.linspace(0, h, 9).astype(int)
 
     fen, confs = [], []
+    piece_count = 0
     with torch.no_grad():
         for r in range(8):
             row = ""
@@ -266,13 +332,16 @@ def infer_fen_on_image(img, model, device, use_square_detection):
                 if prob.item() < 0.35:
                     row += "1"
                 else:
-                    row += FEN_CHARS[pred.item()]
+                    label = FEN_CHARS[pred.item()]
+                    row += label
+                    if label != "1":
+                        piece_count += 1
                 confs.append(prob.item())
             fen.append(row)
 
     result = "/".join(fen)
     result = "/".join([re.sub(r"1+", lambda m: str(len(m.group())), row) for row in result.split("/")])
-    return result, float(np.mean(confs))
+    return result, float(np.mean(confs)), piece_count
 
 
 def inset_board(img, px):
@@ -306,29 +375,77 @@ def predict_board(image_path, model_path=None):
     candidates = [("full", img)]
 
     if USE_EDGE_DETECTION:
+        iw, ih = original_img.size
         robust_corners = find_board_corners(original_img)
         if robust_corners is not None:
-            robust_img = perspective_transform(original_img, robust_corners)
-            candidates.append(("robust", robust_img))
-            candidates.append(("robust_inset2", inset_board(robust_img, 2)))
+            robust_metrics = compute_quad_metrics(robust_corners, iw, ih)
+            robust_ok = is_warp_geometry_trustworthy(robust_metrics)
+            if DEBUG_MODE:
+                print(
+                    "DEBUG: robust metrics "
+                    f"area={robust_metrics['area_ratio']:.3f} "
+                    f"opp={robust_metrics['opposite_similarity']:.3f} "
+                    f"asp={robust_metrics['aspect_similarity']:.3f} "
+                    f"angle=[{robust_metrics['min_angle']:.1f},{robust_metrics['max_angle']:.1f}] "
+                    f"trusted={robust_ok}",
+                    file=sys.stderr,
+                )
+            if robust_ok:
+                robust_img = perspective_transform(original_img, robust_corners)
+                candidates.append(("robust", robust_img))
+                candidates.append(("robust_inset2", inset_board(robust_img, 2)))
 
         legacy_corners = find_board_corners_legacy(original_img)
         if legacy_corners is not None:
-            legacy_img = perspective_transform(original_img, legacy_corners)
-            candidates.append(("legacy", legacy_img))
-            candidates.append(("legacy_inset2", inset_board(legacy_img, 2)))
+            legacy_metrics = compute_quad_metrics(legacy_corners, iw, ih)
+            legacy_ok = is_warp_geometry_trustworthy(legacy_metrics)
+            if DEBUG_MODE:
+                print(
+                    "DEBUG: legacy metrics "
+                    f"area={legacy_metrics['area_ratio']:.3f} "
+                    f"opp={legacy_metrics['opposite_similarity']:.3f} "
+                    f"asp={legacy_metrics['aspect_similarity']:.3f} "
+                    f"angle=[{legacy_metrics['min_angle']:.1f},{legacy_metrics['max_angle']:.1f}] "
+                    f"trusted={legacy_ok}",
+                    file=sys.stderr,
+                )
+            if legacy_ok:
+                legacy_img = perspective_transform(original_img, legacy_corners)
+                candidates.append(("legacy", legacy_img))
+                candidates.append(("legacy_inset2", inset_board(legacy_img, 2)))
 
-    best_fen = None
-    best_conf = -1.0
-    best_tag = "full"
-    best_img = original_img
+    scored = []
     for tag, candidate_img in candidates:
-        fen, conf = infer_fen_on_image(candidate_img, model, device, USE_SQUARE_DETECTION)
-        if conf > best_conf:
-            best_fen = fen
-            best_conf = conf
-            best_tag = tag
-            best_img = candidate_img
+        fen, conf, piece_count = infer_fen_on_image(candidate_img, model, device, USE_SQUARE_DETECTION)
+        scored.append((tag, candidate_img, fen, conf, piece_count))
+        if DEBUG_MODE:
+            print(
+                f"DEBUG: Candidate={tag} conf={conf:.4f} pieces={piece_count}",
+                file=sys.stderr,
+            )
+
+    full_piece_count = next((item[4] for item in scored if item[0] == "full"), 0)
+    filtered = []
+    for item in scored:
+        tag, _, _, _, piece_count = item
+        if (
+            tag != "full"
+            and full_piece_count >= WARP_PIECE_COVERAGE_MIN_FULL
+            and piece_count <= int(full_piece_count * WARP_PIECE_COVERAGE_RATIO)
+        ):
+            if DEBUG_MODE:
+                print(
+                    f"DEBUG: Rejecting candidate={tag} low_piece_coverage "
+                    f"{piece_count}/{full_piece_count}",
+                    file=sys.stderr,
+                )
+            continue
+        filtered.append(item)
+
+    if not filtered:
+        filtered = scored
+
+    best_tag, best_img, best_fen, best_conf, _ = max(filtered, key=lambda item: item[3])
 
     if DEBUG_MODE:
         print(f"DEBUG: Using model={resolved_model_path}", file=sys.stderr)
