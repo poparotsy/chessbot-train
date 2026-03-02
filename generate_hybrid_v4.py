@@ -13,7 +13,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Watermark hard-negative settings (empty squares only)
 ENABLE_WATERMARK_AUG = True
-WATERMARK_BOARD_PROB = 0.28
+WATERMARK_BOARD_PROB = 0.3
 WATERMARK_MIN_PER_BOARD = 1
 WATERMARK_MAX_PER_BOARD = 2
 WATERMARK_SCALE_MIN = 1.0
@@ -263,7 +263,7 @@ def draw_watermark_overlay(draw, square_rc, ts):
         draw.rectangle([cx - int(cxw * 2.4), by, cx + int(cxw * 2.4), by + cyh], fill=sil_col)
 
     # Letter mark over the piece (club/site initial).
-    letter = random.choice(("C", "D", "L", "M", "S"))
+    letter = random.choice(("C", "D", "H", "L", "M", "S"))
     try:
         font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", max(11, int(half * 0.9)))
     except Exception:
