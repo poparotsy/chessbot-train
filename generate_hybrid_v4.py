@@ -1,5 +1,5 @@
 import os, io, random, chess, torch, numpy as np
-from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageEnhance
 
 # THE GLOBAL LABEL LAW (Aligned with audit_dataset.py)
 FEN_CHARS = "1PNBRQKpnbrqk" 
@@ -124,7 +124,7 @@ def draw_annotation_marker(draw, square_rc, ts):
         center_x = x0 + offset + random.randint(-jitter, jitter)
         center_y = y0 + ts - offset + random.randint(-jitter, jitter)
 
-    radius = random.randint(8, 11)
+    radius = random.randint(9, 12)
     marker = random.choices(["ring", "!", "!!"], weights=[0.20, 0.45, 0.35], k=1)[0]
 
     if marker == "ring":
@@ -134,28 +134,44 @@ def draw_annotation_marker(draw, square_rc, ts):
             width=3)
         return
 
-    # Highlight badge for ! / !!
-    fill = random.choice([(255, 219, 77, 215), (113, 227, 122, 215), (255, 168, 84, 215)])
+    # Chess.com-style brilliant marker: turquoise round badge + thick white exclamation bars.
+    badge = random.choice([(37, 176, 176, 230), (29, 166, 167, 230), (42, 183, 184, 225)])
     draw.ellipse(
         [center_x - radius, center_y - radius, center_x + radius, center_y + radius],
-        fill=fill,
-        outline=(30, 30, 30, 190),
-        width=2)
+        fill=badge,
+        outline=(18, 120, 120, 170),
+        width=1)
 
-    try:
-        font_size = 16 if marker == "!" else 13
-        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size)
-    except Exception:
-        font = ImageFont.load_default()
+    # Subtle inner highlight for glossy look.
+    inner_r = max(3, radius - 3)
+    draw.ellipse(
+        [center_x - inner_r, center_y - inner_r, center_x + inner_r, center_y + inner_r],
+        outline=(180, 245, 245, 60),
+        width=1)
 
-    # Center text manually for broad PIL compatibility.
-    bbox = draw.textbbox((0, 0), marker, font=font)
-    text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(
-        (center_x - text_w / 2, center_y - text_h / 2 - 1),
-        marker,
-        fill=(20, 20, 20, 255),
-        font=font)
+    count = 2 if marker == "!!" else 1
+    bar_h = max(6, int(radius * 0.95))
+    bar_w = max(2, int(radius * 0.32))
+    dot_h = max(2, int(radius * 0.28))
+    gap = max(2, int(bar_w * 0.6))
+    total_w = count * bar_w + (count - 1) * gap
+    start_x = center_x - total_w // 2
+    top_y = center_y - int(radius * 0.52)
+
+    for idx in range(count):
+        x0 = int(start_x + idx * (bar_w + gap))
+        x1 = int(x0 + bar_w)
+        y0 = int(top_y)
+        y1 = int(y0 + bar_h)
+        # Tiny shadow
+        draw.rounded_rectangle([x0 + 1, y0 + 1, x1 + 1, y1 + 1], radius=2, fill=(0, 0, 0, 45))
+        # Main white stroke
+        draw.rounded_rectangle([x0, y0, x1, y1], radius=2, fill=(244, 244, 244, 255))
+
+        dot_y0 = int(y1 + max(1, radius * 0.08))
+        dot_y1 = int(dot_y0 + dot_h)
+        draw.rounded_rectangle([x0 + 1, dot_y0 + 1, x1 + 1, dot_y1 + 1], radius=1, fill=(0, 0, 0, 45))
+        draw.rounded_rectangle([x0, dot_y0, x1, dot_y1], radius=1, fill=(244, 244, 244, 255))
 
 
 def draw_empty_artifact(draw, square_rc, ts):

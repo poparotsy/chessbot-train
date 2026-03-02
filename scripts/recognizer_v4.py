@@ -13,8 +13,10 @@ from torch import nn
 IMG_SIZE, FEN_CHARS = 64, "1PNBRQKpnbrqk"
 
 MODEL_CANDIDATES = [
+    os.path.join(os.path.dirname(__file__), "..", "models", "model_hybrid_v4_250e_final.pt"),
     os.path.join(os.path.dirname(__file__), "..", "models", "model_hybrid_v4_final.pt"),
     os.path.join(os.path.dirname(__file__), "..", "models", "model_hybrid_v4_150e.pt"),
+    "models/model_hybrid_v4_250e_final.pt",
     "models/model_hybrid_v4_final.pt",
     "models/model_hybrid_v4_150e.pt",
 ]
