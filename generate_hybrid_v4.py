@@ -16,8 +16,8 @@ ENABLE_WATERMARK_AUG = True
 WATERMARK_BOARD_PROB = 0.28
 WATERMARK_MIN_PER_BOARD = 1
 WATERMARK_MAX_PER_BOARD = 2
-WATERMARK_SCALE_MIN = 0.55
-WATERMARK_SCALE_MAX = 0.85
+WATERMARK_SCALE_MIN = 1.0
+WATERMARK_SCALE_MAX = 1.5
 
 def augment_image(img):
     """Realistic augmentation mix for robust tile classification."""
