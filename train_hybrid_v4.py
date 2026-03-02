@@ -25,7 +25,7 @@ FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v4_300e_final.pt"
 CHECKPOINT_DIR = "models/checkpoints"
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 CHECKPOINT_PATH = f"{CHECKPOINT_DIR}/latest.pt"
-BASE_MODEL_PATH = "models/model_hybrid_v4_250e_final.pt"
+BASE_MODEL_PATH = "models/model_hybrid_v4_250e_best.pt"
 
 # Global flag for graceful shutdown
 INTERRUPTED = False
