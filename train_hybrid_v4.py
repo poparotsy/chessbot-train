@@ -20,12 +20,12 @@ BATCH_SIZE = 256 * max(1, GPU_COUNT)
 LEARNING_RATE = 1e-5
 EPOCHS = 333
 DATA_DIR = "tensors_v4"
-MODEL_SAVE_PATH = "models/model_hybrid_v4_best.pt"
+MODEL_SAVE_PATH = "models/model_hybrid_v4_latest_best.pt"
 FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v4_final.pt"
 CHECKPOINT_DIR = "models/checkpoints"
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 CHECKPOINT_PATH = f"{CHECKPOINT_DIR}/latest.pt"
-BASE_MODEL_PATH = "models/model_hybrid_v4_300e_best.pt"
+BASE_MODEL_PATH = "models/model_hybrid_v4_best.pt"
 
 # Global flag for graceful shutdown
 INTERRUPTED = False
