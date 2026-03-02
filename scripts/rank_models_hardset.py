@@ -18,7 +18,7 @@ DEFAULT_TRUTH = {
     "puzzle-00020.jpeg": "8/1r2kp2/1P3Rb1/2K5/1P5P/8/8/8 w - - 0 1",
     "puzzle-00021.jpeg": "8/8/8/8/K7/8/pp1Q4/k7 w - - 0 1",
     "puzzle-00023.jpeg": "6k1/p2rN1p1/1p4P1/2n5/8/4P3/PPq5/K4R1R w - - 0 1",
-    "puzzle-00024.jpeg": "4Rnk1/pr3ppp/1p3q1N/6Q1/2p5/8/P4PPP/1K4K1 w - - 0 1",
+    "puzzle-00024.jpeg": "4Rnk1/pr3ppp/1p3q1N/6Q1/2p5/8/P4PPP/6K1 w - - 0 1",
     "puzzle-00025.jpeg": "2r1n1Qk/p1p3pr/1p3p2/8/P1N5/5PP1/B1P1q2P/7K w - - 0 1",
     "puzzle-00026.jpeg": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8 w - - 0 1",
 }

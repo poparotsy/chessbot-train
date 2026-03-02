@@ -48,8 +48,10 @@ def board_to_grid(fen_board):
 
 
 def render_board_image(fen_board):
-    board_theme = random.choice(list((ROOT_DIR / "board_themes").iterdir())).name
-    piece_set = random.choice(list((ROOT_DIR / "piece_sets").iterdir())).name
+    board_themes = [p for p in (ROOT_DIR / "board_themes").iterdir() if p.is_file()]
+    piece_sets = [p for p in (ROOT_DIR / "piece_sets").iterdir() if p.is_dir()]
+    board_theme = random.choice(board_themes).name
+    piece_set = random.choice(piece_sets).name
 
     background = Image.open(ROOT_DIR / "board_themes" / board_theme).convert("RGB").resize((512, 512))
     grid = board_to_grid(fen_board)

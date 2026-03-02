@@ -1,5 +1,5 @@
 import os, io, random, chess, torch, numpy as np
-from PIL import Image, ImageDraw, ImageFilter, ImageEnhance
+from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageFont
 
 # THE GLOBAL LABEL LAW (Aligned with audit_dataset.py)
 FEN_CHARS = "1PNBRQKpnbrqk" 
@@ -10,6 +10,14 @@ BOARDS_PER_CHUNK = 1000
 CHUNKS_TRAIN, CHUNKS_VAL = 10, 2
 OUTPUT_DIR = "tensors_v4"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Watermark hard-negative settings (empty squares only)
+ENABLE_WATERMARK_AUG = True
+WATERMARK_BOARD_PROB = 0.28
+WATERMARK_MIN_PER_BOARD = 1
+WATERMARK_MAX_PER_BOARD = 2
+WATERMARK_SCALE_MIN = 0.55
+WATERMARK_SCALE_MAX = 0.85
 
 def augment_image(img):
     """Realistic augmentation mix for robust tile classification."""
@@ -199,6 +207,76 @@ def draw_empty_artifact(draw, square_rc, ts):
     draw.line([sx, sy, ex, ey], fill=color, width=random.randint(4, 7))
 
 
+def draw_watermark_overlay(draw, square_rc, ts):
+    """Draw puzzle-site style watermark: piece-like silhouette + letter mark."""
+    r, c = square_rc
+    x0, y0 = c * ts, r * ts
+
+    # Bottom-corner bias matches common puzzle-site logo placement.
+    anchor = random.choice(("bl", "br", "bc"))
+    if anchor == "bl":
+        cx = x0 + random.randint(10, 18)
+        cy = y0 + ts - random.randint(10, 18)
+    elif anchor == "br":
+        cx = x0 + ts - random.randint(10, 18)
+        cy = y0 + ts - random.randint(10, 18)
+    else:
+        cx = x0 + ts // 2 + random.randint(-6, 6)
+        cy = y0 + ts - random.randint(10, 16)
+
+    mark_size = int(ts * random.uniform(WATERMARK_SCALE_MIN, WATERMARK_SCALE_MAX))
+    half = max(8, mark_size // 2)
+
+    # Subtle blob base.
+    base = random.choice([(126, 126, 126, 88), (102, 102, 102, 100), (142, 142, 142, 76)])
+    draw.ellipse([cx - half, cy - half, cx + half, cy + half], fill=base)
+
+    # Piece-like silhouette (rook/king) inside blob.
+    sil = random.choice(("rook", "king"))
+    sil_col = (236, 236, 236, random.randint(105, 150))
+    bx = cx - int(half * 0.42)
+    by = cy - int(half * 0.48)
+    bw = int(half * 0.84)
+    bh = int(half * 0.98)
+
+    if sil == "rook":
+        # Rook body
+        draw.rounded_rectangle([bx, by + int(bh * 0.28), bx + bw, by + bh], radius=2, fill=sil_col)
+        # Rook top crenels
+        tw = max(2, bw // 4)
+        gap = max(1, tw // 3)
+        top_y0 = by + int(bh * 0.08)
+        top_y1 = by + int(bh * 0.32)
+        for i in range(3):
+            x0t = bx + i * (tw + gap)
+            x1t = x0t + tw
+            draw.rectangle([x0t, top_y0, x1t, top_y1], fill=sil_col)
+    else:
+        # King body
+        draw.rounded_rectangle([bx, by + int(bh * 0.23), bx + bw, by + bh], radius=2, fill=sil_col)
+        # Crown/head
+        draw.ellipse([cx - int(bw * 0.22), by + int(bh * 0.02), cx + int(bw * 0.22), by + int(bh * 0.3)], fill=sil_col)
+        # Tiny cross hint
+        cxw = max(1, bw // 10)
+        cyh = max(2, bh // 9)
+        draw.rectangle([cx - cxw, by - cyh, cx + cxw, by + cyh], fill=sil_col)
+        draw.rectangle([cx - int(cxw * 2.4), by, cx + int(cxw * 2.4), by + cyh], fill=sil_col)
+
+    # Letter mark over the piece (club/site initial).
+    letter = random.choice(("C", "D", "L", "M", "S"))
+    try:
+        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", max(11, int(half * 0.9)))
+    except Exception:
+        font = ImageFont.load_default()
+    bbox = draw.textbbox((0, 0), letter, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    tx = cx - tw / 2 + random.randint(-1, 1)
+    ty = cy - th / 2 + random.randint(-1, 1)
+    draw.text((tx + 1, ty + 1), letter, fill=(20, 20, 20, 70), font=font)
+    draw.text((tx, ty), letter, fill=(248, 248, 248, random.randint(145, 210)), font=font)
+
+
 def vandalize(img, grid):
     """Add arrows/highlights like chess sites with artifact-on-empty oversampling."""
     draw = ImageDraw.Draw(img, "RGBA")
@@ -234,6 +312,16 @@ def vandalize(img, grid):
         random.shuffle(empty_squares)
         for sq in empty_squares[:random.randint(2, 4)]:
             draw_empty_artifact(draw, sq, ts)
+
+    # Watermark-like overlays on empty squares (controlled via top-level vars).
+    if ENABLE_WATERMARK_AUG and empty_squares and random.random() < WATERMARK_BOARD_PROB:
+        # Bias watermark injection toward bottom ranks where logos commonly sit.
+        bottom_pref = [sq for sq in empty_squares if sq[0] >= 6]
+        pool = bottom_pref if bottom_pref else empty_squares
+        random.shuffle(pool)
+        n = random.randint(WATERMARK_MIN_PER_BOARD, WATERMARK_MAX_PER_BOARD)
+        for sq in pool[:n]:
+            draw_watermark_overlay(draw, sq, ts)
 
     return img
 
