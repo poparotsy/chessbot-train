@@ -34,13 +34,14 @@ USE_EDGE_DETECTION = True
 USE_SQUARE_DETECTION = False
 DEBUG_MODE = False
 WARP_MIN_AREA_RATIO = 0.30
-WARP_MIN_OPPOSITE_SIMILARITY = 0.50
+WARP_MIN_OPPOSITE_SIMILARITY = 0.82
 WARP_MIN_ASPECT_SIMILARITY = 0.50
 WARP_MIN_ANGLE_DEG = 50.0
 WARP_MAX_ANGLE_DEG = 130.0
 WARP_PIECE_COVERAGE_RATIO = 0.45
 WARP_PIECE_COVERAGE_MIN_FULL = 8
 FULL_CONF_FOR_COVERAGE_GUARD = 0.95
+TILE_CONTEXT_PAD = 2
 
 
 class StandaloneBeastClassifier(nn.Module):
@@ -330,7 +331,11 @@ def infer_fen_on_image(img, model, device, use_square_detection):
         for r in range(8):
             row = ""
             for c in range(8):
-                tile = img.crop((xe[c], ye[r], xe[c + 1], ye[r + 1])).resize((IMG_SIZE, IMG_SIZE), Image.LANCZOS)
+                x0 = max(0, int(xe[c] - TILE_CONTEXT_PAD))
+                y0 = max(0, int(ye[r] - TILE_CONTEXT_PAD))
+                x1 = min(w, int(xe[c + 1] + TILE_CONTEXT_PAD))
+                y1 = min(h, int(ye[r + 1] + TILE_CONTEXT_PAD))
+                tile = img.crop((x0, y0, x1, y1)).resize((IMG_SIZE, IMG_SIZE), Image.LANCZOS)
                 img_np = np.array(tile).transpose(2, 0, 1)
                 tensor = torch.from_numpy(img_np).float().to(device)
                 tensor = (tensor / 127.5) - 1.0
@@ -358,6 +363,74 @@ def inset_board(img, px):
     if w <= 2 * px or h <= 2 * px:
         return img
     return img.crop((px, px, w - px, h - px)).resize((w, h), Image.LANCZOS)
+
+
+def trim_dark_edge_bars(img):
+    """Trim dark screenshot bars on edges (top/bottom/left/right) before 8x8 slicing."""
+    arr = np.array(img)
+    if arr.ndim == 3:
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = arr
+
+    h, w = gray.shape
+    if h < 64 or w < 64:
+        return img
+
+    mid = gray[int(h * 0.2) : int(h * 0.8), int(w * 0.2) : int(w * 0.8)]
+    if mid.size == 0:
+        return img
+    ref = float(np.median(mid))
+    dark_thr = ref * 0.70
+
+    max_trim_y = int(h * 0.18)
+    max_trim_x = int(w * 0.12)
+
+    row_mean = gray.mean(axis=1)
+    col_mean = gray.mean(axis=0)
+
+    top = 0
+    while top < max_trim_y and row_mean[top] < dark_thr:
+        top += 1
+
+    bottom = 0
+    while bottom < max_trim_y and row_mean[h - 1 - bottom] < dark_thr:
+        bottom += 1
+
+    left = 0
+    while left < max_trim_x and col_mean[left] < dark_thr:
+        left += 1
+
+    right = 0
+    while right < max_trim_x and col_mean[w - 1 - right] < dark_thr:
+        right += 1
+
+    # Ignore tiny/noisy trims.
+    if top < int(h * 0.02):
+        top = 0
+    if bottom < int(h * 0.02):
+        bottom = 0
+    if left < int(w * 0.015):
+        left = 0
+    if right < int(w * 0.015):
+        right = 0
+
+    if top == 0 and bottom == 0 and left == 0 and right == 0:
+        return img
+
+    x0, y0 = left, top
+    x1, y1 = w - right, h - bottom
+    if x1 - x0 < int(w * 0.65) or y1 - y0 < int(h * 0.65):
+        return img
+
+    if DEBUG_MODE:
+        print(
+            f"DEBUG: trim_dark_edge_bars top={top} bottom={bottom} left={left} right={right}",
+            file=sys.stderr,
+        )
+
+    cropped = img.crop((x0, y0, x1, y1))
+    return cropped.resize((w, h), Image.LANCZOS)
 
 
 def predict_board(image_path, model_path=None):
@@ -425,6 +498,7 @@ def predict_board(image_path, model_path=None):
 
     scored = []
     for tag, candidate_img in candidates:
+        candidate_img = trim_dark_edge_bars(candidate_img)
         fen, conf, piece_count = infer_fen_on_image(candidate_img, model, device, USE_SQUARE_DETECTION)
         scored.append((tag, candidate_img, fen, conf, piece_count))
         if DEBUG_MODE:
