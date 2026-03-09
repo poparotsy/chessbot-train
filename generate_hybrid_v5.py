@@ -1,4 +1,13 @@
-import os, io, random, chess, torch, numpy as np
+import os, io, random
+
+try:
+    import chess
+except ModuleNotFoundError as exc:
+    raise ModuleNotFoundError(
+        "Missing dependency 'python-chess'. Run: python3 -m pip install -r requirements.txt"
+    ) from exc
+
+import torch, numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageFont
 
 # THE GLOBAL LABEL LAW (Aligned with audit_dataset.py)
