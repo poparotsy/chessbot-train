@@ -12,18 +12,26 @@ from torch import nn
 
 IMG_SIZE, FEN_CHARS = 64, "1PNBRQKpnbrqk"
 
-MODEL_CANDIDATES = [
-    os.path.join(os.path.dirname(__file__), "..", "models", "model_hybrid_v4_300e_last_best.pt"),
-    os.path.join(os.path.dirname(__file__), "..", "models", "model_hybrid_v4_300e_best.pt"),
-    os.path.join(os.path.dirname(__file__), "..", "models", "model_hybrid_v4_250e_final.pt"),
-    os.path.join(os.path.dirname(__file__), "..", "models", "model_hybrid_v4_final.pt"),
-    os.path.join(os.path.dirname(__file__), "..", "models", "model_hybrid_v4_150e.pt"),
+THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_FILENAMES = [
     "model_hybrid_v4_300e_last_best.pt",
     "model_hybrid_v4_300e_best.pt",
-    "models/model_hybrid_v4_250e_final.pt",
-    "models/model_hybrid_v4_final.pt",
-    "models/model_hybrid_v4_150e.pt",
+    "model_hybrid_v4_250e_final.pt",
+    "model_hybrid_v4_final.pt",
+    "model_hybrid_v4_150e.pt",
 ]
+MODEL_SEARCH_DIRS = [
+    os.path.join(THIS_DIR, "models"),
+    os.path.join(THIS_DIR, "..", "models"),
+    THIS_DIR,
+    os.path.join(THIS_DIR, ".."),
+]
+MODEL_CANDIDATES = []
+for model_dir in MODEL_SEARCH_DIRS:
+    for filename in MODEL_FILENAMES:
+        candidate = os.path.abspath(os.path.join(model_dir, filename))
+        if candidate not in MODEL_CANDIDATES:
+            MODEL_CANDIDATES.append(candidate)
 MODEL_PATH = next((path for path in MODEL_CANDIDATES if os.path.exists(path)), None)
 
 # Edge detection parameters
@@ -311,8 +319,218 @@ def detect_grid_lines(img):
     return None
 
 
-def infer_fen_on_image(img, model, device, use_square_detection):
+def extract_file_label_crop(img, side="left"):
+    cell = min(img.size) / 8.0
+    y0 = img.size[1] - int(cell)
+    if side == "left":
+        x0 = 0
+        x1 = int(cell)
+    elif side == "right":
+        x0 = img.size[0] - int(cell)
+        x1 = img.size[0]
+    else:
+        raise ValueError("side must be 'left' or 'right'")
+
+    cell_crop = img.crop((x0, y0, x1, img.size[1]))
+    return cell_crop.crop(
+        (
+            int(cell * 0.74),
+            int(cell * 0.72),
+            int(cell * 0.98),
+            int(cell * 0.98),
+        )
+    )
+
+
+def classify_file_label_crop(crop):
+    gray = np.array(crop.convert("L"))
+    h, w = gray.shape
+    best = None
+
+    for threshold_mode in (cv2.THRESH_BINARY, cv2.THRESH_BINARY_INV):
+        _, binary = cv2.threshold(gray, 0, 255, threshold_mode | cv2.THRESH_OTSU)
+        num_components, labels, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
+        for component_id in range(1, num_components):
+            x, y, bw, bh, area = stats[component_id]
+            area_ratio = area / float(h * w)
+            aspect = bw / max(bh, 1)
+            if area_ratio < 0.04 or area_ratio > 0.45:
+                continue
+            if bw >= w * 0.8 or bh >= h * 0.9:
+                continue
+            if aspect < 0.15 or aspect > 1.2:
+                continue
+
+            center_dist = abs((x + bw / 2) - w * 0.55) + abs((y + bh / 2) - h * 0.55)
+            score = area_ratio * 100.0 - center_dist * 0.12
+            if best is None or score > best["score"]:
+                best = {
+                    "score": score,
+                    "binary": binary,
+                    "component_id": component_id,
+                    "bbox": (int(x), int(y), int(bw), int(bh)),
+                    "area_ratio": float(area_ratio),
+                    "aspect": float(aspect),
+                }
+
+    if best is None:
+        return None
+
+    _, labels, _, _ = cv2.connectedComponentsWithStats(best["binary"], 8)
+    mask = np.zeros_like(best["binary"])
+    mask[labels == best["component_id"]] = 255
+    contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    holes = 0
+    if hierarchy is not None:
+        hierarchy = hierarchy[0]
+        for contour_idx in range(len(contours)):
+            if hierarchy[contour_idx][3] != -1:
+                holes += 1
+
+    label = "a" if holes >= 1 else "h"
+    confidence = 0.55 + min(0.35, best["area_ratio"]) + min(0.10, holes * 0.08)
+    return {
+        "label": label,
+        "confidence": min(0.99, float(confidence)),
+        "holes": holes,
+        "bbox": best["bbox"],
+        "aspect": best["aspect"],
+    }
+
+
+def infer_board_perspective_from_labels(img):
+    left_label = classify_file_label_crop(extract_file_label_crop(img, side="left"))
+    right_label = classify_file_label_crop(extract_file_label_crop(img, side="right"))
+    details = {"left": left_label, "right": right_label}
+    # Conservative: only auto-orient when both side labels are present,
+    # high-confidence, and mutually consistent.
+    if (
+        left_label
+        and right_label
+        and left_label["confidence"] >= 0.72
+        and right_label["confidence"] >= 0.72
+    ):
+        if left_label["label"] == "a" and right_label["label"] == "h":
+            return {
+                "perspective": "white",
+                "source": "board_labels",
+                "details": details,
+            }
+        if left_label["label"] == "h" and right_label["label"] == "a":
+            return {
+                "perspective": "black",
+                "source": "board_labels",
+                "details": details,
+            }
+    return None
+
+
+def infer_board_perspective_from_piece_distribution(fen_board, threshold=2.0):
+    rows = expand_fen_board(fen_board)
+    white_rows = []
+    black_rows = []
+    for r, row in enumerate(rows):
+        for ch in row:
+            if ch == "1":
+                continue
+            if ch.isupper():
+                white_rows.append(r)
+            else:
+                black_rows.append(r)
+    if not white_rows or not black_rows:
+        return None
+
+    white_mean = sum(white_rows) / len(white_rows)
+    black_mean = sum(black_rows) / len(black_rows)
+    # If black pieces sit significantly lower in image coordinates,
+    # the screenshot is likely black POV and should be rotated.
+    if (black_mean - white_mean) > threshold:
+        return "black"
+    return "white"
+
+
+def expand_fen_board(fen):
+    rows = []
+    for row in fen.split("/"):
+        expanded = []
+        for ch in row:
+            if ch.isdigit():
+                expanded.extend("1" * int(ch))
+            else:
+                expanded.append(ch)
+        rows.append("".join(expanded))
+    return rows
+
+
+def compress_fen_board(rows):
+    return "/".join(re.sub(r"1+", lambda m: str(len(m.group())), row) for row in rows)
+
+
+def rotate_fen_180(fen):
+    rows = expand_fen_board(fen)
+    rotated = ["".join(reversed(row)) for row in reversed(rows)]
+    return compress_fen_board(rotated)
+
+
+def build_fen_from_tile_infos(tile_infos):
+    rows = []
+    for row_idx in range(8):
+        row = "".join(tile_infos[row_idx * 8 + col_idx]["label"] for col_idx in range(8))
+        rows.append(row)
+    fen = "/".join(rows)
+    return "/".join(re.sub(r"1+", lambda m: str(len(m.group())), row) for row in fen.split("/"))
+
+
+def repair_duplicate_kings(tile_infos):
+    repaired = [dict(tile, topk=list(tile["topk"])) for tile in tile_infos]
+
+    for king_label in ("K", "k"):
+        king_tiles = [tile for tile in repaired if tile["label"] == king_label]
+        if len(king_tiles) <= 1:
+            continue
+
+        king_tiles.sort(key=lambda tile: tile["prob"], reverse=True)
+        for extra_tile in king_tiles[1:]:
+            replacement_label = "1"
+            replacement_prob = extra_tile["prob"]
+            found_empty = False
+            for alt_label, alt_prob in extra_tile["topk"]:
+                if alt_label == "1":
+                    replacement_label = alt_label
+                    replacement_prob = alt_prob
+                    found_empty = True
+                    break
+            if not found_empty:
+                for alt_label, alt_prob in extra_tile["topk"]:
+                    if alt_label == king_label:
+                        continue
+                    replacement_label = alt_label
+                    replacement_prob = alt_prob
+                    break
+            extra_tile["label"] = replacement_label
+            extra_tile["prob"] = replacement_prob
+
+    white_kings = sum(1 for tile in repaired if tile["label"] == "K")
+    black_kings = sum(1 for tile in repaired if tile["label"] == "k")
+    if white_kings != 1 or black_kings != 1:
+        return None
+
+    piece_count = sum(1 for tile in repaired if tile["label"] != "1")
+    mean_conf = float(np.mean([tile["prob"] for tile in repaired])) if repaired else 0.0
+    return build_fen_from_tile_infos(repaired), mean_conf, piece_count
+
+
+def infer_fen_on_image(
+    img,
+    model,
+    device,
+    use_square_detection,
+    board_perspective="white",
+):
     """Run tile inference on a prepared board image and return fen stats."""
+    if board_perspective not in {"white", "black"}:
+        raise ValueError("board_perspective must be 'white' or 'black'")
+
     w, h = img.size
     if use_square_detection:
         grid = detect_grid_lines(img)
@@ -326,15 +544,22 @@ def infer_fen_on_image(img, model, device, use_square_detection):
         ye = np.linspace(0, h, 9).astype(int)
 
     fen, confs = [], []
+    tile_infos = []
     piece_count = 0
     with torch.no_grad():
         for r in range(8):
             row = ""
             for c in range(8):
-                x0 = max(0, int(xe[c] - TILE_CONTEXT_PAD))
-                y0 = max(0, int(ye[r] - TILE_CONTEXT_PAD))
-                x1 = min(w, int(xe[c + 1] + TILE_CONTEXT_PAD))
-                y1 = min(h, int(ye[r + 1] + TILE_CONTEXT_PAD))
+                image_r = r
+                image_c = c
+                if board_perspective == "black":
+                    image_r = 7 - r
+                    image_c = 7 - c
+
+                x0 = max(0, int(xe[image_c] - TILE_CONTEXT_PAD))
+                y0 = max(0, int(ye[image_r] - TILE_CONTEXT_PAD))
+                x1 = min(w, int(xe[image_c + 1] + TILE_CONTEXT_PAD))
+                y1 = min(h, int(ye[image_r + 1] + TILE_CONTEXT_PAD))
                 tile = img.crop((x0, y0, x1, y1)).resize((IMG_SIZE, IMG_SIZE), Image.LANCZOS)
                 img_np = np.array(tile).transpose(2, 0, 1)
                 tensor = torch.from_numpy(img_np).float().to(device)
@@ -342,19 +567,38 @@ def infer_fen_on_image(img, model, device, use_square_detection):
                 tensor = tensor.unsqueeze(0)
 
                 out = torch.softmax(model(tensor), dim=1)
+                topk_probs, topk_pred = torch.topk(out[0], k=min(3, len(FEN_CHARS)))
+                topk = [(FEN_CHARS[int(idx.item())], float(prob.item())) for prob, idx in zip(topk_probs, topk_pred)]
                 prob, pred = torch.max(out, 1)
                 if prob.item() < 0.35:
-                    row += "1"
+                    label = "1"
                 else:
                     label = FEN_CHARS[pred.item()]
-                    row += label
-                    if label != "1":
-                        piece_count += 1
+                row += label
+                if label != "1":
+                    piece_count += 1
                 confs.append(prob.item())
+                tile_infos.append(
+                    {
+                        "row": r,
+                        "col": c,
+                        "label": label,
+                        "prob": float(prob.item()),
+                        "topk": topk,
+                    }
+                )
             fen.append(row)
 
     result = "/".join(fen)
     result = "/".join([re.sub(r"1+", lambda m: str(len(m.group())), row) for row in result.split("/")])
+    repaired = repair_duplicate_kings(tile_infos)
+    if repaired is not None:
+        repaired_fen, repaired_conf, repaired_piece_count = repaired
+        if DEBUG_MODE and repaired_fen != result:
+            print(f"DEBUG: repaired duplicate kings {result} -> {repaired_fen}", file=sys.stderr)
+        result = repaired_fen
+        return result, repaired_conf, repaired_piece_count
+
     return result, float(np.mean(confs)), piece_count
 
 
@@ -433,7 +677,7 @@ def trim_dark_edge_bars(img):
     return cropped.resize((w, h), Image.LANCZOS)
 
 
-def predict_board(image_path, model_path=None):
+def predict_board(image_path, model_path=None, board_perspective="auto"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     resolved_model_path = model_path or MODEL_PATH
     if not resolved_model_path:
@@ -496,14 +740,57 @@ def predict_board(image_path, model_path=None):
                 candidates.append(("legacy", legacy_img))
                 candidates.append(("legacy_inset2", inset_board(legacy_img, 2)))
 
+    full_candidate_img = trim_dark_edge_bars(candidates[0][1].copy())
+    label_perspective_result = None
+    label_details = {"left": None, "right": None}
+    labels_absent = True
+    labels_same = False
+    if board_perspective == "auto":
+        label_perspective_result = infer_board_perspective_from_labels(full_candidate_img)
+        label_details = label_perspective_result["details"] if label_perspective_result else {
+            "left": classify_file_label_crop(extract_file_label_crop(full_candidate_img, side="left")),
+            "right": classify_file_label_crop(extract_file_label_crop(full_candidate_img, side="right")),
+        }
+        labels_absent = label_details["left"] is None and label_details["right"] is None
+        labels_same = (
+            label_details["left"] is not None
+            and label_details["right"] is not None
+            and label_details["left"]["label"] == label_details["right"]["label"]
+        )
+
     scored = []
     for tag, candidate_img in candidates:
         candidate_img = trim_dark_edge_bars(candidate_img)
-        fen, conf, piece_count = infer_fen_on_image(candidate_img, model, device, USE_SQUARE_DETECTION)
-        scored.append((tag, candidate_img, fen, conf, piece_count))
+        raw_fen, conf, piece_count = infer_fen_on_image(
+            candidate_img,
+            model,
+            device,
+            USE_SQUARE_DETECTION,
+        )
+        perspective_source = "override"
+        if board_perspective == "auto":
+            if label_perspective_result is None:
+                detected_perspective = "white"
+                perspective_source = "default"
+                if labels_absent or labels_same:
+                    fallback_perspective = infer_board_perspective_from_piece_distribution(raw_fen)
+                    if fallback_perspective == "black":
+                        detected_perspective = "black"
+                        perspective_source = "piece_distribution_fallback"
+            else:
+                detected_perspective = label_perspective_result["perspective"]
+                perspective_source = label_perspective_result["source"]
+        elif board_perspective not in {"white", "black"}:
+            raise ValueError("board_perspective must be 'auto', 'white', or 'black'")
+        else:
+            detected_perspective = board_perspective
+
+        final_fen = rotate_fen_180(raw_fen) if detected_perspective == "black" else raw_fen
+        scored.append((tag, candidate_img, final_fen, conf, piece_count, detected_perspective, perspective_source))
         if DEBUG_MODE:
             print(
-                f"DEBUG: Candidate={tag} conf={conf:.4f} pieces={piece_count}",
+                f"DEBUG: Candidate={tag} conf={conf:.4f} pieces={piece_count} "
+                f"perspective={detected_perspective} source={perspective_source}",
                 file=sys.stderr,
             )
 
@@ -511,7 +798,7 @@ def predict_board(image_path, model_path=None):
     full_conf = next((item[3] for item in scored if item[0] == "full"), 0.0)
     filtered = []
     for item in scored:
-        tag, _, _, _, piece_count = item
+        tag, _, _, _, piece_count, _, _ = item
         if (
             tag != "full"
             and full_conf >= FULL_CONF_FOR_COVERAGE_GUARD
@@ -530,11 +817,17 @@ def predict_board(image_path, model_path=None):
     if not filtered:
         filtered = scored
 
-    best_tag, best_img, best_fen, best_conf, _ = max(filtered, key=lambda item: item[3])
+    best_tag, best_img, best_fen, best_conf, _, best_perspective, best_perspective_source = max(
+        filtered, key=lambda item: item[3]
+    )
 
     if DEBUG_MODE:
         print(f"DEBUG: Using model={resolved_model_path}", file=sys.stderr)
         print(f"DEBUG: Selected candidate={best_tag} confidence={best_conf:.4f}", file=sys.stderr)
+        print(
+            f"DEBUG: Selected perspective={best_perspective} source={best_perspective_source}",
+            file=sys.stderr,
+        )
         preprocessed_path = os.path.join(debug_dir, f"{base_name}_preprocessed.png")
         best_img.save(preprocessed_path)
         print(f"DEBUG: Selected board image saved to {preprocessed_path}", file=sys.stderr)
@@ -548,6 +841,12 @@ if __name__ == "__main__":
     parser.add_argument("--model-path", default=None, help="Override model path")
     parser.add_argument("--no-edge-detection", action="store_true", help="Disable edge detection")
     parser.add_argument("--detect-squares", action="store_true", help="Enable square grid detection")
+    parser.add_argument(
+        "--board-perspective",
+        choices=["auto", "white", "black"],
+        default="auto",
+        help="Infer perspective automatically, or force White/Black at the bottom",
+    )
     parser.add_argument("--debug", action="store_true", help="Save debug images")
     args = parser.parse_args()
 
@@ -556,7 +855,11 @@ if __name__ == "__main__":
     DEBUG_MODE = args.debug
 
     try:
-        fen, conf = predict_board(args.image, model_path=args.model_path)
+        fen, conf = predict_board(
+            args.image,
+            model_path=args.model_path,
+            board_perspective=args.board_perspective,
+        )
         result = {
             "success": True,
             "fen": f"{fen} w - - 0 1",

@@ -4,13 +4,19 @@
 import argparse
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 import torch
 
-import recognizer_v4 as rec
+SCRIPT_DIR = Path(__file__).resolve().parent
+TRAIN_DIR = SCRIPT_DIR.parent
+if str(TRAIN_DIR) not in sys.path:
+    sys.path.insert(0, str(TRAIN_DIR))
+
+import recognizer_v5 as rec
 
 
 DEFAULT_TRUTH = {
@@ -21,6 +27,7 @@ DEFAULT_TRUTH = {
     "puzzle-00024.jpeg": "4Rnk1/pr3ppp/1p3q1N/6Q1/2p5/8/P4PPP/6K1 w - - 0 1",
     "puzzle-00025.jpeg": "2r1n1Qk/p1p3pr/1p3p2/8/P1N5/5PP1/B1P1q2P/7K w - - 0 1",
     "puzzle-00026.jpeg": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8 w - - 0 1",
+    "puzzle-00030.jpeg": "r2q2rk/bpp2p1p/p4PbQ/6N1/8/3P4/PP4PP/4RR1K w - - 0 1",
 }
 
 
@@ -35,12 +42,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--images-dir",
-        default="images_4_test",
+        default=str(TRAIN_DIR / "images_4_test"),
         help="Directory containing puzzle images (default: images_4_test)",
     )
     parser.add_argument(
         "--truth-json",
-        default=None,
+        default=str(TRAIN_DIR / "images_4_test" / "truth_known.json"),
         help="Optional path to JSON file: {\"puzzle-xxxxx.jpeg\": \"fen ...\"}",
     )
     parser.add_argument(
@@ -48,11 +55,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print mismatches for each model.",
     )
+    parser.add_argument(
+        "--compare-full-fen",
+        action="store_true",
+        help="Compare full FEN including side-to-move (default compares board part only).",
+    )
     return parser.parse_args()
 
 
 def load_truth(truth_json: str | None) -> Dict[str, str]:
     if not truth_json:
+        return dict(DEFAULT_TRUTH)
+    if not os.path.exists(truth_json):
         return dict(DEFAULT_TRUTH)
     with open(truth_json, "r", encoding="utf-8") as handle:
         return json.load(handle)
@@ -69,7 +83,12 @@ def materialize_state_dict(model_path: Path) -> Tuple[Path, tempfile.TemporaryDi
     return model_path, None
 
 
-def evaluate_model(model_file: Path, truth: Dict[str, str], images_dir: Path) -> Dict:
+def evaluate_model(
+    model_file: Path,
+    truth: Dict[str, str],
+    images_dir: Path,
+    compare_full_fen: bool,
+) -> Dict:
     state_path, tmpdir = materialize_state_dict(model_file)
     passed = 0
     total = len(truth)
@@ -86,10 +105,18 @@ def evaluate_model(model_file: Path, truth: Dict[str, str], images_dir: Path) ->
                 continue
 
             fen, conf = rec.predict_board(str(image_path), model_path=str(state_path))
-            predicted_fen = f"{fen} w - - 0 1"
+            side_to_move, _source = rec.infer_side_to_move_from_checks(fen)
+            predicted_fen = f"{fen} {side_to_move} - - 0 1"
             conf_sum += float(conf)
 
-            if predicted_fen == expected_fen:
+            if compare_full_fen:
+                expected_cmp = expected_fen
+                predicted_cmp = predicted_fen
+            else:
+                expected_cmp = expected_fen.split()[0]
+                predicted_cmp = fen
+
+            if predicted_cmp == expected_cmp:
                 passed += 1
             else:
                 mismatches.append(
@@ -97,6 +124,7 @@ def evaluate_model(model_file: Path, truth: Dict[str, str], images_dir: Path) ->
                         "image": image_name,
                         "expected": expected_fen,
                         "predicted": predicted_fen,
+                        "predicted_board": fen,
                         "confidence": round(float(conf), 4),
                     }
                 )
@@ -130,7 +158,7 @@ def main() -> None:
     reports = []
     for model_file in model_files:
         try:
-            report = evaluate_model(model_file, truth, images_dir)
+            report = evaluate_model(model_file, truth, images_dir, args.compare_full_fen)
             reports.append(report)
             print(
                 f"{model_file} -> {report['passed']}/{report['total']} "

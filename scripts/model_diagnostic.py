@@ -7,7 +7,7 @@ import torch
 import json
 
 # Load the checkpoint to inspect its structure
-MODEL_PATH = "./models/model_hybrid_v4_final.pt"
+MODEL_PATH = "./models/model_hybrid_v4_300e_last_best.pt"
 
 
 def inspect_checkpoint():

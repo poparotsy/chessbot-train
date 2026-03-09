@@ -2,13 +2,22 @@
 import argparse
 import json
 import os
+import sys
 from dataclasses import dataclass
 
 import numpy as np
 import torch
 from PIL import Image
 
-import recognizer_v4 as r4
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+TRAIN_DIR = os.path.dirname(SCRIPT_DIR)
+if TRAIN_DIR not in sys.path:
+    sys.path.insert(0, TRAIN_DIR)
+
+import recognizer_v5 as r5
+
+r4 = r5.v4
+args_no_edge_detection = False
 
 
 @dataclass
@@ -34,28 +43,9 @@ def square_name(row, col):
 
 
 def build_candidates(original_img):
-    candidates = [("full", original_img)]
-    if not r4.USE_EDGE_DETECTION:
-        return candidates
-
-    iw, ih = original_img.size
-    robust = r4.find_board_corners(original_img)
-    if robust is not None:
-        m = r4.compute_quad_metrics(robust, iw, ih)
-        if r4.is_warp_geometry_trustworthy(m):
-            warped = r4.perspective_transform(original_img, robust)
-            candidates.append(("robust", warped))
-            candidates.append(("robust_inset2", r4.inset_board(warped, 2)))
-
-    legacy = r4.find_board_corners_legacy(original_img)
-    if legacy is not None:
-        m = r4.compute_quad_metrics(legacy, iw, ih)
-        if r4.is_warp_geometry_trustworthy(m):
-            warped = r4.perspective_transform(original_img, legacy)
-            candidates.append(("legacy", warped))
-            candidates.append(("legacy_inset2", r4.inset_board(warped, 2)))
-
-    return candidates
+    if args_no_edge_detection:
+        return [("full", original_img)]
+    return r5.BoardDetector(debug=False).candidate_images(original_img)
 
 
 def classify_board(model, device, board_img, topk):
@@ -131,7 +121,7 @@ def select_candidate(scored):
     if not filtered:
         filtered = scored
 
-    return max(filtered, key=lambda it: it["mean_conf"])
+    return max(filtered, key=lambda it: (r5.board_plausibility_score(it["fen"]), it["mean_conf"]))
 
 
 def load_model(path, device):
@@ -156,7 +146,8 @@ def main():
     parser.add_argument("--no-edge-detection", action="store_true", help="Disable edge candidates")
     args = parser.parse_args()
 
-    r4.USE_EDGE_DETECTION = not args.no_edge_detection
+    global args_no_edge_detection
+    args_no_edge_detection = args.no_edge_detection
     specs = parse_model_specs(args.models)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -175,6 +166,7 @@ def main():
                     "grid": grid,
                     "mean_conf": mean_conf,
                     "piece_count": piece_count,
+                    "fen": fen_from_grid(grid),
                 }
             )
         best = select_candidate(scored)

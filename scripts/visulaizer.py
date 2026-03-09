@@ -1,9 +1,10 @@
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 
 # 1. Load the first chunk
-data_path = "tensors_v4/val_0.pt"
+data_path = os.getenv("DATA_PATH", "tensors_v5/val_0.pt")
 data = torch.load(data_path, map_location='cpu')
 x = data['x']  # The images
 y = data['y']  # The labels
@@ -43,4 +44,3 @@ for i in range(16):
 plt.tight_layout()
 plt.savefig("debug_tiles.png")
 print("--- Check debug_tiles.png to see the images! ---")
-
