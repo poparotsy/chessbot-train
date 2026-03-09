@@ -7,6 +7,7 @@ import gc
 import time
 import signal
 import sys
+import subprocess
 from torch.utils.data import DataLoader, TensorDataset
 
 # ============ SYSTEM STABILITY ============
@@ -23,6 +24,10 @@ EPOCHS = 333
 LEARNING_RATE = 1e-5
 BATCH_SIZE_PER_GPU = 256
 RESUME_FROM_CHECKPOINT = True
+RUN_HARDSET_EVAL_ON_BEST = True
+HARDSET_EVAL_SCRIPT = "scripts/rank_models_hardset.py"
+HARDSET_TRUTH_JSON = "images_4_test/truth_known.json"
+HARDSET_COMPARE_FULL_FEN = False
 
 # ============ ADVANCED / INTERNAL (USUALLY DON'T TOUCH) ============
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -100,6 +105,46 @@ def extract_model_state(payload):
     if isinstance(payload, dict) and "model_state" in payload:
         return payload["model_state"], "checkpoint"
     return payload, "state_dict"
+
+
+def run_hardset_eval_on_best(model_path):
+    """Optionally run hardset ranking after best-model save."""
+    if not RUN_HARDSET_EVAL_ON_BEST:
+        return
+
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), HARDSET_EVAL_SCRIPT)
+    if not os.path.exists(script_path):
+        print(f"   ⚠️ Hardset eval script not found: {script_path}")
+        return
+
+    cmd = [
+        sys.executable,
+        script_path,
+        "--models-glob",
+        model_path,
+        "--truth-json",
+        HARDSET_TRUTH_JSON,
+    ]
+    if HARDSET_COMPARE_FULL_FEN:
+        cmd.append("--compare-full-fen")
+
+    print("   📊 Running hardset ranking on new best model...")
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.stdout:
+            print(proc.stdout.rstrip())
+        if proc.stderr:
+            print(proc.stderr.rstrip())
+        if proc.returncode != 0:
+            print(f"   ⚠️ Hardset ranking exited with code {proc.returncode}")
+    except Exception as exc:
+        print(f"   ⚠️ Hardset ranking failed: {exc}")
 
 
 def train():
@@ -249,6 +294,7 @@ def train():
             train.best_acc = accuracy
             torch.save(save_obj, MODEL_SAVE_PATH)
             print(f"   💾 Best model saved (acc: {accuracy:.4f})")
+            run_hardset_eval_on_best(MODEL_SAVE_PATH)
 
         scheduler.step()
 
