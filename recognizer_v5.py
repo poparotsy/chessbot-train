@@ -16,9 +16,7 @@ THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_FILENAMES = [
     "model_hybrid_v4_300e_last_best.pt",
     "model_hybrid_v4_300e_best.pt",
-    "model_hybrid_v4_250e_final.pt",
     "model_hybrid_v4_final.pt",
-    "model_hybrid_v4_150e.pt",
 ]
 MODEL_SEARCH_DIRS = [
     os.path.join(THIS_DIR, "models"),

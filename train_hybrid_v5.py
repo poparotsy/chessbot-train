@@ -13,33 +13,23 @@ from torch.utils.data import DataLoader, TensorDataset
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 
-def env_str(name, default):
-    return os.getenv(name, default)
+# ============ HUMAN CONFIG (SAFE TO EDIT) ============
+DATA_DIR = "tensors_v5"
+MODEL_SAVE_PATH = "models/model_hybrid_v5_latest_best.pt"
+FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v5_final.pt"
+CHECKPOINT_DIR = "models/checkpoints_v5"
+BASE_MODEL_PATH = "models/model_hybrid_v4_300e_last_best.pt"
+EPOCHS = 333
+LEARNING_RATE = 1e-5
+BATCH_SIZE_PER_GPU = 256
+RESUME_FROM_CHECKPOINT = True
 
-
-def env_int(name, default):
-    raw = os.getenv(name)
-    return int(raw) if raw is not None else default
-
-
-def env_float(name, default):
-    raw = os.getenv(name)
-    return float(raw) if raw is not None else default
-
-# ============ PRODUCTION CONFIG ============
+# ============ ADVANCED / INTERNAL (USUALLY DON'T TOUCH) ============
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 GPU_COUNT = torch.cuda.device_count()
-# Conservative batching for 14GB-16GB GPUs
-BATCH_SIZE = env_int("BATCH_SIZE", 256 * max(1, GPU_COUNT))
-LEARNING_RATE = env_float("LEARNING_RATE", 1e-5)
-EPOCHS = env_int("EPOCHS", 333)
-DATA_DIR = env_str("DATA_DIR", "tensors_v5")
-MODEL_SAVE_PATH = env_str("MODEL_SAVE_PATH", "models/model_hybrid_v5_latest_best.pt")
-FINAL_MODEL_SAVE_PATH = env_str("FINAL_MODEL_SAVE_PATH", "models/model_hybrid_v5_final.pt")
-CHECKPOINT_DIR = env_str("CHECKPOINT_DIR", "models/checkpoints_v5")
+BATCH_SIZE = BATCH_SIZE_PER_GPU * max(1, GPU_COUNT)
+CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, "latest.pt")
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
-CHECKPOINT_PATH = f"{CHECKPOINT_DIR}/latest.pt"
-BASE_MODEL_PATH = env_str("BASE_MODEL_PATH", "models/model_hybrid_v4_300e_last_best.pt")
 
 # Global flag for graceful shutdown
 INTERRUPTED = False
@@ -123,18 +113,6 @@ def train():
         model = nn.DataParallel(model)
     model.to(DEVICE)
 
-    # Warm-start from completed v3 model for Phase 3 continuation.
-    if os.path.exists(BASE_MODEL_PATH):
-        raw_payload = torch.load(BASE_MODEL_PATH, map_location=DEVICE)
-        base_state, base_kind = extract_model_state(raw_payload)
-        if GPU_COUNT > 1:
-            model.module.load_state_dict(base_state)
-        else:
-            model.load_state_dict(base_state)
-        print(f"📦 Loaded base model ({base_kind}): {BASE_MODEL_PATH}")
-    else:
-        print(f"⚠️ Base model not found: {BASE_MODEL_PATH} (training from scratch)")
-
     weights = torch.tensor([0.7] + [1.3] * 12).to(DEVICE)
     # Use Focal Loss instead of CrossEntropy - focuses on hard examples
     criterion = FocalLoss(alpha=1, gamma=2, weight=weights)
@@ -144,10 +122,13 @@ def train():
     train_files = sorted(glob.glob(f"{DATA_DIR}/train_*.pt"))
     val_files = sorted(glob.glob(f"{DATA_DIR}/val_*.pt"))
 
-    # Resume v4-specific checkpoint if available
+    # Explicit precedence:
+    # 1) resume checkpoint when enabled and present
+    # 2) otherwise warm-start from base model
     start_epoch = 0
-    if os.path.exists(CHECKPOINT_PATH):
-        print(f"📂 Resuming from checkpoint...")
+    resumed = False
+    if RESUME_FROM_CHECKPOINT and os.path.exists(CHECKPOINT_PATH):
+        print(f"📂 Resuming from checkpoint: {CHECKPOINT_PATH}")
         checkpoint = torch.load(CHECKPOINT_PATH, map_location=DEVICE)
         if GPU_COUNT > 1:
             model.module.load_state_dict(checkpoint['model_state'])
@@ -157,12 +138,30 @@ def train():
         scheduler.load_state_dict(checkpoint['scheduler_state'])
         start_epoch = checkpoint['epoch'] + 1
         train.best_acc = checkpoint.get('accuracy', 0.0)
+        resumed = True
         print(f"✅ Resumed from epoch {start_epoch}")
         # Ensure there is always at least one exported model file on resume.
         if not os.path.exists(MODEL_SAVE_PATH):
             save_obj = model.module.state_dict() if GPU_COUNT > 1 else model.state_dict()
             torch.save(save_obj, MODEL_SAVE_PATH)
             print(f"💾 Seeded best-model file from resumed checkpoint: {MODEL_SAVE_PATH}")
+    else:
+        if RESUME_FROM_CHECKPOINT:
+            print(f"ℹ️ No checkpoint found at {CHECKPOINT_PATH}; using base model warm-start.")
+        elif os.path.exists(CHECKPOINT_PATH):
+            print(f"ℹ️ Checkpoint exists at {CHECKPOINT_PATH} but RESUME_FROM_CHECKPOINT=False; ignoring it.")
+
+    if not resumed:
+        if os.path.exists(BASE_MODEL_PATH):
+            raw_payload = torch.load(BASE_MODEL_PATH, map_location=DEVICE)
+            base_state, base_kind = extract_model_state(raw_payload)
+            if GPU_COUNT > 1:
+                model.module.load_state_dict(base_state)
+            else:
+                model.load_state_dict(base_state)
+            print(f"📦 Loaded base model ({base_kind}): {BASE_MODEL_PATH}")
+        else:
+            print(f"⚠️ Base model not found: {BASE_MODEL_PATH} (training from scratch)")
 
     if not train_files or not val_files:
         raise RuntimeError(f"Missing dataset chunks in {DATA_DIR}. Found train={len(train_files)}, val={len(val_files)}")
