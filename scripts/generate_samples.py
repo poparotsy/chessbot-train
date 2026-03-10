@@ -30,14 +30,14 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible sampling.")
     parser.add_argument(
         "--profile",
-        choices=("default", "screenshot-clutter", "edge-rook", "hard-mix"),
+        choices=("default", "screenshot-clutter", "edge-rook", "hard-mix", "detector-hard"),
         default="default",
         help="Sampling profile to preview the training distribution.")
     return parser.parse_args()
 
 
 def render_board_image(fen_board, profile=None):
-    tiles, _labels, meta = gen5.base.render_board(fen_board, return_meta=True, profile=profile)
+    tiles, _labels, meta = gen5.render_board(fen_board, return_meta=True, profile=profile)
     rows = []
     for row_idx in range(8):
         row_tiles = []
@@ -55,6 +55,7 @@ def apply_profile(profile):
         "screenshot-clutter": "screenshot_clutter",
         "edge-rook": "edge_rook",
         "hard-mix": "hard_mix",
+        "detector-hard": "detector_hard",
     }
     return mapping[profile]
 
@@ -74,7 +75,7 @@ def main():
         f"(mode={'mixed-default' if profile is None else profile})"
     )
     for i in range(args.count):
-        fen_board = gen5.base.random_training_board(profile=profile).board_fen()
+        fen_board = gen5.random_training_board(profile=profile).board_fen()
         image, board_theme, piece_set, label_pov = render_board_image(fen_board, profile=profile)
         out_path = args.output_dir / f"sample_v5_{i + 1:03d}.png"
         image.save(out_path)

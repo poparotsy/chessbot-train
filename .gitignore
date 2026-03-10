@@ -15,6 +15,8 @@ sample_boards_*/*
 train/sample_boards_*/*
 train/tensors_v*/
 train/images_4_test/debug/
+tmp/
+temp/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
