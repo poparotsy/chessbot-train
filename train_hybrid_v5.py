@@ -24,7 +24,7 @@ FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v5_final.pt"
 CHECKPOINT_DIR = "models/checkpoints_v5"
 BASE_MODEL_PATH = "models/model_hybrid_v5_latest_best.pt"
 EPOCHS = 333
-LEARNING_RATE = 1e-5
+LEARNING_RATE = 3e-6
 BATCH_SIZE_PER_GPU = 256
 RESUME_FROM_CHECKPOINT = False
 RUN_HARDSET_EVAL_ON_BEST = True
@@ -32,6 +32,7 @@ HARDSET_EVAL_SCRIPT = "scripts/rank_models_hardset.py"
 HARDSET_TRUTH_JSON = "images_4_test/truth_known.json"
 HARDSET_COMPARE_FULL_FEN = False
 HARDSET_REQUIRE_NON_REGRESSION = True
+HARDSET_MAX_CONSECUTIVE_REGRESSIONS = 6
 MIN_ACC_IMPROVEMENT = 1e-6
 BACKUP_EXISTING_BEST_MODEL = True
 
@@ -222,6 +223,7 @@ def train():
 
     train_files = sorted(glob.glob(f"{DATA_DIR}/train_*.pt"))
     val_files = sorted(glob.glob(f"{DATA_DIR}/val_*.pt"))
+    train.consecutive_hardset_regressions = 0
 
     # Explicit precedence:
     # 1) resume checkpoint when enabled and present
@@ -375,11 +377,18 @@ def train():
             if HARDSET_REQUIRE_NON_REGRESSION and train.best_hardset is not None and candidate_hardset is not None:
                 if candidate_hardset["passed"] < train.best_hardset["passed"]:
                     hardset_allows_save = False
+                    train.consecutive_hardset_regressions += 1
                     print(
                         "   ⛔ Rejecting candidate due to hardset regression: "
                         f"{candidate_hardset['passed']}/{candidate_hardset['total']} < "
                         f"{train.best_hardset['passed']}/{train.best_hardset['total']}"
                     )
+                    print(
+                        f"   ⏱️ Consecutive hardset regressions: "
+                        f"{train.consecutive_hardset_regressions}/{HARDSET_MAX_CONSECUTIVE_REGRESSIONS}"
+                    )
+                else:
+                    train.consecutive_hardset_regressions = 0
 
             if hardset_allows_save:
                 train.best_acc = accuracy
@@ -387,11 +396,18 @@ def train():
                 print(f"   💾 Best model saved (acc: {accuracy:.4f})")
                 if candidate_hardset is not None:
                     train.best_hardset = candidate_hardset
+                train.consecutive_hardset_regressions = 0
             else:
                 try:
                     os.remove(candidate_path)
                 except OSError:
                     pass
+                if train.consecutive_hardset_regressions >= HARDSET_MAX_CONSECUTIVE_REGRESSIONS:
+                    print(
+                        "🛑 Early stop: repeated hardset regressions despite val_acc improvements. "
+                        f"Kept protected best at {train.best_hardset['passed']}/{train.best_hardset['total']}."
+                    )
+                    break
 
         scheduler.step()
 

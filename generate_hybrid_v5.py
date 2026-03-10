@@ -145,15 +145,14 @@ PROFILE_OVERRIDES = {
     },
 }
 
-# Targeted default mix for current failure modes:
-# - puzzle-00024: empty-square logos/text misread as kings (screenshot_clutter)
-# - puzzle-00028: missed edge rook (edge_rook)
+# Balanced default mix:
+# keep targeted hard cases, but preserve enough standard boards to avoid drift/forgetting.
 DEFAULT_PROFILE_WEIGHTS = [
-    ("default", 0.10),
-    ("screenshot_clutter", 0.28),
-    ("edge_rook", 0.32),
-    ("hard_mix", 0.05),
-    ("detector_hard", 0.25),
+    ("default", 0.35),
+    ("screenshot_clutter", 0.22),
+    ("edge_rook", 0.22),
+    ("hard_mix", 0.08),
+    ("detector_hard", 0.13),
 ]
 
 
