@@ -3,9 +3,7 @@
 1. Use one canonical dependency install command everywhere:
 `pip install -r requirements.txt`
 
-2. Keep dependency aliases:
-- `requirements-recognizer.txt` -> `-r requirements.txt`
-- `requirements-train.txt` -> `-r requirements.txt`
+2. Keep only one dependency file: `requirements.txt`
 
 3. Keep generator profile-mix logging enabled.
 Example output:

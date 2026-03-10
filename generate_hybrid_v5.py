@@ -48,8 +48,13 @@ BASE_CONFIG = {
     "ARROW_BOARD_PROB": env_float("ARROW_BOARD_PROB", 0.65),
     "TACTICAL_MARKER_PROB": env_float("TACTICAL_MARKER_PROB", 0.80),
     "HARD_EDGE_ROOK_PROB": env_float("HARD_EDGE_ROOK_PROB", 0.30),
+    "HARD_FILE_EDGE_ROOK_PROB": env_float("HARD_FILE_EDGE_ROOK_PROB", 0.20),
     "SPARSE_BOARD_PROB": env_float("SPARSE_BOARD_PROB", 0.18),
     "SCREENSHOT_CLUTTER_PROB": env_float("SCREENSHOT_CLUTTER_PROB", 0.15),
+    "DETECTOR_BANNER_PROB": env_float("DETECTOR_BANNER_PROB", 0.08),
+    "DETECTOR_PARTIAL_BOARD_PROB": env_float("DETECTOR_PARTIAL_BOARD_PROB", 0.10),
+    "DETECTOR_MONO_LOW_CONTRAST_PROB": env_float("DETECTOR_MONO_LOW_CONTRAST_PROB", 0.10),
+    "DETECTOR_HEAVY_TRIM_PROB": env_float("DETECTOR_HEAVY_TRIM_PROB", 0.08),
     "MIN_PLIES": env_int("MIN_PLIES", 5),
     "MAX_PLIES": env_int("MAX_PLIES", 65),
 }
@@ -68,8 +73,13 @@ PROFILE_OVERRIDES = {
         "WATERMARK_MAX_PER_BOARD": 4,
         "WATERMARK_FULL_KING_WORDMARK_PROB": 0.92,
         "HARD_EDGE_ROOK_PROB": 0.15,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.25,
         "SPARSE_BOARD_PROB": 0.90,
         "SCREENSHOT_CLUTTER_PROB": 1.0,
+        "DETECTOR_BANNER_PROB": 0.22,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.25,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.20,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.18,
         "MIN_PLIES": 0,
         "MAX_PLIES": 10,
     },
@@ -79,8 +89,13 @@ PROFILE_OVERRIDES = {
         "WATERMARK_BOARD_PROB": 0.35,
         "WATERMARK_FULL_KING_WORDMARK_PROB": 0.70,
         "HARD_EDGE_ROOK_PROB": 1.0,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.75,
         "SPARSE_BOARD_PROB": 0.55,
         "SCREENSHOT_CLUTTER_PROB": 0.55,
+        "DETECTOR_BANNER_PROB": 0.18,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.22,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.35,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.20,
         "MIN_PLIES": 0,
         "MAX_PLIES": 18,
     },
@@ -96,10 +111,37 @@ PROFILE_OVERRIDES = {
         "WATERMARK_MAX_PER_BOARD": 3,
         "WATERMARK_FULL_KING_WORDMARK_PROB": 0.85,
         "HARD_EDGE_ROOK_PROB": 0.75,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.55,
         "SPARSE_BOARD_PROB": 0.60,
         "SCREENSHOT_CLUTTER_PROB": 0.60,
+        "DETECTOR_BANNER_PROB": 0.30,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.34,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.38,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.30,
         "MIN_PLIES": 0,
         "MAX_PLIES": 20,
+    },
+    "detector_hard": {
+        "LABELS_PROB": 0.35,
+        "TRIM_CAPTURE_PROB": 0.80,
+        "ARTIFACT_EMPTY_TILE_PROB": 0.25,
+        "HIGHLIGHT_BOARD_PROB": 0.20,
+        "ARROW_BOARD_PROB": 0.15,
+        "TACTICAL_MARKER_PROB": 0.20,
+        "WATERMARK_BOARD_PROB": 0.45,
+        "WATERMARK_MIN_PER_BOARD": 1,
+        "WATERMARK_MAX_PER_BOARD": 3,
+        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.80,
+        "HARD_EDGE_ROOK_PROB": 0.90,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.80,
+        "SPARSE_BOARD_PROB": 0.85,
+        "SCREENSHOT_CLUTTER_PROB": 0.90,
+        "DETECTOR_BANNER_PROB": 0.70,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.78,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.70,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.55,
+        "MIN_PLIES": 0,
+        "MAX_PLIES": 16,
     },
 }
 
@@ -107,10 +149,11 @@ PROFILE_OVERRIDES = {
 # - puzzle-00024: empty-square logos/text misread as kings (screenshot_clutter)
 # - puzzle-00028: missed edge rook (edge_rook)
 DEFAULT_PROFILE_WEIGHTS = [
-    ("default", 0.20),
-    ("screenshot_clutter", 0.45),
-    ("edge_rook", 0.30),
+    ("default", 0.10),
+    ("screenshot_clutter", 0.28),
+    ("edge_rook", 0.32),
     ("hard_mix", 0.05),
+    ("detector_hard", 0.25),
 ]
 
 
@@ -128,6 +171,89 @@ def choose_profile(profile=None):
     names = [name for name, _ in DEFAULT_PROFILE_WEIGHTS]
     weights = [weight for _, weight in DEFAULT_PROFILE_WEIGHTS]
     return random.choices(names, weights=weights, k=1)[0]
+
+
+def add_detector_banner_overlay(img, cfg):
+    """Overlay social/banner UI blocks to stress board localization."""
+    if random.random() >= cfg["DETECTOR_BANNER_PROB"]:
+        return img
+
+    draw = ImageDraw.Draw(img, "RGBA")
+    w, h = img.size
+    side = random.choice(("left", "right", "top", "bottom"))
+    fill = random.choice([(18, 32, 82, 230), (28, 28, 28, 220), (36, 56, 74, 220)])
+    line = random.choice([(255, 255, 255, 30), (190, 220, 255, 40)])
+
+    if side in ("left", "right"):
+        bw = int(w * random.uniform(0.18, 0.42))
+        x0 = 0 if side == "left" else w - bw
+        x1 = x0 + bw
+        draw.rectangle([x0, 0, x1, h], fill=fill)
+        for _ in range(18):
+            y = random.randint(0, h)
+            draw.line([x0, y, x1, y], fill=line, width=1)
+        tx, ty = x0 + 14, random.randint(22, max(24, h // 3))
+    else:
+        bh = int(h * random.uniform(0.12, 0.30))
+        y0 = 0 if side == "top" else h - bh
+        y1 = y0 + bh
+        draw.rectangle([0, y0, w, y1], fill=fill)
+        for _ in range(12):
+            x = random.randint(0, w)
+            draw.line([x, y0, x, y1], fill=line, width=1)
+        tx, ty = random.randint(18, max(20, w // 3)), y0 + 10
+
+    try:
+        font_big = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", random.randint(24, 54))
+        font_small = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", random.randint(12, 20))
+    except Exception:
+        font_big = ImageFont.load_default()
+        font_small = ImageFont.load_default()
+
+    draw.text((tx, ty), random.choice(("Chess", "Puzzle", "Opening")), fill=(245, 245, 245, 235), font=font_big)
+    draw.text((tx, ty + random.randint(42, 68)), random.choice(("Strategy", "Trainer", "Tactics")), fill=(220, 220, 220, 210), font=font_small)
+    return img
+
+
+def compose_partial_board_scene(img, cfg):
+    """Place the board in a subregion (50-80%) to emulate banner/screenshot layouts."""
+    if random.random() >= cfg["DETECTOR_PARTIAL_BOARD_PROB"]:
+        return img
+
+    w, h = img.size
+    canvas = Image.new("RGB", (w, h), random.choice([(22, 26, 32), (30, 44, 61), (245, 245, 245)]))
+    cdraw = ImageDraw.Draw(canvas, "RGBA")
+
+    if random.random() < 0.72:
+        board_w = int(w * random.uniform(0.52, 0.78))
+        board = img.resize((board_w, h), Image.LANCZOS)
+        x = w - board_w if random.random() < 0.70 else 0
+        canvas.paste(board, (x, 0))
+    else:
+        board_h = int(h * random.uniform(0.52, 0.78))
+        board = img.resize((w, board_h), Image.LANCZOS)
+        y = h - board_h if random.random() < 0.70 else 0
+        canvas.paste(board, (0, y))
+
+    for _ in range(26):
+        y = random.randint(0, h)
+        cdraw.line([0, y, w, y], fill=(255, 255, 255, random.randint(8, 24)), width=1)
+
+    return canvas
+
+
+def apply_mono_book_style(img, cfg):
+    """Convert to low-saturation, low-contrast style seen in scans/books."""
+    if random.random() >= cfg["DETECTOR_MONO_LOW_CONTRAST_PROB"]:
+        return img
+
+    gray = img.convert("L")
+    gray = ImageEnhance.Contrast(gray).enhance(random.uniform(0.62, 0.92))
+    gray = ImageEnhance.Brightness(gray).enhance(random.uniform(0.85, 1.10))
+    out = gray.convert("RGB")
+    if random.random() < 0.45:
+        out = out.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.2, 1.0)))
+    return out
 
 
 def augment_image(img):
@@ -569,8 +695,15 @@ def simulate_trimmed_capture(img, cfg):
         return img
 
     w, h = img.size
-    max_crop_x = max(4, int(w * 0.05))
-    max_crop_y = max(4, int(h * 0.05))
+    heavy = random.random() < cfg["DETECTOR_HEAVY_TRIM_PROB"]
+    if heavy:
+        max_crop_x = max(6, int(w * 0.16))
+        max_crop_y = max(6, int(h * 0.16))
+        min_keep_ratio = 0.65
+    else:
+        max_crop_x = max(4, int(w * 0.05))
+        max_crop_y = max(4, int(h * 0.05))
+        min_keep_ratio = 0.80
 
     # Asymmetric side trimming is common in mobile/browser screenshots.
     left = random.randint(0, max_crop_x)
@@ -578,11 +711,13 @@ def simulate_trimmed_capture(img, cfg):
     top = random.randint(0, max_crop_y)
     bottom = random.randint(0, max_crop_y)
 
-    # Keep at least 80% of each dimension before resizing back.
-    if (left + right) > int(w * 0.20):
-        right = max(0, int(w * 0.20) - left)
-    if (top + bottom) > int(h * 0.20):
-        bottom = max(0, int(h * 0.20) - top)
+    # Keep at least min_keep_ratio of each dimension before resizing back.
+    max_total_crop_x = int(w * (1.0 - min_keep_ratio))
+    max_total_crop_y = int(h * (1.0 - min_keep_ratio))
+    if (left + right) > max_total_crop_x:
+        right = max(0, max_total_crop_x - left)
+    if (top + bottom) > max_total_crop_y:
+        bottom = max(0, max_total_crop_y - top)
 
     cropped = img.crop((left, top, w - right, h - bottom))
     return cropped.resize((w, h), Image.LANCZOS)
@@ -619,6 +754,11 @@ def render_board(fen, return_meta=False, profile=None):
         label_pov = random.choice(("white", "black")) if profile != "default" else "white"
         draw_board_labels(draw, ts, label_pov)
     background = vandalize(background, grid, cfg)
+
+    # Detector-hard scene augmentation: partial board, banners, and low-contrast scans.
+    background = compose_partial_board_scene(background, cfg)
+    background = add_detector_banner_overlay(background, cfg)
+    background = apply_mono_book_style(background, cfg)
     
     # Apply augmentation BEFORE compression
     background = augment_image(background)
@@ -662,6 +802,14 @@ def board_has_edge_rook(board):
     return False
 
 
+def board_has_file_edge_rook(board):
+    for sq in chess.SQUARES:
+        piece = board.piece_at(sq)
+        if piece and piece.piece_type == chess.ROOK and chess.square_file(sq) in (0, 7):
+            return True
+    return False
+
+
 def is_sparse_board(board):
     return len(board.piece_map()) <= 10
 
@@ -688,7 +836,7 @@ def _king_neighborhood(square):
     return blocked
 
 
-def build_screenshot_clutter_board(force_edge_rook=False):
+def build_screenshot_clutter_board(force_edge_rook=False, force_file_edge_rook=False):
     """Build sparse screenshot-style boards with lots of empty squares."""
     board = chess.Board(None)
     taken = set()
@@ -715,12 +863,17 @@ def build_screenshot_clutter_board(force_edge_rook=False):
     ]
     random.shuffle(optional_pieces)
 
-    if force_edge_rook:
-        edge_targets = [chess.A7, chess.H7, chess.A2, chess.H2, chess.A4, chess.H5]
-        sq = random.choice([cand for cand in edge_targets if cand not in taken])
-        color = random.choice([chess.WHITE, chess.BLACK])
-        board.set_piece_at(sq, chess.Piece(chess.ROOK, color))
-        taken.add(sq)
+    if force_file_edge_rook or force_edge_rook:
+        if force_file_edge_rook:
+            edge_targets = [chess.A8, chess.H8, chess.A7, chess.H7, chess.A4, chess.H5, chess.A2, chess.H2, chess.A1, chess.H1]
+        else:
+            edge_targets = [chess.A7, chess.H7, chess.A2, chess.H2, chess.A4, chess.H5]
+        candidates = [cand for cand in edge_targets if cand not in taken]
+        if candidates:
+            sq = random.choice(candidates)
+            color = random.choice([chess.WHITE, chess.BLACK])
+            board.set_piece_at(sq, chess.Piece(chess.ROOK, color))
+            taken.add(sq)
 
     extra_count = random.randint(1, 5)
     for piece_type, color in optional_pieces:
@@ -748,12 +901,17 @@ def random_training_board(profile=None):
     cfg = get_profile_config(profile)
     if random.random() < cfg["SCREENSHOT_CLUTTER_PROB"]:
         force_edge_rook = random.random() < cfg["HARD_EDGE_ROOK_PROB"]
-        return build_screenshot_clutter_board(force_edge_rook=force_edge_rook)
+        force_file_edge_rook = random.random() < cfg["HARD_FILE_EDGE_ROOK_PROB"]
+        return build_screenshot_clutter_board(
+            force_edge_rook=force_edge_rook,
+            force_file_edge_rook=force_file_edge_rook,
+        )
 
     for _ in range(200):
         board = chess.Board()
         target_sparse = random.random() < cfg["SPARSE_BOARD_PROB"]
         target_edge_rook = random.random() < cfg["HARD_EDGE_ROOK_PROB"]
+        target_file_edge_rook = random.random() < cfg["HARD_FILE_EDGE_ROOK_PROB"]
         plies = random.randint(cfg["MIN_PLIES"], cfg["MAX_PLIES"])
         for _ in range(plies):
             if board.is_game_over():
@@ -763,6 +921,8 @@ def random_training_board(profile=None):
         if target_sparse and not is_sparse_board(board):
             continue
         if target_edge_rook and not board_has_edge_rook(board):
+            continue
+        if target_file_edge_rook and not board_has_file_edge_rook(board):
             continue
         return board
 
