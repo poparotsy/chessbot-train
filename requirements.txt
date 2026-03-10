@@ -1,5 +1,5 @@
-numpy<2
+numpy
 pillow
 torch
-opencv-python-headless<4.11
+opencv-python-headless
 python-chess
