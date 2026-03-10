@@ -8,6 +8,7 @@ import time
 import signal
 import sys
 import subprocess
+import shutil
 from torch.utils.data import DataLoader, TensorDataset
 
 # ============ SYSTEM STABILITY ============
@@ -19,15 +20,17 @@ DATA_DIR = "tensors_v5"
 MODEL_SAVE_PATH = "models/model_hybrid_v5_latest_best.pt"
 FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v5_final.pt"
 CHECKPOINT_DIR = "models/checkpoints_v5"
-BASE_MODEL_PATH = "models/model_hybrid_v4_latest_best.pt"
+BASE_MODEL_PATH = "models/model_hybrid_v5_latest_best.pt"
 EPOCHS = 333
 LEARNING_RATE = 1e-5
 BATCH_SIZE_PER_GPU = 256
-RESUME_FROM_CHECKPOINT = True
+RESUME_FROM_CHECKPOINT = False
 RUN_HARDSET_EVAL_ON_BEST = True
 HARDSET_EVAL_SCRIPT = "scripts/rank_models_hardset.py"
 HARDSET_TRUTH_JSON = "images_4_test/truth_known.json"
 HARDSET_COMPARE_FULL_FEN = False
+MIN_ACC_IMPROVEMENT = 1e-6
+BACKUP_EXISTING_BEST_MODEL = True
 
 # ============ ADVANCED / INTERNAL (USUALLY DON'T TOUCH) ============
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -147,6 +150,27 @@ def run_hardset_eval_on_best(model_path):
         print(f"   ⚠️ Hardset ranking failed: {exc}")
 
 
+def evaluate_model_accuracy(model, val_files):
+    """Compute validation accuracy across all val chunks."""
+    model.eval()
+    correct, total = 0, 0
+    with torch.no_grad():
+        for v_file in val_files:
+            v_data = torch.load(v_file, map_location='cpu')
+            vx_all = (v_data['x'].float() / 127.5) - 1.0
+            vy_all = v_data['y'].long()
+            v_loader = DataLoader(TensorDataset(vx_all, vy_all), batch_size=BATCH_SIZE)
+            for vbx, vby in v_loader:
+                vbx, vby = vbx.to(DEVICE), vby.to(DEVICE)
+                preds = torch.argmax(model(vbx), dim=1)
+                correct += (preds == vby).sum().item()
+                total += vby.size(0)
+            del v_data, vx_all, vy_all, v_loader
+            gc.collect()
+            torch.cuda.empty_cache()
+    return (correct / total) if total else 0.0
+
+
 def train():
     global INTERRUPTED
     print(f"\n🚀 STARTING BEAST MODE TRAINING")
@@ -211,6 +235,33 @@ def train():
     if not train_files or not val_files:
         raise RuntimeError(f"Missing dataset chunks in {DATA_DIR}. Found train={len(train_files)}, val={len(val_files)}")
 
+    # Protect existing exported best model from accidental downgrade.
+    if os.path.exists(MODEL_SAVE_PATH):
+        if BACKUP_EXISTING_BEST_MODEL:
+            backup_path = MODEL_SAVE_PATH.replace(".pt", "_pretrain_backup.pt")
+            shutil.copy2(MODEL_SAVE_PATH, backup_path)
+            print(f"🛡️ Backed up existing best model: {backup_path}")
+        try:
+            eval_model = ChessCNN()
+            if GPU_COUNT > 1:
+                eval_model = nn.DataParallel(eval_model)
+            eval_model.to(DEVICE)
+
+            existing_payload = torch.load(MODEL_SAVE_PATH, map_location=DEVICE)
+            existing_state, _ = extract_model_state(existing_payload)
+            if GPU_COUNT > 1:
+                eval_model.module.load_state_dict(existing_state)
+            else:
+                eval_model.load_state_dict(existing_state)
+            existing_acc = evaluate_model_accuracy(eval_model, val_files)
+            train.best_acc = max(train.best_acc, existing_acc)
+            print(f"📌 Protected best baseline from {MODEL_SAVE_PATH}: val_acc={existing_acc:.4f}")
+            del eval_model, existing_payload, existing_state
+            gc.collect()
+            torch.cuda.empty_cache()
+        except Exception as exc:
+            print(f"⚠️ Could not evaluate existing best model baseline: {exc}")
+
     for epoch in range(start_epoch, EPOCHS):
         if INTERRUPTED:
             break
@@ -251,29 +302,10 @@ def train():
             break
 
         # --- VALIDATION PHASE (ALL CHUNKS) ---
-        model.eval()
-        correct, total = 0, 0
-        with torch.no_grad():
-            for v_file in val_files:
-                v_data = torch.load(v_file, map_location='cpu')
-                vx_all = (v_data['x'].float() / 127.5) - 1.0
-                vy_all = v_data['y'].long()
-
-                v_loader = DataLoader(TensorDataset(vx_all, vy_all), batch_size=BATCH_SIZE)
-                for vbx, vby in v_loader:
-                    vbx, vby = vbx.to(DEVICE), vby.to(DEVICE)
-                    v_out = model(vbx)
-                    preds = torch.argmax(v_out, dim=1)
-                    correct += (preds == vby).sum().item()
-                    total += vby.size(0)
-
-                del v_data, vx_all, vy_all, v_loader
-                gc.collect()
-                torch.cuda.empty_cache()
+        accuracy = evaluate_model_accuracy(model, val_files)
 
         # --- SUMMARY ---
         duration = time.time() - epoch_start
-        accuracy = correct / total
         current_lr = scheduler.get_last_lr()[0]
         print(f"✅ EPOCH {epoch + 1:02d} | Loss: {total_loss / len(train_files):.4f} | Val Acc: {accuracy:.4f} | LR: {current_lr:.2e} | Time: {duration:.1f}s")
 
@@ -290,7 +322,7 @@ def train():
         torch.save(checkpoint, CHECKPOINT_PATH)
         
         # Save best model only
-        if epoch == 0 or accuracy > train.best_acc:
+        if accuracy > (train.best_acc + MIN_ACC_IMPROVEMENT):
             train.best_acc = accuracy
             torch.save(save_obj, MODEL_SAVE_PATH)
             print(f"   💾 Best model saved (acc: {accuracy:.4f})")
