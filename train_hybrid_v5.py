@@ -9,6 +9,8 @@ import signal
 import sys
 import subprocess
 import shutil
+import json
+import re
 from torch.utils.data import DataLoader, TensorDataset
 
 # ============ SYSTEM STABILITY ============
@@ -29,6 +31,7 @@ RUN_HARDSET_EVAL_ON_BEST = True
 HARDSET_EVAL_SCRIPT = "scripts/rank_models_hardset.py"
 HARDSET_TRUTH_JSON = "images_4_test/truth_known.json"
 HARDSET_COMPARE_FULL_FEN = False
+HARDSET_REQUIRE_NON_REGRESSION = True
 MIN_ACC_IMPROVEMENT = 1e-6
 BACKUP_EXISTING_BEST_MODEL = True
 
@@ -111,14 +114,14 @@ def extract_model_state(payload):
 
 
 def run_hardset_eval_on_best(model_path):
-    """Optionally run hardset ranking after best-model save."""
+    """Optionally run hardset ranking and return parsed score metadata."""
     if not RUN_HARDSET_EVAL_ON_BEST:
-        return
+        return None
 
     script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), HARDSET_EVAL_SCRIPT)
     if not os.path.exists(script_path):
         print(f"   ⚠️ Hardset eval script not found: {script_path}")
-        return
+        return None
 
     cmd = [
         sys.executable,
@@ -146,8 +149,37 @@ def run_hardset_eval_on_best(model_path):
             print(proc.stderr.rstrip())
         if proc.returncode != 0:
             print(f"   ⚠️ Hardset ranking exited with code {proc.returncode}")
+            return None
+        output = proc.stdout or ""
+        marker = "=== HARD-SET RANKING ==="
+        if marker in output:
+            tail = output.split(marker, 1)[1].strip()
+            try:
+                summary = json.loads(tail)
+                model_abs = os.path.abspath(model_path)
+                for row in summary.get("ranked", []):
+                    row_model_abs = os.path.abspath(row.get("model", ""))
+                    if row_model_abs == model_abs or os.path.basename(row_model_abs) == os.path.basename(model_abs):
+                        return {
+                            "passed": int(row["passed"]),
+                            "total": int(row["total"]),
+                            "avg_confidence": float(row.get("avg_confidence", 0.0)),
+                        }
+            except Exception:
+                pass
+
+        pattern = re.compile(r"->\s*(\d+)/(\d+)\s*\(avg_conf=([0-9.]+)\)")
+        matches = pattern.findall(output)
+        if matches:
+            last = matches[-1]
+            return {
+                "passed": int(last[0]),
+                "total": int(last[1]),
+                "avg_confidence": float(last[2]),
+            }
     except Exception as exc:
         print(f"   ⚠️ Hardset ranking failed: {exc}")
+    return None
 
 
 def evaluate_model_accuracy(model, val_files):
@@ -232,6 +264,8 @@ def train():
         else:
             print(f"⚠️ Base model not found: {BASE_MODEL_PATH} (training from scratch)")
 
+    train.best_hardset = None
+
     if not train_files or not val_files:
         raise RuntimeError(f"Missing dataset chunks in {DATA_DIR}. Found train={len(train_files)}, val={len(val_files)}")
 
@@ -261,6 +295,16 @@ def train():
             torch.cuda.empty_cache()
         except Exception as exc:
             print(f"⚠️ Could not evaluate existing best model baseline: {exc}")
+
+        baseline_hardset = run_hardset_eval_on_best(MODEL_SAVE_PATH)
+        if baseline_hardset is not None:
+            train.best_hardset = baseline_hardset
+            print(
+                f"📌 Hardset baseline protected: "
+                f"{baseline_hardset['passed']}/{baseline_hardset['total']}"
+            )
+        else:
+            print("⚠️ Hardset baseline unavailable; save gating will use val_acc only.")
 
     for epoch in range(start_epoch, EPOCHS):
         if INTERRUPTED:
@@ -323,10 +367,31 @@ def train():
         
         # Save best model only
         if accuracy > (train.best_acc + MIN_ACC_IMPROVEMENT):
-            train.best_acc = accuracy
-            torch.save(save_obj, MODEL_SAVE_PATH)
-            print(f"   💾 Best model saved (acc: {accuracy:.4f})")
-            run_hardset_eval_on_best(MODEL_SAVE_PATH)
+            candidate_path = MODEL_SAVE_PATH.replace(".pt", "_candidate.pt")
+            torch.save(save_obj, candidate_path)
+            candidate_hardset = run_hardset_eval_on_best(candidate_path)
+
+            hardset_allows_save = True
+            if HARDSET_REQUIRE_NON_REGRESSION and train.best_hardset is not None and candidate_hardset is not None:
+                if candidate_hardset["passed"] < train.best_hardset["passed"]:
+                    hardset_allows_save = False
+                    print(
+                        "   ⛔ Rejecting candidate due to hardset regression: "
+                        f"{candidate_hardset['passed']}/{candidate_hardset['total']} < "
+                        f"{train.best_hardset['passed']}/{train.best_hardset['total']}"
+                    )
+
+            if hardset_allows_save:
+                train.best_acc = accuracy
+                os.replace(candidate_path, MODEL_SAVE_PATH)
+                print(f"   💾 Best model saved (acc: {accuracy:.4f})")
+                if candidate_hardset is not None:
+                    train.best_hardset = candidate_hardset
+            else:
+                try:
+                    os.remove(candidate_path)
+                except OSError:
+                    pass
 
         scheduler.step()
 
