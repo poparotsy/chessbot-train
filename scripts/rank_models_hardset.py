@@ -2,6 +2,7 @@
 """Rank model/checkpoint files on a fixed hard puzzle set."""
 
 import argparse
+import importlib
 import json
 import os
 import sys
@@ -15,8 +16,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 TRAIN_DIR = SCRIPT_DIR.parent
 if str(TRAIN_DIR) not in sys.path:
     sys.path.insert(0, str(TRAIN_DIR))
-
-import recognizer_v5 as rec
 
 
 DEFAULT_TRUTH = {
@@ -60,16 +59,28 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Compare full FEN including side-to-move (default compares board part only).",
     )
+    parser.add_argument(
+        "--recognizer-module",
+        default="recognizer_v5",
+        help="Recognizer module to import from train dir (e.g. recognizer_v5 or recognizer_v6).",
+    )
     return parser.parse_args()
 
 
 def load_truth(truth_json: str | None) -> Dict[str, str]:
+    """
+    Load truth mapping.
+    Strict by default: if a truth path is provided (or defaulted) and missing/invalid, fail fast.
+    """
     if not truth_json:
         return dict(DEFAULT_TRUTH)
     if not os.path.exists(truth_json):
-        return dict(DEFAULT_TRUTH)
+        raise FileNotFoundError(f"Truth JSON not found: {truth_json}")
     with open(truth_json, "r", encoding="utf-8") as handle:
-        return json.load(handle)
+        data = json.load(handle)
+    if not isinstance(data, dict) or not data:
+        raise ValueError(f"Truth JSON must be a non-empty object: {truth_json}")
+    return data
 
 
 def materialize_state_dict(model_path: Path) -> Tuple[Path, tempfile.TemporaryDirectory | None]:
@@ -88,6 +99,7 @@ def evaluate_model(
     truth: Dict[str, str],
     images_dir: Path,
     compare_full_fen: bool,
+    rec_module,
 ) -> Dict:
     state_path, tmpdir = materialize_state_dict(model_file)
     passed = 0
@@ -104,8 +116,8 @@ def evaluate_model(
                 )
                 continue
 
-            fen, conf = rec.predict_board(str(image_path), model_path=str(state_path))
-            side_to_move, _source = rec.infer_side_to_move_from_checks(fen)
+            fen, conf = rec_module.predict_board(str(image_path), model_path=str(state_path))
+            side_to_move, _source = rec_module.infer_side_to_move_from_checks(fen)
             predicted_fen = f"{fen} {side_to_move} - - 0 1"
             conf_sum += float(conf)
 
@@ -146,6 +158,10 @@ def main() -> None:
     args = parse_args()
     truth = load_truth(args.truth_json)
     images_dir = Path(args.images_dir)
+    try:
+        rec = importlib.import_module(args.recognizer_module)
+    except Exception as exc:
+        raise SystemExit(f"Could not import recognizer module '{args.recognizer_module}': {exc}")
 
     model_files = sorted(Path(".").glob(args.models_glob))
     if not model_files:
@@ -157,7 +173,13 @@ def main() -> None:
     reports = []
     for model_file in model_files:
         try:
-            report = evaluate_model(model_file, truth, images_dir, args.compare_full_fen)
+            report = evaluate_model(
+                model_file,
+                truth,
+                images_dir,
+                args.compare_full_fen,
+                rec,
+            )
             reports.append(report)
             print(
                 f"{model_file} -> {report['passed']}/{report['total']} "
