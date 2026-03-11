@@ -6,6 +6,8 @@ from __future__ import annotations
 import io
 import os
 import random
+import signal
+import sys
 from pathlib import Path
 
 import chess
@@ -40,9 +42,9 @@ IMG_SIZE = env_int("IMG_SIZE", 320)
 BOARD_RENDER_SIZE = env_int("BOARD_RENDER_SIZE", 512)
 CANVAS_W = env_int("CANVAS_W", 1280)
 CANVAS_H = env_int("CANVAS_H", 720)
-BOARDS_PER_CHUNK = env_int("BOARDS_PER_CHUNK", 768)
-CHUNKS_TRAIN = env_int("CHUNKS_TRAIN", 24)
-CHUNKS_VAL = env_int("CHUNKS_VAL", 6)
+BOARDS_PER_CHUNK = env_int("BOARDS_PER_CHUNK", 640)
+CHUNKS_TRAIN = env_int("CHUNKS_TRAIN", 20)
+CHUNKS_VAL = env_int("CHUNKS_VAL", 5)
 MIN_PLIES = env_int("MIN_PLIES", 6)
 MAX_PLIES = env_int("MAX_PLIES", 42)
 BOARD_ABSENT_PROB = env_float("BOARD_ABSENT_PROB", 0.08)
@@ -90,6 +92,14 @@ SEVERITY_WEIGHTS_BY_RECIPE = {
     "targeted_v1": [(1, 0.22), (2, 0.33), (3, 0.27), (4, 0.18)],
 }
 SEVERITY_WEIGHTS = SEVERITY_WEIGHTS_BY_RECIPE.get(RECIPE_NAME, SEVERITY_WEIGHTS_BY_RECIPE["stable_v1"])
+INTERRUPTED = False
+
+
+def _signal_handler(sig, frame):
+    del sig, frame
+    global INTERRUPTED
+    INTERRUPTED = True
+    print("\n⚠️ Interrupt received. Finishing current step then stopping...", flush=True)
 
 
 def choose_profile() -> str:
@@ -373,7 +383,7 @@ def synth_absent_scene() -> Image.Image:
     return canvas.resize((IMG_SIZE, IMG_SIZE), Image.LANCZOS)
 
 
-def make_sample() -> dict:
+def make_sample(forced_family: str | None = None, forced_severity: int | None = None) -> dict:
     if random.random() < BOARD_ABSENT_PROB:
         img = synth_absent_scene()
         piece_labels = [0] * 64
@@ -387,8 +397,8 @@ def make_sample() -> dict:
         board = random_training_board()
         pov_black = random.random() < 0.50
         board_img, piece_labels = render_board_image(board, pov_black=pov_black)
-        family = choose_profile()
-        severity = choose_severity()
+        family = forced_family if forced_family is not None else choose_profile()
+        severity = int(forced_severity) if forced_severity is not None else choose_severity()
         img, corners = synth_scene(board_img, family=family, severity=severity)
         board_present = 1.0
         pov = 1 if pov_black else 0
@@ -428,7 +438,7 @@ def build_profile_plan(total: int) -> list[str]:
     return plan
 
 
-def save_chunk(split: str, idx: int, count: int) -> None:
+def save_chunk(split: str, idx: int, count: int) -> bool:
     xs = []
     pieces = []
     piece_masks = []
@@ -441,25 +451,9 @@ def save_chunk(split: str, idx: int, count: int) -> None:
 
     plan = build_profile_plan(count)
     for i in range(count):
-        sample = make_sample()
-        # Encourage configured family mix for present boards by overriding family draw.
-        if sample["board_present"] > 0.5:
-            forced_family = plan[i]
-            if sample["family"] != forced_family:
-                board = random_training_board()
-                pov_black = random.random() < 0.50
-                board_img, piece_labels = render_board_image(board, pov_black=pov_black)
-                sev = choose_severity()
-                img, crn = synth_scene(board_img, family=forced_family, severity=sev)
-                sample["x"] = np.array(img, dtype=np.uint8).transpose(2, 0, 1)
-                sample["piece"] = np.array(piece_labels, dtype=np.int64)
-                sample["pov"] = np.int64(1 if pov_black else 0)
-                sample["stm"] = np.int64(0 if board.turn == chess.WHITE else 1)
-                crn[:, 0] /= float(max(1, IMG_SIZE - 1))
-                crn[:, 1] /= float(max(1, IMG_SIZE - 1))
-                sample["corners"] = np.clip(crn, 0.0, 1.0).reshape(-1).astype(np.float32)
-                sample["family"] = forced_family
-                sample["severity"] = sev
+        if INTERRUPTED:
+            break
+        sample = make_sample(forced_family=plan[i])
 
         xs.append(sample["x"])
         pieces.append(sample["piece"])
@@ -470,6 +464,10 @@ def save_chunk(split: str, idx: int, count: int) -> None:
         stm.append(sample["stm"])
         family_counts[sample["family"]] = family_counts.get(sample["family"], 0) + 1
         severity_counts[sample["severity"]] = severity_counts.get(sample["severity"], 0) + 1
+
+    if not xs:
+        print(f"Stopped before writing {split}_{idx} (no samples).")
+        return False
 
     payload = {
         "x": torch.from_numpy(np.stack(xs, axis=0)),
@@ -485,22 +483,38 @@ def save_chunk(split: str, idx: int, count: int) -> None:
 
     mix = ", ".join(f"{k}:{family_counts[k]}" for k in sorted(family_counts))
     sev = ", ".join(f"L{k}:{severity_counts[k]}" for k in sorted(severity_counts))
-    print(f"Created {split}_{idx} | mix[{mix}] | severity[{sev}]")
+    print(f"Created {split}_{idx} | n={len(xs)} | mix[{mix}] | severity[{sev}]")
+    return not INTERRUPTED
 
 
 def main() -> None:
+    signal.signal(signal.SIGINT, _signal_handler)
     random.seed(SEED)
     np.random.seed(SEED)
     torch.manual_seed(SEED)
 
+    total_samples = BOARDS_PER_CHUNK * (CHUNKS_TRAIN + CHUNKS_VAL)
+    # rough lower-bound estimate (x tensor only + light metadata overhead)
+    bytes_per_sample = (3 * IMG_SIZE * IMG_SIZE) + 320
+    est_gb = (total_samples * bytes_per_sample) / (1024 ** 3)
     print(
         f"Generating v7 tensors -> {OUTPUT_DIR} | IMG={IMG_SIZE} | "
-        f"train_chunks={CHUNKS_TRAIN} val_chunks={CHUNKS_VAL} boards_per_chunk={BOARDS_PER_CHUNK}"
+        f"train_chunks={CHUNKS_TRAIN} val_chunks={CHUNKS_VAL} boards_per_chunk={BOARDS_PER_CHUNK} "
+        f"| total_samples≈{total_samples} | est_disk≈{est_gb:.2f}GB (+torch overhead)"
     )
-    for i in range(CHUNKS_TRAIN):
-        save_chunk("train", i, BOARDS_PER_CHUNK)
-    for i in range(CHUNKS_VAL):
-        save_chunk("val", i, BOARDS_PER_CHUNK)
+    try:
+        for i in range(CHUNKS_TRAIN):
+            if not save_chunk("train", i, BOARDS_PER_CHUNK):
+                break
+        if not INTERRUPTED:
+            for i in range(CHUNKS_VAL):
+                if not save_chunk("val", i, BOARDS_PER_CHUNK):
+                    break
+    except KeyboardInterrupt:
+        print("\n⚠️ KeyboardInterrupt: stopping generation.")
+    if INTERRUPTED:
+        print("Stopped by user interrupt.")
+        sys.exit(130)
     print("Done.")
 
 
