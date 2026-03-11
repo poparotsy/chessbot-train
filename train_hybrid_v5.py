@@ -29,7 +29,7 @@ BATCH_SIZE_PER_GPU = 256
 RESUME_FROM_CHECKPOINT = False
 RUN_HARDSET_EVAL_ON_BEST = True
 HARDSET_EVAL_SCRIPT = "scripts/rank_models_hardset.py"
-HARDSET_TRUTH_JSON = "images_4_test/truth_known.json"
+HARDSET_TRUTH_JSON = "images_4_test/truth_verified.json"
 HARDSET_COMPARE_FULL_FEN = False
 HARDSET_REQUIRE_NON_REGRESSION = True
 HARDSET_MAX_CONSECUTIVE_REGRESSIONS = 6
@@ -114,14 +114,20 @@ def extract_model_state(payload):
     return payload, "state_dict"
 
 
-def run_hardset_eval_on_best(model_path):
-    """Optionally run hardset ranking and return parsed score metadata."""
-    if not RUN_HARDSET_EVAL_ON_BEST:
-        return None
-
+def run_rank_eval(
+    model_path,
+    truth_json,
+    images_dir=None,
+    compare_full_fen=False,
+    label="benchmark",
+):
+    """Run ranking script and return parsed score metadata."""
     script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), HARDSET_EVAL_SCRIPT)
     if not os.path.exists(script_path):
-        print(f"   ⚠️ Hardset eval script not found: {script_path}")
+        print(f"   ⚠️ {label} eval script not found: {script_path}")
+        return None
+    if not os.path.exists(truth_json):
+        print(f"   ⚠️ {label} truth file not found: {truth_json}")
         return None
 
     cmd = [
@@ -130,12 +136,14 @@ def run_hardset_eval_on_best(model_path):
         "--models-glob",
         model_path,
         "--truth-json",
-        HARDSET_TRUTH_JSON,
+        truth_json,
     ]
-    if HARDSET_COMPARE_FULL_FEN:
+    if images_dir:
+        cmd.extend(["--images-dir", images_dir])
+    if compare_full_fen:
         cmd.append("--compare-full-fen")
 
-    print("   📊 Running hardset ranking on new best model...")
+    print(f"   📊 Running {label} ranking on candidate...")
     try:
         proc = subprocess.run(
             cmd,
@@ -149,7 +157,7 @@ def run_hardset_eval_on_best(model_path):
         if proc.stderr:
             print(proc.stderr.rstrip())
         if proc.returncode != 0:
-            print(f"   ⚠️ Hardset ranking exited with code {proc.returncode}")
+            print(f"   ⚠️ {label} ranking exited with code {proc.returncode}")
             return None
         output = proc.stdout or ""
         marker = "=== HARD-SET RANKING ==="
@@ -179,8 +187,21 @@ def run_hardset_eval_on_best(model_path):
                 "avg_confidence": float(last[2]),
             }
     except Exception as exc:
-        print(f"   ⚠️ Hardset ranking failed: {exc}")
+        print(f"   ⚠️ {label} ranking failed: {exc}")
     return None
+
+
+def run_hardset_eval_on_best(model_path):
+    """Run canonical hardset ranking."""
+    if not RUN_HARDSET_EVAL_ON_BEST:
+        return None
+    return run_rank_eval(
+        model_path=model_path,
+        truth_json=HARDSET_TRUTH_JSON,
+        images_dir=None,
+        compare_full_fen=HARDSET_COMPARE_FULL_FEN,
+        label="hardset",
+    )
 
 
 def evaluate_model_accuracy(model, val_files):
@@ -267,7 +288,6 @@ def train():
             print(f"⚠️ Base model not found: {BASE_MODEL_PATH} (training from scratch)")
 
     train.best_hardset = None
-
     if not train_files or not val_files:
         raise RuntimeError(f"Missing dataset chunks in {DATA_DIR}. Found train={len(train_files)}, val={len(val_files)}")
 
@@ -377,12 +397,12 @@ def train():
             if HARDSET_REQUIRE_NON_REGRESSION and train.best_hardset is not None and candidate_hardset is not None:
                 if candidate_hardset["passed"] < train.best_hardset["passed"]:
                     hardset_allows_save = False
-                    train.consecutive_hardset_regressions += 1
                     print(
                         "   ⛔ Rejecting candidate due to hardset regression: "
                         f"{candidate_hardset['passed']}/{candidate_hardset['total']} < "
                         f"{train.best_hardset['passed']}/{train.best_hardset['total']}"
                     )
+                    train.consecutive_hardset_regressions += 1
                     print(
                         f"   ⏱️ Consecutive hardset regressions: "
                         f"{train.consecutive_hardset_regressions}/{HARDSET_MAX_CONSECUTIVE_REGRESSIONS}"
@@ -404,9 +424,12 @@ def train():
                     pass
                 if train.consecutive_hardset_regressions >= HARDSET_MAX_CONSECUTIVE_REGRESSIONS:
                     print(
-                        "🛑 Early stop: repeated hardset regressions despite val_acc improvements. "
-                        f"Kept protected best at {train.best_hardset['passed']}/{train.best_hardset['total']}."
+                        "🛑 Early stop: repeated hardset regressions despite val_acc improvements."
                     )
+                    if train.best_hardset is not None:
+                        print(
+                            f"   Protected hardset best: {train.best_hardset['passed']}/{train.best_hardset['total']}"
+                        )
                     break
 
         scheduler.step()
