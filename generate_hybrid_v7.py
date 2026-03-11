@@ -47,7 +47,7 @@ MIN_PLIES = env_int("MIN_PLIES", 6)
 MAX_PLIES = env_int("MAX_PLIES", 42)
 BOARD_ABSENT_PROB = env_float("BOARD_ABSENT_PROB", 0.08)
 SEED = env_int("SEED", 1337)
-RECIPE_NAME = env_str("RECIPE_NAME", "stable_v1")
+RECIPE_NAME = env_str("RECIPE_NAME", "boot_v1")
 
 # ============ PATHS ============
 BASE_DIR = Path(__file__).resolve().parent
@@ -58,6 +58,14 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 PROFILE_RECIPES = {
+    "boot_v1": [
+        ("clean", 0.55),
+        ("banner_side", 0.16),
+        ("footer_heavy", 0.12),
+        ("trimmed", 0.08),
+        ("mono_scan", 0.06),
+        ("combo", 0.03),
+    ],
     "stable_v1": [
         ("clean", 0.26),
         ("banner_side", 0.22),
@@ -76,7 +84,12 @@ PROFILE_RECIPES = {
     ],
 }
 DEFAULT_PROFILE_WEIGHTS = PROFILE_RECIPES.get(RECIPE_NAME, PROFILE_RECIPES["stable_v1"])
-SEVERITY_WEIGHTS = [(1, 0.35), (2, 0.30), (3, 0.22), (4, 0.13)]
+SEVERITY_WEIGHTS_BY_RECIPE = {
+    "boot_v1": [(1, 0.58), (2, 0.27), (3, 0.11), (4, 0.04)],
+    "stable_v1": [(1, 0.35), (2, 0.30), (3, 0.22), (4, 0.13)],
+    "targeted_v1": [(1, 0.22), (2, 0.33), (3, 0.27), (4, 0.18)],
+}
+SEVERITY_WEIGHTS = SEVERITY_WEIGHTS_BY_RECIPE.get(RECIPE_NAME, SEVERITY_WEIGHTS_BY_RECIPE["stable_v1"])
 
 
 def choose_profile() -> str:
