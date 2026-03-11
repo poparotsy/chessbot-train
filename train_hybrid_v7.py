@@ -30,22 +30,44 @@ def env_str(name: str, default: str) -> str:
     return raw if raw is not None else default
 
 
-# ============ HUMAN CONFIG ============
-DATA_DIR = env_str("DATA_DIR", "tensors_v7")
-MODEL_SAVE_PATH = env_str("MODEL_SAVE_PATH", "models/model_hybrid_v7_latest_best.pt")
-FINAL_MODEL_SAVE_PATH = env_str("FINAL_MODEL_SAVE_PATH", "models/model_hybrid_v7_final.pt")
-CHECKPOINT_DIR = env_str("CHECKPOINT_DIR", "models/checkpoints_v7")
+# ============ HUMAN CONFIG (EDIT THESE) ============
+DATA_DIR = "tensors_v7"
+MODEL_SAVE_PATH = "models/model_hybrid_v7_latest_best.pt"
+FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v7_final.pt"
+CHECKPOINT_DIR = "models/checkpoints_v7"
+BASE_MODEL_PATH = "models/model_hybrid_v5_latest_best.pt"
+EPOCHS = 120
+LEARNING_RATE = 3e-5
+BATCH_SIZE_PER_GPU = 20
+RESUME_FROM_CHECKPOINT = False
+W_PIECE = 1.0
+W_GEOM = 0.35
+W_BOARD = 0.25
+W_POV = 0.20
+W_STM = 0.15
+
+# Optional: allow env overrides for Kaggle/automation runs.
+APPLY_ENV_OVERRIDES = True
+if APPLY_ENV_OVERRIDES:
+    DATA_DIR = env_str("DATA_DIR", DATA_DIR)
+    MODEL_SAVE_PATH = env_str("MODEL_SAVE_PATH", MODEL_SAVE_PATH)
+    FINAL_MODEL_SAVE_PATH = env_str("FINAL_MODEL_SAVE_PATH", FINAL_MODEL_SAVE_PATH)
+    CHECKPOINT_DIR = env_str("CHECKPOINT_DIR", CHECKPOINT_DIR)
+    BASE_MODEL_PATH = env_str("BASE_MODEL_PATH", BASE_MODEL_PATH)
+    EPOCHS = env_int("EPOCHS", EPOCHS)
+    LEARNING_RATE = env_float("LEARNING_RATE", LEARNING_RATE)
+    BATCH_SIZE_PER_GPU = env_int("BATCH_SIZE_PER_GPU", BATCH_SIZE_PER_GPU)
+    RESUME_FROM_CHECKPOINT = env_str(
+        "RESUME_FROM_CHECKPOINT",
+        "1" if RESUME_FROM_CHECKPOINT else "0",
+    ) == "1"
+    W_PIECE = env_float("W_PIECE", W_PIECE)
+    W_GEOM = env_float("W_GEOM", W_GEOM)
+    W_BOARD = env_float("W_BOARD", W_BOARD)
+    W_POV = env_float("W_POV", W_POV)
+    W_STM = env_float("W_STM", W_STM)
+
 CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, "latest.pt")
-BASE_MODEL_PATH = env_str("BASE_MODEL_PATH", "models/model_hybrid_v5_latest_best.pt")
-EPOCHS = env_int("EPOCHS", 120)
-LEARNING_RATE = env_float("LEARNING_RATE", 3e-5)
-BATCH_SIZE_PER_GPU = env_int("BATCH_SIZE_PER_GPU", 20)
-RESUME_FROM_CHECKPOINT = env_str("RESUME_FROM_CHECKPOINT", "0") == "1"
-W_PIECE = env_float("W_PIECE", 1.0)
-W_GEOM = env_float("W_GEOM", 0.35)
-W_BOARD = env_float("W_BOARD", 0.25)
-W_POV = env_float("W_POV", 0.20)
-W_STM = env_float("W_STM", 0.15)
 
 
 # ============ INTERNAL ============
@@ -143,7 +165,7 @@ def _clean_state_dict_keys(state: dict) -> dict:
     return out
 
 
-def load_backbone_from_v5(model: MultiHeadChessNet, model_path: str) -> None:
+def load_warmstart(model: MultiHeadChessNet, model_path: str) -> None:
     if not os.path.exists(model_path):
         print(f"⚠️ Base model not found: {model_path} (training backbone from scratch)")
         return
@@ -152,15 +174,37 @@ def load_backbone_from_v5(model: MultiHeadChessNet, model_path: str) -> None:
         payload = payload["model_state"]
     src = _clean_state_dict_keys(payload)
     dst = model.state_dict()
-    loaded = 0
+
+    # Try full warm-start first (true continuation when architecture matches).
+    full_loaded = 0
+    for k, v in src.items():
+        if k in dst and dst[k].shape == v.shape:
+            dst[k] = v
+            full_loaded += 1
+    full_ratio = full_loaded / max(1, len(dst))
+
+    if full_ratio >= 0.90:
+        model.load_state_dict(dst, strict=False)
+        print(
+            f"📦 Warm-started FULL model from {model_path} | "
+            f"matched={full_loaded}/{len(dst)} ({full_ratio:.1%})"
+        )
+        return
+
+    # Fallback: backbone-only warm-start (v5 -> v7 transfer).
+    dst = model.state_dict()
+    feat_loaded = 0
     for k, v in src.items():
         if not k.startswith("features."):
             continue
         if k in dst and dst[k].shape == v.shape:
             dst[k] = v
-            loaded += 1
+            feat_loaded += 1
     model.load_state_dict(dst, strict=False)
-    print(f"📦 Warm-started backbone from {model_path} | loaded feature tensors={loaded}")
+    print(
+        f"📦 Warm-started BACKBONE from {model_path} | "
+        f"matched features={feat_loaded}"
+    )
 
 
 def _make_loader(data_file: str, batch_size: int, shuffle: bool) -> DataLoader:
@@ -308,7 +352,7 @@ def train() -> None:
         raise RuntimeError(f"Missing v7 tensors in {DATA_DIR}. train={len(train_files)} val={len(val_files)}")
 
     model = MultiHeadChessNet()
-    load_backbone_from_v5(model, BASE_MODEL_PATH)
+    load_warmstart(model, BASE_MODEL_PATH)
     if GPU_COUNT > 1:
         model = nn.DataParallel(model)
     model.to(DEVICE)
