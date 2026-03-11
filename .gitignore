@@ -17,6 +17,8 @@ train/tensors_v*/
 train/images_4_test/debug/
 tmp/
 temp/
+scripts/pipeline_v6_report.json
+images_boundary_v6/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

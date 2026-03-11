@@ -142,8 +142,8 @@ def find_board_corners(img):
         ys = corners[:, 1]
         margin = min(xs.min(), w - xs.max(), ys.min(), h - ys.max()) / max(w, h)
 
-        # Favor board-like quadrilaterals with a margin over full-frame rectangles.
-        return area_ratio * 10.0 + opposite_similarity * 5.0 + aspect_similarity * 5.0 + margin * 20.0
+        # Favor board-like quadrilaterals; keep margin only as a weak tie-breaker.
+        return area_ratio * 8.0 + opposite_similarity * 6.0 + aspect_similarity * 7.0 + margin * 4.0
 
     candidates = []
     param_sets = [
@@ -165,7 +165,7 @@ def find_board_corners(img):
 
         for contour in sorted(contours, key=cv2.contourArea, reverse=True):
             peri = cv2.arcLength(contour, True)
-            for eps in (0.01, 0.02, CONTOUR_EPSILON, 0.05, 0.08):
+            for eps in (0.01, 0.02, 0.03, 0.05, 0.08):
                 approx = cv2.approxPolyDP(contour, eps * peri, True)
                 if len(approx) != 4:
                     continue
@@ -1250,6 +1250,50 @@ class BoardDetector:
     def _gray(self, img):
         return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
 
+    def _clip01(self, v):
+        return float(max(0.0, min(1.0, float(v))))
+
+    def _lens_confidence(self, metrics, trusted, relaxed, extra=0.0):
+        area = self._clip01(metrics["area_ratio"] / 0.70)
+        opp = self._clip01(metrics["opposite_similarity"])
+        asp = self._clip01(metrics["aspect_similarity"])
+        min_angle = self._clip01(metrics["min_angle"] / 90.0)
+        max_angle_penalty = self._clip01((180.0 - metrics["max_angle"]) / 90.0)
+        conf = (
+            0.35 * v4.warp_geometry_quality(metrics)
+            + 0.25 * area
+            + 0.20 * opp
+            + 0.15 * asp
+            + 0.05 * min(min_angle, max_angle_penalty)
+            + float(extra)
+        )
+        if trusted:
+            conf += 0.08
+        elif relaxed:
+            conf += 0.03
+        return self._clip01(conf)
+
+    def _lens_candidate(self, tag, corners, img, extra_conf=0.0, raw_score=None):
+        iw, ih = img.size[0], img.size[1]
+        metrics = v4.compute_quad_metrics(corners, iw, ih)
+        trusted = v4.is_warp_geometry_trustworthy(metrics)
+        relaxed = v4.is_warp_geometry_relaxed(metrics)
+        return {
+            "tag": tag,
+            "corners": corners,
+            "metrics": metrics,
+            "trusted": trusted,
+            "relaxed": relaxed,
+            "warp_quality": v4.warp_geometry_quality(metrics),
+            "lens_confidence": self._lens_confidence(
+                metrics,
+                trusted=trusted,
+                relaxed=relaxed,
+                extra=extra_conf,
+            ),
+            "raw_score": None if raw_score is None else float(raw_score),
+        }
+
     def _angular_distance_deg(self, a, b):
         d = abs(a - b) % 180.0
         return min(d, 180.0 - d)
@@ -1377,6 +1421,397 @@ class BoardDetector:
             }
             if best is None or candidate["score"] > best["score"]:
                 best = candidate
+        return best
+
+    def _periodicity_score(self, signal, min_lag=6):
+        arr = np.asarray(signal, dtype=np.float32)
+        n = arr.shape[0]
+        if n < max(24, min_lag + 4):
+            return 0.0
+        arr = arr - float(arr.mean())
+        denom = float(np.dot(arr, arr))
+        if denom <= 1e-6:
+            return 0.0
+        acf = np.correlate(arr, arr, mode="full")[n - 1 :]
+        lag_lo = min_lag
+        lag_hi = max(lag_lo + 1, min(n // 3, n - 1))
+        if lag_hi <= lag_lo:
+            return 0.0
+        peak = float(np.max(acf[lag_lo:lag_hi]))
+        return float(max(0.0, min(1.0, peak / denom)))
+
+    def _tile_acf_score(self, signal, tile_period):
+        arr = np.asarray(signal, dtype=np.float32)
+        n = arr.shape[0]
+        if n < tile_period * 4:
+            return 0.0
+        arr = arr - float(arr.mean())
+        denom = float(np.dot(arr, arr))
+        if denom <= 1e-6:
+            return 0.0
+        acf = np.correlate(arr, arr, mode="full")[n - 1 :]
+        peaks = []
+        for k in range(1, 5):
+            center = int(round(k * tile_period))
+            if center + 3 >= n:
+                break
+            lo = max(1, center - 3)
+            hi = min(n - 1, center + 4)
+            peaks.append(float(np.max(acf[lo:hi])) / denom)
+        if not peaks:
+            return 0.0
+        return float(max(0.0, min(1.0, np.mean(peaks))))
+
+    def _periodicity_2d_score(self, gray, grad, x0, y0, x1, y1):
+        roi_grad = grad[y0 : y1 + 1, x0 : x1 + 1]
+        roi_gray = gray[y0 : y1 + 1, x0 : x1 + 1]
+        hh, ww = roi_gray.shape[:2]
+        if hh < 120 or ww < 120:
+            return 0.0, 0.0, 0.0
+        x_proj = roi_grad.mean(axis=0)
+        y_proj = roi_grad.mean(axis=1)
+        px = self._periodicity_score(x_proj, min_lag=max(5, ww // 42))
+        py = self._periodicity_score(y_proj, min_lag=max(5, hh // 42))
+        periodicity = 0.5 * (px + py)
+        texture = float(np.mean(roi_grad))
+        contrast = float(np.std(roi_gray))
+        return float(periodicity), texture, contrast
+
+    def detect_axis_grid_windows(self, img, topk=8):
+        gray = self._gray(img)
+        h, w = gray.shape
+        if min(h, w) < 200:
+            return []
+
+        gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+        grad = cv2.convertScaleAbs(0.5 * np.abs(gx) + 0.5 * np.abs(gy)).astype(np.float32)
+
+        col_energy = grad.mean(axis=0)
+        row_energy = grad.mean(axis=1)
+        if w >= 31:
+            col_energy = cv2.GaussianBlur(col_energy.reshape(1, -1), (1, 31), 0).reshape(-1)
+        if h >= 31:
+            row_energy = cv2.GaussianBlur(row_energy.reshape(-1, 1), (31, 1), 0).reshape(-1)
+
+        dcol = np.abs(np.gradient(col_energy))
+        drow = np.abs(np.gradient(row_energy))
+        x_ids = np.argsort(dcol)[::-1]
+        y_ids = np.argsort(drow)[::-1]
+
+        x_cuts = [int(w * 0.5)]
+        y_cuts = [int(h * 0.5)]
+        for idx in x_ids:
+            idx = int(idx)
+            if idx < int(w * 0.12) or idx > int(w * 0.88):
+                continue
+            if any(abs(idx - p) < max(12, w // 40) for p in x_cuts):
+                continue
+            x_cuts.append(idx)
+            if len(x_cuts) >= 7:
+                break
+        for idx in y_ids:
+            idx = int(idx)
+            if idx < int(h * 0.10) or idx > int(h * 0.90):
+                continue
+            if any(abs(idx - p) < max(10, h // 40) for p in y_cuts):
+                continue
+            y_cuts.append(idx)
+            if len(y_cuts) >= 7:
+                break
+
+        x_cuts = sorted(set([0, w] + x_cuts))
+        y_cuts = sorted(set([0, h] + y_cuts))
+        candidates = []
+        global_tex = float(np.mean(grad) + 1e-6)
+        global_ctr = float(np.std(gray) + 1e-6)
+
+        x_pairs = []
+        for xa in x_cuts:
+            for xb in x_cuts:
+                if xb <= xa:
+                    continue
+                x_pairs.append((xa, xb))
+        y_pairs = []
+        for ya in y_cuts:
+            for yb in y_cuts:
+                if yb <= ya:
+                    continue
+                y_pairs.append((ya, yb))
+
+        for xa, xb in x_pairs:
+            for ya, yb in y_pairs:
+                x0, x1 = int(xa), int(xb - 1)
+                y0, y1 = int(ya), int(yb - 1)
+                ww = x1 - x0 + 1
+                hh = y1 - y0 + 1
+                if ww < int(w * 0.24) or hh < int(h * 0.24):
+                    continue
+                ratio = ww / float(max(1, hh))
+                if ratio < 0.52 or ratio > 1.95:
+                    continue
+                periodicity, texture_raw, contrast_raw = self._periodicity_2d_score(gray, grad, x0, y0, x1, y1)
+                if periodicity <= 0.06:
+                    continue
+
+                texture = float(texture_raw / global_tex)
+                contrast = float(contrast_raw / global_ctr)
+                area_ratio = (ww * hh) / float(w * h)
+                area_pref = 1.0 - min(1.0, abs(area_ratio - 0.42) / 0.42)
+                square_pref = 1.0 - min(1.0, abs(1.0 - ratio) / 0.8)
+                score = (
+                    3.2 * periodicity
+                    + 0.60 * texture
+                    + 0.35 * contrast
+                    + 0.30 * area_pref
+                    + 0.30 * square_pref
+                )
+                candidates.append(
+                    {
+                        "tag": "axis_grid_window",
+                        "corners": np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32),
+                        "score": float(score),
+                        "periodicity": float(periodicity),
+                        "ratio": float(ratio),
+                        "area_ratio": float(area_ratio),
+                    }
+                )
+
+        if not candidates:
+            return []
+        candidates.sort(key=lambda c: c["score"], reverse=True)
+        # Deduplicate heavily overlapping rectangles.
+        chosen = []
+        for cand in candidates:
+            c = cand["corners"]
+            x0, y0 = c[0]
+            x1, y1 = c[2]
+            keep = True
+            for prev in chosen:
+                p = prev["corners"]
+                px0, py0 = p[0]
+                px1, py1 = p[2]
+                ix0, iy0 = max(x0, px0), max(y0, py0)
+                ix1, iy1 = min(x1, px1), min(y1, py1)
+                if ix1 >= ix0 and iy1 >= iy0:
+                    inter = (ix1 - ix0 + 1) * (iy1 - iy0 + 1)
+                    a = (x1 - x0 + 1) * (y1 - y0 + 1)
+                    b = (px1 - px0 + 1) * (py1 - py0 + 1)
+                    iou = inter / float(max(1.0, a + b - inter))
+                    if iou > 0.82:
+                        keep = False
+                        break
+            if keep:
+                chosen.append(cand)
+            if len(chosen) >= topk:
+                break
+        if self.debug and chosen:
+            best = chosen[0]
+            self._log(
+                f"axis_grid best score={best['score']:.3f} per={best['periodicity']:.3f} "
+                f"ratio={best['ratio']:.3f} area={best['area_ratio']:.3f}"
+            )
+        return chosen
+
+    def _warp_grid_score(self, img, corners, size=256):
+        arr = np.array(img)
+        src = corners.astype(np.float32)
+        dst = np.array(
+            [[0, 0], [size - 1, 0], [size - 1, size - 1], [0, size - 1]],
+            dtype=np.float32,
+        )
+        mat = cv2.getPerspectiveTransform(src, dst)
+        warped = cv2.warpPerspective(arr, mat, (size, size))
+        gray = cv2.cvtColor(warped, cv2.COLOR_RGB2GRAY)
+        gx = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))
+        gy = np.abs(cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3))
+        x_proj = gx.mean(axis=0)
+        y_proj = gy.mean(axis=1)
+        tile = max(6, size // 8)
+        sx = self._tile_acf_score(x_proj, tile)
+        sy = self._tile_acf_score(y_proj, tile)
+
+        line_pos = [int(round(i * size / 8.0)) for i in range(9)]
+        edge_band = 2
+        line_x = []
+        off_x = []
+        line_y = []
+        off_y = []
+        for p in line_pos:
+            lo = max(0, p - edge_band)
+            hi = min(size, p + edge_band + 1)
+            line_x.append(float(np.mean(x_proj[lo:hi])))
+            line_y.append(float(np.mean(y_proj[lo:hi])))
+        for p in [int(round((i + 0.5) * size / 8.0)) for i in range(8)]:
+            lo = max(0, p - edge_band)
+            hi = min(size, p + edge_band + 1)
+            off_x.append(float(np.mean(x_proj[lo:hi])))
+            off_y.append(float(np.mean(y_proj[lo:hi])))
+        lx = float(np.mean(line_x) / max(1e-6, np.mean(off_x) if off_x else np.mean(line_x)))
+        ly = float(np.mean(line_y) / max(1e-6, np.mean(off_y) if off_y else np.mean(line_y)))
+        line_sep = max(0.0, min(1.0, 0.5 * (lx + ly) - 0.6))
+
+        return float(max(0.0, min(1.0, 0.55 * (sx + sy) * 0.5 + 0.45 * line_sep)))
+
+    def _refine_corners_grid_fit(self, img, corners):
+        h, w = img.size[1], img.size[0]
+        cur = v4.order_corners(corners.copy().astype(np.float32))
+        base_metrics = v4.compute_quad_metrics(cur, w, h)
+        base_score = 0.70 * self._warp_grid_score(img, cur) + 0.30 * v4.warp_geometry_quality(base_metrics)
+        best_score = float(base_score)
+
+        for frac in (0.04, 0.02):
+            step = max(2.0, min(w, h) * frac)
+            improved_any = False
+            for idx in range(4):
+                local_best = cur.copy()
+                local_score = best_score
+                for dx in (-step, 0.0, step):
+                    for dy in (-step, 0.0, step):
+                        if dx == 0.0 and dy == 0.0:
+                            continue
+                        trial = cur.copy()
+                        trial[idx, 0] = np.clip(trial[idx, 0] + dx, 0, w - 1)
+                        trial[idx, 1] = np.clip(trial[idx, 1] + dy, 0, h - 1)
+                        trial = v4.order_corners(trial)
+                        metrics = v4.compute_quad_metrics(trial, w, h)
+                        if metrics["area_ratio"] < 0.16:
+                            continue
+                        gscore = self._warp_grid_score(img, trial)
+                        score = 0.70 * gscore + 0.30 * v4.warp_geometry_quality(metrics)
+                        if score > local_score + 1e-4:
+                            local_score = float(score)
+                            local_best = trial
+                if local_score > best_score + 1e-4:
+                    best_score = local_score
+                    cur = local_best
+                    improved_any = True
+            if not improved_any:
+                break
+        return cur, float(best_score)
+
+    def detect_panel_split(self, img):
+        gray = self._gray(img)
+        h, w = gray.shape
+        if min(h, w) < 200:
+            return None
+
+        gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+        grad = cv2.convertScaleAbs(0.5 * np.abs(gx) + 0.5 * np.abs(gy)).astype(np.float32)
+
+        candidates = []
+        col_energy = grad.mean(axis=0)
+        row_energy = grad.mean(axis=1)
+        if w >= 31:
+            col_energy = cv2.GaussianBlur(col_energy.reshape(1, -1), (1, 31), 0).reshape(-1)
+        if h >= 31:
+            row_energy = cv2.GaussianBlur(row_energy.reshape(-1, 1), (31, 1), 0).reshape(-1)
+        total_col = float(np.mean(col_energy) + 1e-6)
+        total_row = float(np.mean(row_energy) + 1e-6)
+
+        def score_rect(tag, x0, y0, x1, y1, edge_gain, total_mean):
+            ww = x1 - x0 + 1
+            hh = y1 - y0 + 1
+            if ww < int(w * 0.28) or hh < int(h * 0.34):
+                return
+            ratio = ww / float(max(1, hh))
+            if ratio < 0.52 or ratio > 1.95:
+                return
+            roi_grad = grad[y0 : y1 + 1, x0 : x1 + 1]
+            roi_gray = gray[y0 : y1 + 1, x0 : x1 + 1]
+            x_proj = roi_grad.mean(axis=0)
+            y_proj = roi_grad.mean(axis=1)
+            px = self._periodicity_score(x_proj, min_lag=max(5, ww // 40))
+            py = self._periodicity_score(y_proj, min_lag=max(5, hh // 40))
+            periodicity = 0.5 * (px + py)
+            texture = float(np.mean(roi_grad) / (total_mean * 2.0))
+            contrast = float(np.std(roi_gray) / 64.0)
+            score = 2.6 * periodicity + 0.95 * max(0.0, edge_gain) + 0.45 * texture + 0.25 * contrast
+            candidates.append(
+                {
+                    "tag": tag,
+                    "corners": np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32),
+                    "score": float(score),
+                    "periodicity": float(periodicity),
+                    "edge_gain": float(edge_gain),
+                    "ratio": float(ratio),
+                }
+            )
+
+        x_lo = int(w * 0.18)
+        x_hi = int(w * 0.82)
+        x_step = max(4, w // 160)
+        for split in range(x_lo, x_hi, x_step):
+            left_mean = float(np.mean(col_energy[:split])) if split > 8 else 0.0
+            right_mean = float(np.mean(col_energy[split:])) if split < w - 8 else 0.0
+
+            # Right panel
+            x0, x1 = split, w - 1
+            roi_rows = grad[:, x0 : x1 + 1].mean(axis=1)
+            thr = float(np.quantile(roi_rows, 0.35))
+            active = np.where(roi_rows >= thr)[0]
+            if active.size >= int(h * 0.45):
+                y0 = max(0, int(active[0]) - max(3, h // 120))
+                y1 = min(h - 1, int(active[-1]) + max(3, h // 120))
+            else:
+                y0, y1 = 0, h - 1
+            score_rect("panel_split_right", x0, y0, x1, y1, (right_mean - left_mean) / total_col, total_col)
+
+            # Left panel
+            x0, x1 = 0, split
+            roi_rows = grad[:, x0 : x1 + 1].mean(axis=1)
+            thr = float(np.quantile(roi_rows, 0.35))
+            active = np.where(roi_rows >= thr)[0]
+            if active.size >= int(h * 0.45):
+                y0 = max(0, int(active[0]) - max(3, h // 120))
+                y1 = min(h - 1, int(active[-1]) + max(3, h // 120))
+            else:
+                y0, y1 = 0, h - 1
+            score_rect("panel_split_left", x0, y0, x1, y1, (left_mean - right_mean) / total_col, total_col)
+
+        y_lo = int(h * 0.14)
+        y_hi = int(h * 0.86)
+        y_step = max(4, h // 160)
+        for split in range(y_lo, y_hi, y_step):
+            top_mean = float(np.mean(row_energy[:split])) if split > 8 else 0.0
+            bottom_mean = float(np.mean(row_energy[split:])) if split < h - 8 else 0.0
+
+            # Bottom panel
+            y0, y1 = split, h - 1
+            roi_cols = grad[y0 : y1 + 1, :].mean(axis=0)
+            thr = float(np.quantile(roi_cols, 0.35))
+            active = np.where(roi_cols >= thr)[0]
+            if active.size >= int(w * 0.45):
+                x0 = max(0, int(active[0]) - max(3, w // 120))
+                x1 = min(w - 1, int(active[-1]) + max(3, w // 120))
+            else:
+                x0, x1 = 0, w - 1
+            score_rect("panel_split_bottom", x0, y0, x1, y1, (bottom_mean - top_mean) / total_row, total_row)
+
+            # Top panel
+            y0, y1 = 0, split
+            roi_cols = grad[y0 : y1 + 1, :].mean(axis=0)
+            thr = float(np.quantile(roi_cols, 0.35))
+            active = np.where(roi_cols >= thr)[0]
+            if active.size >= int(w * 0.45):
+                x0 = max(0, int(active[0]) - max(3, w // 120))
+                x1 = min(w - 1, int(active[-1]) + max(3, w // 120))
+            else:
+                x0, x1 = 0, w - 1
+            score_rect("panel_split_top", x0, y0, x1, y1, (top_mean - bottom_mean) / total_row, total_row)
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda c: c["score"], reverse=True)
+        best = candidates[0]
+        if best["score"] < 0.60:
+            return None
+        self._log(
+            "panel_split "
+            f"tag={best['tag']} score={best['score']:.3f} per={best['periodicity']:.3f} "
+            f"edge_gain={best['edge_gain']:.3f} ratio={best['ratio']:.3f}"
+        )
         return best
 
     def detect_lattice(self, img):
@@ -1517,29 +1952,120 @@ class BoardDetector:
             return None
         return {"tag": "robust", "corners": corners}
 
+    def lens_hypotheses(self, img):
+        hypotheses = []
+
+        for axis in self.detect_axis_grid_windows(img, topk=6):
+            axis_bonus = min(0.18, 0.12 * max(0.0, axis.get("periodicity", 0.0)))
+            hypotheses.append(
+                self._lens_candidate(
+                    axis["tag"],
+                    axis["corners"],
+                    img,
+                    extra_conf=axis_bonus,
+                    raw_score=axis.get("score"),
+                )
+            )
+
+        panel = self.detect_panel_split(img)
+        if panel is not None:
+            panel_bonus = min(0.12, 0.08 * max(0.0, panel.get("periodicity", 0.0)))
+            hypotheses.append(
+                self._lens_candidate(
+                    panel["tag"],
+                    panel["corners"],
+                    img,
+                    extra_conf=panel_bonus,
+                    raw_score=panel.get("score"),
+                )
+            )
+
+        lattice = self.detect_lattice(img)
+        if lattice is not None:
+            reg = lattice.get("regularity")
+            reg_bonus = 0.0
+            if reg:
+                reg_bonus = 0.04 * float(np.mean(reg))
+            hypotheses.append(
+                self._lens_candidate(
+                    "lattice",
+                    lattice["corners"],
+                    img,
+                    extra_conf=reg_bonus,
+                    raw_score=lattice.get("score"),
+                )
+            )
+
+        robust = v4.find_board_corners(img)
+        if robust is not None:
+            hypotheses.append(self._lens_candidate("contour_robust", robust, img))
+
+        legacy = v4.find_board_corners_legacy(img)
+        if legacy is not None:
+            hypotheses.append(self._lens_candidate("contour_legacy", legacy, img))
+
+        hypotheses.sort(
+            key=lambda item: (
+                int(item["trusted"]),
+                int(item["relaxed"]),
+                float(item["lens_confidence"]),
+                float(item["warp_quality"]),
+                float(item["metrics"]["area_ratio"]),
+            ),
+            reverse=True,
+        )
+
+        if self.debug and hypotheses:
+            best = hypotheses[0]
+            self._log(
+                "lens "
+                f"best={best['tag']} conf={best['lens_confidence']:.3f} "
+                f"trusted={best['trusted']} relaxed={best['relaxed']} "
+                f"area={best['metrics']['area_ratio']:.3f} "
+                f"opp={best['metrics']['opposite_similarity']:.3f} "
+                f"asp={best['metrics']['aspect_similarity']:.3f}"
+            )
+        return hypotheses
+
     def candidate_images(self, img):
         candidates = [("full", img, 0.0, True)]
-        ih, iw = img.size[1], img.size[0]
-
-        for detector in (self.detect_lattice, self.detect_contour):
-            result = detector(img)
-            if result is None:
-                continue
+        for idx, result in enumerate(self.lens_hypotheses(img)):
             corners = result["corners"]
-            metrics = v4.compute_quad_metrics(corners, iw, ih)
-            trusted = v4.is_warp_geometry_trustworthy(metrics)
-            relaxed = v4.is_warp_geometry_relaxed(metrics)
+            metrics = result["metrics"]
+            trusted = result["trusted"]
+            relaxed = result["relaxed"]
             if not trusted and not relaxed:
                 self._log(
                     f"reject {result['tag']} area={metrics['area_ratio']:.3f} "
                     f"opp={metrics['opposite_similarity']:.3f} asp={metrics['aspect_similarity']:.3f}"
                 )
                 continue
-            quality = v4.warp_geometry_quality(metrics)
+            quality = result["warp_quality"]
             warped = v4.perspective_transform(img, corners)
             tag = result["tag"] if trusted else f"{result['tag']}_relaxed"
             candidates.append((tag, warped, quality, trusted))
             candidates.append((f"{tag}_inset2", v4.inset_board(warped, 2), quality, trusted))
+
+            # Grid-fit corner refinement on top hypotheses to lock full 8x8 extent.
+            if idx < 4:
+                refined_corners, grid_fit_score = self._refine_corners_grid_fit(img, corners)
+                refined_metrics = v4.compute_quad_metrics(refined_corners, img.size[0], img.size[1])
+                refined_trusted = v4.is_warp_geometry_trustworthy(refined_metrics)
+                refined_relaxed = v4.is_warp_geometry_relaxed(refined_metrics)
+                if refined_trusted or refined_relaxed:
+                    refined_warp_q = max(
+                        v4.warp_geometry_quality(refined_metrics),
+                        0.65 * v4.warp_geometry_quality(refined_metrics) + 0.35 * grid_fit_score,
+                    )
+                    if grid_fit_score >= 0.28:
+                        rtag_base = f"{tag}_gfit"
+                        rwarped = v4.perspective_transform(img, refined_corners)
+                        candidates.append((rtag_base, rwarped, refined_warp_q, refined_trusted))
+                        candidates.append((f"{rtag_base}_inset2", v4.inset_board(rwarped, 2), refined_warp_q, refined_trusted))
+                        self._log(
+                            f"gfit {rtag_base} score={grid_fit_score:.3f} area={refined_metrics['area_ratio']:.3f} "
+                            f"opp={refined_metrics['opposite_similarity']:.3f} asp={refined_metrics['aspect_similarity']:.3f}"
+                        )
         return candidates
 
 
@@ -1660,6 +2186,38 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
     if not filtered:
         filtered = scored
 
+    # Sparse-board override:
+    # when full-image decode has very few pieces, allow a strong trusted warp to replace it.
+    sparse_override = None
+    if full_piece_count <= 8 and full_conf < 0.90:
+        trusted_warps = [
+            item
+            for item in filtered
+            if item[0] != "full"
+            and item[8]
+            and item[3] >= full_conf + 0.06
+            and item[4] >= full_piece_count + 6
+        ]
+        if trusted_warps:
+            trusted_warps.sort(
+                key=lambda item: (
+                    item[3],
+                    item[7],
+                    board_plausibility_score(item[2]),
+                ),
+                reverse=True,
+            )
+            cand = trusted_warps[0]
+            cand_plaus = board_plausibility_score(cand[2])
+            if cand_plaus >= full_plaus - 4.0:
+                sparse_override = cand
+                if DEBUG_MODE:
+                    print(
+                        f"DEBUG: sparse override full(conf={full_conf:.4f},pieces={full_piece_count}) "
+                        f"-> {cand[0]}(conf={cand[3]:.4f},pieces={cand[4]})",
+                        file=sys.stderr,
+                    )
+
     enriched = []
     for item in filtered:
         plausibility = board_plausibility_score(item[2])
@@ -1674,19 +2232,32 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
                 file=sys.stderr,
             )
 
-    (
-        best_tag,
-        _,
-        best_fen,
-        best_conf,
-        _,
-        best_perspective,
-        best_perspective_source,
-        _,
-        _,
-    ), _, _, _, _ = max(
-        enriched, key=lambda pair: (pair[1], pair[2], pair[4], pair[3])
-    )
+    if sparse_override is not None:
+        (
+            best_tag,
+            _,
+            best_fen,
+            best_conf,
+            _,
+            best_perspective,
+            best_perspective_source,
+            _,
+            _,
+        ) = sparse_override
+    else:
+        (
+            best_tag,
+            _,
+            best_fen,
+            best_conf,
+            _,
+            best_perspective,
+            best_perspective_source,
+            _,
+            _,
+        ), _, _, _, _ = max(
+            enriched, key=lambda pair: (pair[1], pair[2], pair[4], pair[3])
+        )
     if DEBUG_MODE:
         print(
             f"DEBUG: V6 Selected candidate={best_tag} confidence={best_conf:.4f} "

@@ -2,6 +2,7 @@
 """Rank model/checkpoint files on a fixed hard puzzle set."""
 
 import argparse
+import glob as pyglob
 import importlib
 import json
 import os
@@ -163,7 +164,10 @@ def main() -> None:
     except Exception as exc:
         raise SystemExit(f"Could not import recognizer module '{args.recognizer_module}': {exc}")
 
-    model_files = sorted(Path(".").glob(args.models_glob))
+    model_files = sorted(Path(p) for p in pyglob.glob(args.models_glob))
+    if not model_files:
+        # Fallback to pathlib-style relative glob for compatibility.
+        model_files = sorted(Path(".").glob(args.models_glob))
     if not model_files:
         raise SystemExit(f"No model files found for glob: {args.models_glob}")
 
