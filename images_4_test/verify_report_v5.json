@@ -1,0 +1,394 @@
+[
+  {
+    "image": "puzzle-00001.jpeg",
+    "match": true,
+    "true": "Rr4k1/RQ5N/8/8/3B2N1/2P5/PKB4q/8 w - - 0 1",
+    "pred": "Rr4k1/RQ5N/8/8/3B2N1/2P5/PKB4q/8 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00002.png",
+    "match": true,
+    "true": "k7/8/K7/3p4/3P4/3R4/7B/8 w - - 0 1",
+    "pred": "k7/8/K7/3p4/3P4/3R4/7B/8 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00003.jpeg",
+    "match": true,
+    "true": "7R/8/8/8/6pq/7k/4Np1r/5KbQ w - - 0 1",
+    "pred": "7R/8/8/8/6pq/7k/4Np1r/5KbQ w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00004.png",
+    "match": true,
+    "true": "7k/6R1/6K1/8/8/8/8/8 w - - 0 1",
+    "pred": "7k/6R1/6K1/8/8/8/8/8 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00005.jpeg",
+    "match": true,
+    "true": "r3k2r/pp3pp1/2p5/8/3Q3b/1B6/PPPP1PPq/R1B2RK1 w - - 0 1",
+    "pred": "r3k2r/pp3pp1/2p5/8/3Q3b/1B6/PPPP1PPq/R1B2RK1 w - - 0 1",
+    "conf": 0.9993,
+    "stm_src": "check_inference"
+  },
+  {
+    "image": "puzzle-00006.jpeg",
+    "match": true,
+    "true": "2q1rb2/1R3pkr/3p2pN/2nPp1Q1/4P3/2B4P/6P1/5RK1 w - - 0 1",
+    "pred": "2q1rb2/1R3pkr/3p2pN/2nPp1Q1/4P3/2B4P/6P1/5RK1 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00007.jpeg",
+    "match": true,
+    "true": "kr6/pp6/8/8/8/8/1R4Q1/6K1 w - - 0 1",
+    "pred": "kr6/pp6/8/8/8/8/1R4Q1/6K1 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00008.jpeg",
+    "match": true,
+    "true": "k1b5/pppN4/1R6/8/Q6K/8/8/8 w - - 0 1",
+    "pred": "k1b5/pppN4/1R6/8/Q6K/8/8/8 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00009.jpeg",
+    "match": true,
+    "true": "6k1/6pp/2rBq3/8/3pn3/1Q6/6PP/5RK1 w - - 0 1",
+    "pred": "6k1/6pp/2rBq3/8/3pn3/1Q6/6PP/5RK1 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00010.jpeg",
+    "match": true,
+    "true": "k7/p2N2p1/5p1b/6r1/8/pP3B2/2P3r1/1RK5 b - - 0 1",
+    "pred": "k7/p2N2p1/5p1b/6r1/8/pP3B2/2P3r1/1RK5 b - - 0 1",
+    "conf": 1.0,
+    "stm_src": "check_inference"
+  },
+  {
+    "image": "puzzle-00011.jpeg",
+    "match": true,
+    "true": "5rk1/1p1qbpp1/5n2/2Pp1b1p/rP1Bp3/P5P1/3NBP1P/R2QR1K1 w - - 0 1",
+    "pred": "5rk1/1p1qbpp1/5n2/2Pp1b1p/rP1Bp3/P5P1/3NBP1P/R2QR1K1 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00012.jpeg",
+    "match": true,
+    "true": "7k/4pK1p/3pP3/2pP4/1p4P1/p6P/7Q/8 w - - 0 1",
+    "pred": "7k/4pK1p/3pP3/2pP4/1p4P1/p6P/7Q/8 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00013.jpeg",
+    "match": true,
+    "true": "k7/2Q1K3/8/8/8/8/4P1PR/2R4q w - - 0 1",
+    "pred": "k7/2Q1K3/8/8/8/8/4P1PR/2R4q w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00014.jpeg",
+    "match": true,
+    "true": "1K1Rr3/PPP2pPP/2N3N1/8/8/1pp2n2/p1p4p/1k6 w - - 0 1",
+    "pred": "1K1Rr3/PPP2pPP/2N3N1/8/8/1pp2n2/p1p4p/1k6 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00015.jpeg",
+    "match": true,
+    "true": "rk6/NPR1K3/8/8/1Q6/8/8/8 w - - 0 1",
+    "pred": "rk6/NPR1K3/8/8/1Q6/8/8/8 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00016.jpeg",
+    "match": true,
+    "true": "6k1/6pp/2rBq3/8/3pn3/1Q6/6PP/5RK1 w - - 0 1",
+    "pred": "6k1/6pp/2rBq3/8/3pn3/1Q6/6PP/5RK1 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00017.jpeg",
+    "match": true,
+    "true": "k4r2/p7/P6p/2p3p1/5q2/4pB2/1R6/1R2K3 b - - 0 1",
+    "pred": "k4r2/p7/P6p/2p3p1/5q2/4pB2/1R6/1R2K3 b - - 0 1",
+    "conf": 1.0,
+    "stm_src": "check_inference"
+  },
+  {
+    "image": "puzzle-00018.jpeg",
+    "match": true,
+    "true": "1r5k/5Rpp/4R2N/3R4/2R5/5bq1/Q5r1/7K w - - 0 1",
+    "pred": "1r5k/5Rpp/4R2N/3R4/2R5/5bq1/Q5r1/7K w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00019.jpeg",
+    "match": true,
+    "true": "K4BB1/1Q6/5p2/8/2R2r1r/N2N2q1/kp1p1p1p/b7 w - - 0 1",
+    "pred": "K4BB1/1Q6/5p2/8/2R2r1r/N2N2q1/kp1p1p1p/b7 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00020.jpeg",
+    "match": true,
+    "true": "8/1r2kp2/1P3Rb1/2K5/1P5P/8/8/8 w - - 0 1",
+    "pred": "8/1r2kp2/1P3Rb1/2K5/1P5P/8/8/8 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00021.jpeg",
+    "match": true,
+    "true": "8/8/8/8/K7/8/pp1Q4/k7 w - - 0 1",
+    "pred": "8/8/8/8/K7/8/pp1Q4/k7 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00022.png",
+    "match": true,
+    "true": "rn1qkbnr/p1pp3p/6P1/1B2p2Q/8/2N5/PPPP1P1P/R1B1K1Nb w - - 0 1",
+    "pred": "rn1qkbnr/p1pp3p/6P1/1B2p2Q/8/2N5/PPPP1P1P/R1B1K1Nb w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00023.jpeg",
+    "match": true,
+    "true": "6k1/p2rN1p1/1p4P1/2n5/8/4P3/PPq5/K4R1R b - - 0 1",
+    "pred": "6k1/p2rN1p1/1p4P1/2n5/8/4P3/PPq5/K4R1R b - - 0 1",
+    "conf": 0.994,
+    "stm_src": "check_inference"
+  },
+  {
+    "image": "puzzle-00024.jpeg",
+    "match": true,
+    "true": "4Rnk1/pr3ppp/1p3q1N/6Q1/2p5/8/P4PPP/6K1 b - - 0 1",
+    "pred": "4Rnk1/pr3ppp/1p3q1N/6Q1/2p5/8/P4PPP/6K1 b - - 0 1",
+    "conf": 0.9823,
+    "stm_src": "check_inference"
+  },
+  {
+    "image": "puzzle-00025.jpeg",
+    "match": true,
+    "true": "2r1n1Qk/p1p3pr/1p3p2/8/P1N5/5PP1/B1P1q2P/7K b - - 0 1",
+    "pred": "2r1n1Qk/p1p3pr/1p3p2/8/P1N5/5PP1/B1P1q2P/7K b - - 0 1",
+    "conf": 1.0,
+    "stm_src": "check_inference"
+  },
+  {
+    "image": "puzzle-00026.jpeg",
+    "match": true,
+    "true": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8 w - - 0 1",
+    "pred": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8 w - - 0 1",
+    "conf": 0.999,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00027.jpeg",
+    "match": true,
+    "true": "8/8/8/3p4/3R4/K1p5/1pN4R/1kb4Q w - - 0 1",
+    "pred": "8/8/8/3p4/3R4/K1p5/1pN4R/1kb4Q w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00028.jpeg",
+    "match": false,
+    "true": "3Nnr2/r2PkP2/4p3/8/8/4K3/8/3R4 w - - 0 1",
+    "pred": "3Nn3/3PkP2/4p3/8/8/4K3/8/3R4 w - - 0 1",
+    "conf": 0.9702,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00029.jpeg",
+    "match": true,
+    "true": "krN5/1n6/2Q5/qN6/PpK5/1P6/8/R7 w - - 0 1",
+    "pred": "krN5/1n6/2Q5/qN6/PpK5/1P6/8/R7 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00030.jpeg",
+    "match": true,
+    "true": "r2q2rk/bpp2p1p/p4PbQ/6N1/8/3P4/PP4PP/4RR1K w - - 0 1",
+    "pred": "r2q2rk/bpp2p1p/p4PbQ/6N1/8/3P4/PP4PP/4RR1K w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00031.jpeg",
+    "match": false,
+    "true": "kbK5/pp6/1P6/8/8/8/8/R7 w - - 0 1",
+    "pred": "8/3K4/2p5/8/8/8/8/8 w - - 0 1",
+    "conf": 0.8929,
+    "stm_src": "default_missing_king"
+  },
+  {
+    "image": "puzzle-00032.jpeg",
+    "match": true,
+    "true": "4r1k1/p1p2pp1/3b3p/8/2Bn1q2/2NQ2PP/Pr3P2/1R3RK1 w - - 0 1",
+    "pred": "4r1k1/p1p2pp1/3b3p/8/2Bn1q2/2NQ2PP/Pr3P2/1R3RK1 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00033.jpeg",
+    "match": true,
+    "true": "r2q1rk1/ppp3pp/3b1p2/3p1n2/1nPP4/1P3N1P/PB3PP1/RN1Q1RK1 w - - 0 1",
+    "pred": "r2q1rk1/ppp3pp/3b1p2/3p1n2/1nPP4/1P3N1P/PB3PP1/RN1Q1RK1 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00034.jpeg",
+    "match": true,
+    "true": "6r1/K1P1B3/PP6/3p2p1/4q3/p1p5/kp1Q4/8 w - - 0 1",
+    "pred": "6r1/K1P1B3/PP6/3p2p1/4q3/p1p5/kp1Q4/8 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00035.jpeg",
+    "match": true,
+    "true": "8/6r1/1K3k2/1R6/5b1P/6P1/7p/8 w - - 0 1",
+    "pred": "8/6r1/1K3k2/1R6/5b1P/6P1/7p/8 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00036.jpeg",
+    "match": true,
+    "true": "3r1r2/pR3p2/1p2pN1k/2b5/2n2N1P/6R1/P2p2P1/3K4 w - - 0 1",
+    "pred": "3r1r2/pR3p2/1p2pN1k/2b5/2n2N1P/6R1/P2p2P1/3K4 w - - 0 1",
+    "conf": 0.9997,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00037.jpeg",
+    "match": true,
+    "true": "5rk1/pp4pp/4p3/2R3Q1/3n4/2q4r/P1P2PPP/5RK1 w - - 0 1",
+    "pred": "5rk1/pp4pp/4p3/2R3Q1/3n4/2q4r/P1P2PPP/5RK1 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00038.jpeg",
+    "match": false,
+    "true": "6Q1/p5p1/5rkp/2b1qp2/P7/5BPK/7P/5R2 w - - 0 1",
+    "pred": "6Q1/Kp4p1/5rkp/3bqp2/1P4P1/7P/5R2/8 w - - 0 1",
+    "conf": 0.8825,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00039.jpeg",
+    "match": true,
+    "true": "2q1rb2/pR3pkr/3p2pN/2nPp1QP/1nB1P1b1/6N1/PBP3P1/5RK1 w - - 0 1",
+    "pred": "2q1rb2/pR3pkr/3p2pN/2nPp1QP/1nB1P1b1/6N1/PBP3P1/5RK1 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00040.jpeg",
+    "match": true,
+    "true": "2r1b3/p1q1br2/1p2pNRk/4p3/4P3/2P5/P4PPP/1B4K1 b - - 0 1",
+    "pred": "2r1b3/p1q1br2/1p2pNRk/4p3/4P3/2P5/P4PPP/1B4K1 b - - 0 1",
+    "conf": 1.0,
+    "stm_src": "check_inference"
+  },
+  {
+    "image": "puzzle-00041.jpeg",
+    "match": false,
+    "true": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b - - 0 1",
+    "pred": "3rbqbr/3pp1pp/4n3/b4p2/4BP2/6N1/3PP1PP/1r1RBK1R w - - 0 1",
+    "conf": 0.8944,
+    "stm_src": "default_missing_king"
+  },
+  {
+    "image": "puzzle-00042.jpeg",
+    "match": true,
+    "true": "8/p7/1b2k1p1/1P3p2/P1R3P1/8/r1B3K1/8 w - - 0 1",
+    "pred": "8/p7/1b2k1p1/1P3p2/P1R3P1/8/r1B3K1/8 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00043.jpeg",
+    "match": true,
+    "true": "k2q3r/2Q1b1p1/p1RrB3/1p2p3/5p2/8/PPP2P2/2K3R1 w - - 0 1",
+    "pred": "k2q3r/2Q1b1p1/p1RrB3/1p2p3/5p2/8/PPP2P2/2K3R1 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00044.jpeg",
+    "match": true,
+    "true": "r3r1k1/pp1n2Bp/5P2/2Q5/3pb3/3q2P1/P5BP/R4R1K w - - 0 1",
+    "pred": "r3r1k1/pp1n2Bp/5P2/2Q5/3pb3/3q2P1/P5BP/R4R1K w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00045.jpeg",
+    "match": true,
+    "true": "r1bqkb1r/5ppp/p1nppn2/1p2P3/8/2N1BN2/PPPQ1PPP/2KR1B1R b - - 0 1",
+    "pred": "r1bqkb1r/5ppp/p1nppn2/1p2P3/8/2N1BN2/PPPQ1PPP/2KR1B1R w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00046.jpeg",
+    "match": false,
+    "true": "6k1/1b3pp1/2p3Np/1pq5/8/2N3nP/5PP1/Q4BK1 w - - 0 1",
+    "pred": "8/5p2/3q4/8/8/2Q2K2/k7/8 w - - 0 1",
+    "conf": 0.7725,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00047.jpeg",
+    "match": true,
+    "true": "1R1K4/k1n5/Np6/1P1n4/8/8/8/8 w - - 0 1",
+    "pred": "1R1K4/k1n5/Np6/1P1n4/8/8/8/8 w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00048.jpeg",
+    "match": true,
+    "true": "2rq1rk1/4npbp/p1bpp1p1/1p6/4PP1Q/P1PP4/B2BN1PP/R4R1K w - - 0 1",
+    "pred": "2rq1rk1/4npbp/p1bpp1p1/1p6/4PP1Q/P1PP4/B2BN1PP/R4R1K w - - 0 1",
+    "conf": 1.0,
+    "stm_src": "default_no_check_signal"
+  },
+  {
+    "image": "puzzle-00049.jpeg",
+    "match": false,
+    "true": "4b3/4B3/4KP2/pk5p/7P/8/8/8 w - - 0 1",
+    "pred": "4b3/4B3/4KP2/pp5p/7P/8/8/8 w - - 0 1",
+    "conf": 0.9922,
+    "stm_src": "default_missing_king"
+  }
+]

@@ -55,6 +55,13 @@ BASE_CONFIG = {
     "DETECTOR_PARTIAL_BOARD_PROB": env_float("DETECTOR_PARTIAL_BOARD_PROB", 0.10),
     "DETECTOR_MONO_LOW_CONTRAST_PROB": env_float("DETECTOR_MONO_LOW_CONTRAST_PROB", 0.10),
     "DETECTOR_HEAVY_TRIM_PROB": env_float("DETECTOR_HEAVY_TRIM_PROB", 0.08),
+    "PIECE_OCCLUSION_PROB": env_float("PIECE_OCCLUSION_PROB", 0.20),
+    "LOCAL_PIECE_TILT_PROB": env_float("LOCAL_PIECE_TILT_PROB", 0.08),
+    "LOCAL_PIECE_TILT_MAX_DEG": env_float("LOCAL_PIECE_TILT_MAX_DEG", 18.0),
+    "AUG_ROTATE_PROB": env_float("AUG_ROTATE_PROB", 0.25),
+    "AUG_ROTATE_MAX_DEG": env_float("AUG_ROTATE_MAX_DEG", 2.5),
+    "AUG_PERSPECTIVE_PROB": env_float("AUG_PERSPECTIVE_PROB", 0.20),
+    "AUG_PERSPECTIVE_SCALE": env_float("AUG_PERSPECTIVE_SCALE", 0.02),
     "MIN_PLIES": env_int("MIN_PLIES", 5),
     "MAX_PLIES": env_int("MAX_PLIES", 65),
 }
@@ -140,20 +147,71 @@ PROFILE_OVERRIDES = {
         "DETECTOR_PARTIAL_BOARD_PROB": 0.78,
         "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.70,
         "DETECTOR_HEAVY_TRIM_PROB": 0.55,
+        "PIECE_OCCLUSION_PROB": 0.30,
+        "LOCAL_PIECE_TILT_PROB": 0.18,
+        "LOCAL_PIECE_TILT_MAX_DEG": 20.0,
+        "AUG_ROTATE_PROB": 0.35,
+        "AUG_ROTATE_MAX_DEG": 4.0,
+        "AUG_PERSPECTIVE_PROB": 0.35,
+        "AUG_PERSPECTIVE_SCALE": 0.03,
         "MIN_PLIES": 0,
         "MAX_PLIES": 16,
     },
+    "tempset_focus": {
+        # One focused round to address current real-image misses
+        # (0100/0110/0115 detector stress, 0118 tilted/annotated pieces).
+        "LABELS_PROB": 0.55,
+        "TRIM_CAPTURE_PROB": 0.74,
+        "ARTIFACT_EMPTY_TILE_PROB": 0.40,
+        "HIGHLIGHT_BOARD_PROB": 0.60,
+        "ARROW_BOARD_PROB": 0.55,
+        "TACTICAL_MARKER_PROB": 0.62,
+        "WATERMARK_BOARD_PROB": 0.78,
+        "WATERMARK_MIN_PER_BOARD": 1,
+        "WATERMARK_MAX_PER_BOARD": 4,
+        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.90,
+        "HARD_EDGE_ROOK_PROB": 0.60,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.55,
+        "SPARSE_BOARD_PROB": 0.72,
+        "SCREENSHOT_CLUTTER_PROB": 0.82,
+        "DETECTOR_BANNER_PROB": 0.78,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.86,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.62,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.50,
+        "PIECE_OCCLUSION_PROB": 0.55,
+        "LOCAL_PIECE_TILT_PROB": 0.45,
+        "LOCAL_PIECE_TILT_MAX_DEG": 26.0,
+        "AUG_ROTATE_PROB": 0.48,
+        "AUG_ROTATE_MAX_DEG": 7.0,
+        "AUG_PERSPECTIVE_PROB": 0.45,
+        "AUG_PERSPECTIVE_SCALE": 0.04,
+        "MIN_PLIES": 0,
+        "MAX_PLIES": 24,
+    },
 }
 
-# Balanced default mix:
-# keep targeted hard cases, but preserve enough standard boards to avoid drift/forgetting.
-DEFAULT_PROFILE_WEIGHTS = [
-    ("default", 0.35),
-    ("screenshot_clutter", 0.22),
-    ("edge_rook", 0.22),
-    ("hard_mix", 0.08),
-    ("detector_hard", 0.13),
-]
+# Deterministic data recipe (not ad-hoc random drift):
+# fixed per-chunk quotas that are auditable and repeatable.
+RECIPE_NAME = os.getenv("RECIPE_NAME", "stable_v1")
+PROFILE_RECIPES = {
+    # Anchor-heavy recipe to avoid forgetting while still targeting hard cases.
+    "stable_v1": [
+        ("default", 0.50),
+        ("screenshot_clutter", 0.15),
+        ("edge_rook", 0.10),
+        ("detector_hard", 0.15),
+        ("tempset_focus", 0.10),
+    ],
+    # Strong targeted round for detector/overlay failures (use intentionally).
+    "targeted_v1": [
+        ("default", 0.30),
+        ("screenshot_clutter", 0.20),
+        ("edge_rook", 0.10),
+        ("detector_hard", 0.20),
+        ("tempset_focus", 0.20),
+    ],
+}
+DEFAULT_PROFILE_WEIGHTS = PROFILE_RECIPES.get(RECIPE_NAME, PROFILE_RECIPES["stable_v1"])
 
 
 def get_profile_config(profile):
@@ -170,6 +228,32 @@ def choose_profile(profile=None):
     names = [name for name, _ in DEFAULT_PROFILE_WEIGHTS]
     weights = [weight for _, weight in DEFAULT_PROFILE_WEIGHTS]
     return random.choices(names, weights=weights, k=1)[0]
+
+
+def build_profile_plan(total_boards, profile_weights):
+    """
+    Build deterministic per-chunk profile plan from recipe weights.
+    Uses largest-remainder rounding then shuffles plan order.
+    """
+    raw_counts = [(name, weight * total_boards) for name, weight in profile_weights]
+    floored = [(name, int(val)) for name, val in raw_counts]
+    used = sum(v for _, v in floored)
+    remaining = total_boards - used
+
+    remainders = sorted(
+        ((name, raw - int(raw)) for name, raw in raw_counts),
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    counts = {name: count for name, count in floored}
+    for idx in range(max(0, remaining)):
+        counts[remainders[idx % len(remainders)][0]] += 1
+
+    plan = []
+    for name, _weight in profile_weights:
+        plan.extend([name] * counts[name])
+    random.shuffle(plan)
+    return plan, counts
 
 
 def add_detector_banner_overlay(img, cfg):
@@ -255,7 +339,7 @@ def apply_mono_book_style(img, cfg):
     return out
 
 
-def augment_image(img):
+def augment_image(img, cfg):
     """Realistic augmentation mix for robust tile classification."""
     import cv2
 
@@ -264,15 +348,15 @@ def augment_image(img):
         img = img.convert('L').convert('RGB')
 
     # 2. Micro-rotations.
-    if random.random() < 0.25:
-        angle = random.uniform(-2.5, 2.5)
+    if random.random() < cfg["AUG_ROTATE_PROB"]:
+        angle = random.uniform(-cfg["AUG_ROTATE_MAX_DEG"], cfg["AUG_ROTATE_MAX_DEG"])
         img = img.rotate(angle, fillcolor=(128, 128, 128))
 
     # 3. Mild perspective jitter to simulate camera skew.
-    if random.random() < 0.20:
+    if random.random() < cfg["AUG_PERSPECTIVE_PROB"]:
         arr = np.array(img)
         h, w = arr.shape[:2]
-        max_j = max(2, int(min(h, w) * 0.02))
+        max_j = max(2, int(min(h, w) * cfg["AUG_PERSPECTIVE_SCALE"]))
         src = np.float32([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]])
         dst = src + np.float32([
             [random.randint(-max_j, max_j), random.randint(-max_j, max_j)],
@@ -319,6 +403,57 @@ def augment_image(img):
         img = img.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.2, 0.9)))
 
     return img
+
+
+def apply_piece_occlusion_overlay(img, grid, cfg):
+    """Apply strong square/arrow overlays on occupied squares (0118-like stress)."""
+    if random.random() >= cfg["PIECE_OCCLUSION_PROB"]:
+        return img
+
+    draw = ImageDraw.Draw(img, "RGBA")
+    ts = img.size[0] // 8
+    occupied = [(r, c) for r in range(8) for c in range(8) if grid[r][c]]
+    if not occupied:
+        return img
+
+    target_count = random.randint(1, 2)
+    random.shuffle(occupied)
+    for r, c in occupied[:target_count]:
+        x0, y0 = c * ts, r * ts
+        x1, y1 = x0 + ts, y0 + ts
+        fill = random.choice([(228, 36, 36, 150), (221, 58, 48, 140), (36, 170, 80, 130)])
+        draw.rectangle([x0, y0, x1, y1], fill=fill, outline=(250, 250, 250, 80), width=1)
+
+        if random.random() < 0.7:
+            sr, sc = random.randint(0, 7), random.randint(0, 7)
+            sx, sy = sc * ts + ts // 2, sr * ts + ts // 2
+            tx, ty = c * ts + ts // 2, r * ts + ts // 2
+            draw_arrow(draw, (sr, sc), (r, c), (20, 210, 20, 170), ts)
+
+    return img
+
+
+def apply_local_piece_tilt(img, grid, cfg):
+    """Locally rotate piece tiles to mimic tilted/warped glyph rendering."""
+    if random.random() >= cfg["LOCAL_PIECE_TILT_PROB"]:
+        return img
+
+    ts = img.size[0] // 8
+    occupied = [(r, c) for r in range(8) for c in range(8) if grid[r][c]]
+    if not occupied:
+        return img
+
+    out = img.copy()
+    for r, c in random.sample(occupied, k=min(len(occupied), random.randint(1, 2))):
+        x0, y0 = c * ts, r * ts
+        tile = out.crop((x0, y0, x0 + ts, y0 + ts))
+        arr = np.array(tile)
+        fill = tuple(int(v) for v in np.median(arr.reshape(-1, 3), axis=0))
+        max_deg = max(1.0, float(cfg.get("LOCAL_PIECE_TILT_MAX_DEG", 18.0)))
+        angle = random.uniform(-max_deg, max_deg)
+        tilted = tile.rotate(angle, resample=Image.BICUBIC, expand=False, fillcolor=fill)
+        out.paste(tilted, (x0, y0))
+    return out
 
 def draw_arrow(draw, start_square, end_square, color, ts):
     """Draw a proper chess arrow with arrowhead"""
@@ -753,6 +888,8 @@ def render_board(fen, return_meta=False, profile=None):
         label_pov = random.choice(("white", "black")) if profile != "default" else "white"
         draw_board_labels(draw, ts, label_pov)
     background = vandalize(background, grid, cfg)
+    background = apply_piece_occlusion_overlay(background, grid, cfg)
+    background = apply_local_piece_tilt(background, grid, cfg)
 
     # Detector-hard scene augmentation: partial board, banners, and low-contrast scans.
     background = compose_partial_board_scene(background, cfg)
@@ -760,7 +897,7 @@ def render_board(fen, return_meta=False, profile=None):
     background = apply_mono_book_style(background, cfg)
     
     # Apply augmentation BEFORE compression
-    background = augment_image(background)
+    background = augment_image(background, cfg)
     
     # JPEG compression artifacts are common in user screenshots.
     if random.random() < 0.60:
@@ -933,15 +1070,15 @@ def random_training_board(profile=None):
     return board
 
 if __name__ == "__main__":
+    print(f"📦 Generation recipe: {RECIPE_NAME}")
+    print(f"   Weights: {DEFAULT_PROFILE_WEIGHTS}")
     for name in [f"val_{i}" for i in range(CHUNKS_VAL)] + [f"train_{i}" for i in range(CHUNKS_TRAIN)]:
         all_x, all_y = [], []
-        profile_counts = {k: 0 for k in PROFILE_OVERRIDES.keys()}
-        for _ in range(BOARDS_PER_CHUNK):
-            profile = choose_profile()
-            profile_counts[profile] += 1
+        profile_plan, profile_counts = build_profile_plan(BOARDS_PER_CHUNK, DEFAULT_PROFILE_WEIGHTS)
+        for profile in profile_plan:
             b = random_training_board(profile=profile)
             t, l = render_board(b.fen().split()[0], profile=profile)
             all_x.extend(t); all_y.extend(l)
         torch.save({'x': torch.from_numpy(np.stack(all_x)), 'y': torch.tensor(all_y)}, os.path.join(OUTPUT_DIR, f"{name}.pt"))
-        mix = ", ".join(f"{k}:{v}" for k, v in profile_counts.items())
+        mix = ", ".join(f"{k}:{profile_counts.get(k, 0)}" for k, _ in DEFAULT_PROFILE_WEIGHTS)
         print(f"✅ Created {name} | mix[{mix}]")

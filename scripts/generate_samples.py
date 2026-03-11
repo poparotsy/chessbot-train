@@ -30,9 +30,22 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible sampling.")
     parser.add_argument(
         "--profile",
-        choices=("default", "screenshot-clutter", "edge-rook", "hard-mix", "detector-hard"),
+        choices=("default", "screenshot-clutter", "edge-rook", "hard-mix", "detector-hard", "tempset-focus"),
         default="default",
         help="Sampling profile to preview the training distribution.")
+    parser.add_argument(
+        "--force-piece-tilt",
+        action="store_true",
+        help="Force local piece tilt to appear on all samples (preview-only override).")
+    parser.add_argument(
+        "--force-piece-occlusion",
+        action="store_true",
+        help="Force piece-square occlusion overlays on all samples (preview-only override).")
+    parser.add_argument(
+        "--tilt-max-deg",
+        type=float,
+        default=None,
+        help="Override local piece tilt max degrees (preview-only).")
     return parser.parse_args()
 
 
@@ -56,14 +69,39 @@ def apply_profile(profile):
         "edge-rook": "edge_rook",
         "hard-mix": "hard_mix",
         "detector-hard": "detector_hard",
+        "tempset-focus": "tempset_focus",
     }
     return mapping[profile]
+
+
+def apply_preview_overrides(args, profile):
+    # Preview-only knobs so users can visually inspect augmentation behavior.
+    targets = [profile] if profile is not None else list(gen5.PROFILE_OVERRIDES.keys())
+
+    if args.force_piece_tilt:
+        gen5.BASE_CONFIG["LOCAL_PIECE_TILT_PROB"] = 1.0
+        for name in targets:
+            gen5.PROFILE_OVERRIDES.setdefault(name, {})
+            gen5.PROFILE_OVERRIDES[name]["LOCAL_PIECE_TILT_PROB"] = 1.0
+
+    if args.force_piece_occlusion:
+        gen5.BASE_CONFIG["PIECE_OCCLUSION_PROB"] = 1.0
+        for name in targets:
+            gen5.PROFILE_OVERRIDES.setdefault(name, {})
+            gen5.PROFILE_OVERRIDES[name]["PIECE_OCCLUSION_PROB"] = 1.0
+
+    if args.tilt_max_deg is not None:
+        gen5.BASE_CONFIG["LOCAL_PIECE_TILT_MAX_DEG"] = args.tilt_max_deg
+        for name in targets:
+            gen5.PROFILE_OVERRIDES.setdefault(name, {})
+            gen5.PROFILE_OVERRIDES[name]["LOCAL_PIECE_TILT_MAX_DEG"] = args.tilt_max_deg
 
 
 def main():
     args = parse_args()
     random.seed(args.seed)
     profile = apply_profile(args.profile)
+    apply_preview_overrides(args, profile)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     manifest = []
@@ -74,6 +112,13 @@ def main():
         f"{args.profile} "
         f"(mode={'mixed-default' if profile is None else profile})"
     )
+    if args.force_piece_tilt or args.force_piece_occlusion or args.tilt_max_deg is not None:
+        print(
+            "Preview overrides: "
+            f"force_piece_tilt={args.force_piece_tilt}, "
+            f"force_piece_occlusion={args.force_piece_occlusion}, "
+            f"tilt_max_deg={args.tilt_max_deg if args.tilt_max_deg is not None else 'profile-default'}"
+        )
     for i in range(args.count):
         fen_board = gen5.random_training_board(profile=profile).board_fen()
         image, board_theme, piece_set, label_pov = render_board_image(fen_board, profile=profile)

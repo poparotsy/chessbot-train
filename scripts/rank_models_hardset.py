@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--truth-json",
-        default=str(TRAIN_DIR / "images_4_test" / "truth_known.json"),
+        default=str(TRAIN_DIR / "images_4_test" / "truth_verified.json"),
         help="Optional path to JSON file: {\"puzzle-xxxxx.jpeg\": \"fen ...\"}",
     )
     parser.add_argument(
@@ -151,8 +151,7 @@ def main() -> None:
     if not model_files:
         raise SystemExit(f"No model files found for glob: {args.models_glob}")
 
-    rec.USE_EDGE_DETECTION = True
-    rec.USE_SQUARE_DETECTION = False
+    # Use recognizer defaults so ranking matches normal CLI behavior.
     rec.DEBUG_MODE = False
 
     reports = []
