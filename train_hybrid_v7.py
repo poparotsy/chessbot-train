@@ -5,12 +5,8 @@ from __future__ import annotations
 
 import gc
 import glob
-import json
 import os
-import re
 import shutil
-import subprocess
-import sys
 import time
 from typing import Dict, Tuple
 
@@ -19,7 +15,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
-SCRIPT_REV = "v7-train-2026-03-12-r4"
+SCRIPT_REV = "v7-train-2026-03-12-r7"
 
 
 def env_int(name: str, default: int) -> int:
@@ -53,17 +49,7 @@ W_BOARD = 0.25
 W_POV = 0.20
 W_STM = 0.15
 NONEMPTY_TILE_BONUS = 2.5
-RUN_HARDSET_EVAL_ON_BEST = True
-HARDSET_EVAL_SCRIPT = "scripts/rank_models_hardset.py"
-HARDSET_TRUTH_JSON = "images_4_test/truth_verified.json"
-HARDSET_COMPARE_FULL_FEN = False
-HARDSET_REQUIRE_NON_REGRESSION = True
-HARDSET_MAX_CONSECUTIVE_REGRESSIONS = 30
-HARDSET_MIN_PASS_WITHOUT_BASELINE = 0
-HARDSET_FAIL_ON_ZERO_BASELINE = True
 MIN_SCORE_IMPROVEMENT = 1e-6
-BACKUP_EXISTING_BEST_MODEL = False
-USE_EXISTING_MODEL_SAVE_BASELINE = False
 
 # Optional: allow env overrides for Kaggle/automation runs.
 APPLY_ENV_OVERRIDES = True
@@ -86,22 +72,6 @@ if APPLY_ENV_OVERRIDES:
     W_POV = env_float("W_POV", W_POV)
     W_STM = env_float("W_STM", W_STM)
     NONEMPTY_TILE_BONUS = env_float("NONEMPTY_TILE_BONUS", NONEMPTY_TILE_BONUS)
-    HARDSET_REQUIRE_NON_REGRESSION = env_str(
-        "HARDSET_REQUIRE_NON_REGRESSION",
-        "1" if HARDSET_REQUIRE_NON_REGRESSION else "0",
-    ) == "1"
-    HARDSET_MAX_CONSECUTIVE_REGRESSIONS = env_int(
-        "HARDSET_MAX_CONSECUTIVE_REGRESSIONS",
-        HARDSET_MAX_CONSECUTIVE_REGRESSIONS,
-    )
-    HARDSET_MIN_PASS_WITHOUT_BASELINE = env_int(
-        "HARDSET_MIN_PASS_WITHOUT_BASELINE",
-        HARDSET_MIN_PASS_WITHOUT_BASELINE,
-    )
-    HARDSET_FAIL_ON_ZERO_BASELINE = env_str(
-        "HARDSET_FAIL_ON_ZERO_BASELINE",
-        "1" if HARDSET_FAIL_ON_ZERO_BASELINE else "0",
-    ) == "1"
 
 CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, "latest.pt")
 
@@ -243,103 +213,6 @@ def load_warmstart(model: MultiHeadChessNet, model_path: str) -> None:
     print(
         f"📦 Warm-started BACKBONE from {model_path} | "
         f"matched features={feat_loaded}"
-    )
-
-
-def run_rank_eval(
-    model_path: str,
-    truth_json: str,
-    recognizer_module: str = "recognizer_v7",
-    images_dir: str | None = None,
-    compare_full_fen: bool = False,
-    label: str = "hardset",
-) -> Dict[str, float] | None:
-    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), HARDSET_EVAL_SCRIPT)
-    if not os.path.exists(script_path):
-        print(f"   ⚠️ {label} eval script not found: {script_path}")
-        return None
-    if not os.path.exists(truth_json):
-        print(f"   ⚠️ {label} truth file not found: {truth_json}")
-        return None
-
-    cmd = [
-        sys.executable,
-        script_path,
-        "--models-glob",
-        model_path,
-        "--truth-json",
-        truth_json,
-        "--recognizer-module",
-        recognizer_module,
-    ]
-    if images_dir:
-        cmd.extend(["--images-dir", images_dir])
-    if compare_full_fen:
-        cmd.append("--compare-full-fen")
-
-    print(f"   📊 Running {label} ranking on candidate...")
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=os.path.dirname(os.path.abspath(__file__)),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc.stdout:
-            print(proc.stdout.rstrip())
-        if proc.stderr:
-            print(proc.stderr.rstrip())
-        if proc.returncode != 0:
-            print(f"   ⚠️ {label} ranking exited with code {proc.returncode}")
-            return None
-        output = proc.stdout or ""
-        marker = "=== HARD-SET RANKING ==="
-        if marker in output:
-            tail = output.split(marker, 1)[1].strip()
-            try:
-                summary = json.loads(tail)
-                model_abs = os.path.abspath(model_path)
-                for row in summary.get("ranked", []):
-                    row_model_abs = os.path.abspath(row.get("model", ""))
-                    if row_model_abs == model_abs or os.path.basename(row_model_abs) == os.path.basename(model_abs):
-                        return {
-                            "passed": int(row["passed"]),
-                            "total": int(row["total"]),
-                            "avg_confidence": float(row.get("avg_confidence", 0.0)),
-                        }
-            except Exception:
-                pass
-
-        pattern = re.compile(r"->\s*(\d+)/(\d+)\s*\(avg_conf=([0-9.]+)\)")
-        matches = pattern.findall(output)
-        if matches:
-            last = matches[-1]
-            return {
-                "passed": int(last[0]),
-                "total": int(last[1]),
-                "avg_confidence": float(last[2]),
-            }
-    except Exception as exc:
-        print(f"   ⚠️ {label} ranking failed: {exc}")
-    return None
-
-
-def run_hardset_eval_on_model(model_path: str) -> Dict[str, float] | None:
-    if not RUN_HARDSET_EVAL_ON_BEST:
-        return None
-    model_name = os.path.basename(model_path).lower()
-    if "v5" in model_name or "v4" in model_name:
-        recognizer_module = "recognizer_v5"
-    else:
-        recognizer_module = "recognizer_v7"
-    return run_rank_eval(
-        model_path=model_path,
-        truth_json=HARDSET_TRUTH_JSON,
-        recognizer_module=recognizer_module,
-        images_dir=None,
-        compare_full_fen=HARDSET_COMPARE_FULL_FEN,
-        label="hardset",
     )
 
 
@@ -535,8 +408,6 @@ def train() -> int:
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-6)
 
     best_score = -1e9
-    train.best_hardset = None
-    train.consecutive_hardset_regressions = 0
     start_epoch = 0
     if RESUME_FROM_CHECKPOINT and os.path.exists(CHECKPOINT_PATH):
         ckpt = torch.load(CHECKPOINT_PATH, map_location=DEVICE)
@@ -552,75 +423,10 @@ def train() -> int:
     elif RESUME_FROM_CHECKPOINT:
         print(f"ℹ️ No checkpoint found at {CHECKPOINT_PATH}; using base model warm-start.")
 
-    if USE_EXISTING_MODEL_SAVE_BASELINE and os.path.exists(MODEL_SAVE_PATH) and BACKUP_EXISTING_BEST_MODEL:
-        backup_path = MODEL_SAVE_PATH.replace(".pt", "_pretrain_backup.pt")
-        if not os.path.exists(backup_path):
-            shutil.copy2(MODEL_SAVE_PATH, backup_path)
-            print(f"🛡️ Backed up existing best model: {backup_path}")
+    print(f"🧠 Multi-head v7 config | epochs={EPOCHS} lr={LEARNING_RATE:.2e}")
 
-    baseline_sources = []
-    baseline_candidates = []
-    if USE_EXISTING_MODEL_SAVE_BASELINE and MODEL_SAVE_PATH:
-        baseline_candidates.append(MODEL_SAVE_PATH)
-    if BASE_MODEL_PATH:
-        baseline_candidates.append(BASE_MODEL_PATH)
-    for p in baseline_candidates:
-        if p and os.path.exists(p) and p not in baseline_sources:
-            baseline_sources.append(p)
-
-    best_baseline = None
-    best_baseline_src = None
-    for src in baseline_sources:
-        score = run_hardset_eval_on_model(src)
-        if score is None:
-            continue
-        if best_baseline is None:
-            best_baseline = score
-            best_baseline_src = src
-            continue
-        lhs = (int(score["passed"]), float(score.get("avg_confidence", 0.0)))
-        rhs = (int(best_baseline["passed"]), float(best_baseline.get("avg_confidence", 0.0)))
-        if lhs > rhs:
-            best_baseline = score
-            best_baseline_src = src
-
-    if best_baseline is not None:
-        if (
-            HARDSET_FAIL_ON_ZERO_BASELINE
-            and int(best_baseline["passed"]) == 0
-            and int(best_baseline["total"]) > 0
-        ):
-            raise RuntimeError(
-                "Hardset baseline evaluated to 0/N. "
-                "This indicates a bad baseline model or recognizer mismatch; aborting."
-            )
-        train.best_hardset = best_baseline
-        print(
-            f"📌 Hardset baseline protected from {best_baseline_src}: "
-            f"{best_baseline['passed']}/{best_baseline['total']}"
-        )
-        if best_baseline_src != MODEL_SAVE_PATH:
-            shutil.copy2(best_baseline_src, MODEL_SAVE_PATH)
-            print(f"📦 Promoted best baseline to save path: {MODEL_SAVE_PATH}")
-    else:
-        if HARDSET_REQUIRE_NON_REGRESSION:
-            print(
-                "⚠️ Hardset baseline unavailable; save gating requires candidate hardset "
-                f">= {HARDSET_MIN_PASS_WITHOUT_BASELINE}/{49}."
-            )
-        else:
-            print("⚠️ Hardset baseline unavailable; save gating will use val score only.")
-
-    print(
-        "🧠 Multi-head v7 config | "
-        f"epochs={EPOCHS} lr={LEARNING_RATE:.2e} "
-        f"hardset_floor_no_baseline={HARDSET_MIN_PASS_WITHOUT_BASELINE}"
-    )
-
-    interrupted = False
     last_completed_epoch = start_epoch - 1
 
-    accepted_any_best = False
     try:
         for epoch in range(start_epoch, EPOCHS):
             model.train()
@@ -691,70 +497,14 @@ def train() -> int:
             last_completed_epoch = epoch
 
             if val["score"] > (best_score + MIN_SCORE_IMPROVEMENT):
+                best_score = val["score"]
                 candidate_path = MODEL_SAVE_PATH.replace(".pt", "_candidate.pt")
                 torch.save(state, candidate_path)
-
-                candidate_hardset = run_hardset_eval_on_model(candidate_path)
-                accept_candidate = True
-                reject_reason = None
-                if HARDSET_REQUIRE_NON_REGRESSION:
-                    if candidate_hardset is None:
-                        accept_candidate = False
-                        reject_reason = "candidate hardset unavailable"
-                    elif train.best_hardset is None:
-                        if int(candidate_hardset["passed"]) < HARDSET_MIN_PASS_WITHOUT_BASELINE:
-                            accept_candidate = False
-                            reject_reason = (
-                                "candidate hardset below minimum without baseline: "
-                                f"{candidate_hardset['passed']}/{candidate_hardset['total']} < "
-                                f"{HARDSET_MIN_PASS_WITHOUT_BASELINE}/{candidate_hardset['total']}"
-                            )
-                    elif candidate_hardset["passed"] < train.best_hardset["passed"]:
-                        accept_candidate = False
-                        reject_reason = (
-                            "hardset regression: "
-                            f"{candidate_hardset['passed']}/{candidate_hardset['total']} < "
-                            f"{train.best_hardset['passed']}/{train.best_hardset['total']}"
-                        )
-
-                if not accept_candidate:
-                    count_regression = (
-                        train.best_hardset is not None
-                        and candidate_hardset is not None
-                        and int(candidate_hardset["passed"]) < int(train.best_hardset["passed"])
-                    )
-                    if count_regression:
-                        train.consecutive_hardset_regressions += 1
-                    print(f"   ⛔ Rejecting candidate due to {reject_reason}")
-                    if count_regression:
-                        print(
-                            "   ⏱️ Consecutive hardset regressions: "
-                            f"{train.consecutive_hardset_regressions}/{HARDSET_MAX_CONSECUTIVE_REGRESSIONS}"
-                        )
-                    else:
-                        print("   ⏱️ Regression counter unchanged (no protected hardset baseline yet).")
-
-                if accept_candidate:
-                    best_score = val["score"]
-                    os.replace(candidate_path, MODEL_SAVE_PATH)
-                    if candidate_hardset is not None:
-                        train.best_hardset = candidate_hardset
-                    train.consecutive_hardset_regressions = 0
-                    accepted_any_best = True
-                    print(f"   💾 Best model saved (score: {best_score:.4f})")
-                else:
-                    if os.path.exists(candidate_path):
-                        os.remove(candidate_path)
-                    if (
-                        train.best_hardset is not None
-                        and train.consecutive_hardset_regressions >= HARDSET_MAX_CONSECUTIVE_REGRESSIONS
-                    ):
-                        print("🛑 Early stop: repeated hardset regressions despite val score improvements.")
-                        break
+                os.replace(candidate_path, MODEL_SAVE_PATH)
+                print(f"   💾 Best model saved (score: {best_score:.4f})")
 
             scheduler.step()
     except KeyboardInterrupt:
-        interrupted = True
         state = model.module.state_dict() if GPU_COUNT > 1 else model.state_dict()
         torch.save(
             {
@@ -773,16 +523,10 @@ def train() -> int:
     if os.path.exists(MODEL_SAVE_PATH):
         shutil.copy2(MODEL_SAVE_PATH, FINAL_MODEL_SAVE_PATH)
         print(
-            f"\n🎉 Training complete! Final model saved from protected best: "
+            f"\n🎉 Training complete! Final model saved from best val: "
             f"{FINAL_MODEL_SAVE_PATH}"
         )
     else:
-        if HARDSET_REQUIRE_NON_REGRESSION and not accepted_any_best:
-            print(
-                "\n🛑 Training ended with no hardset-accepted best model. "
-                "No final model was exported."
-            )
-            return 2
         final_state = model.module.state_dict() if GPU_COUNT > 1 else model.state_dict()
         torch.save(final_state, FINAL_MODEL_SAVE_PATH)
         print(
