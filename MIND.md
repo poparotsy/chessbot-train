@@ -18,3 +18,11 @@ No direct module imports from v4 wrappers.
 5. Current acceptance baseline:
 `python3 scripts/evaluate_v5.py` => `29/30`, only `puzzle-00028` failing.
 Treat 00028 as model/data issue unless proven otherwise.
+
+6. Documentation is mandatory for every code change/commit.
+Before or immediately after each commit, update `ENGINEERING_LOG.md` with:
+- commit hash
+- objective/rationale
+- files changed
+- behavior changes
+- validation commands and outcome
