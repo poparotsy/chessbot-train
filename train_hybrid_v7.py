@@ -50,6 +50,7 @@ W_GEOM = 0.35
 W_BOARD = 0.25
 W_POV = 0.20
 W_STM = 0.15
+NONEMPTY_TILE_BONUS = 2.5
 RUN_HARDSET_EVAL_ON_BEST = True
 HARDSET_EVAL_SCRIPT = "scripts/rank_models_hardset.py"
 HARDSET_TRUTH_JSON = "images_4_test/truth_verified.json"
@@ -80,6 +81,7 @@ if APPLY_ENV_OVERRIDES:
     W_BOARD = env_float("W_BOARD", W_BOARD)
     W_POV = env_float("W_POV", W_POV)
     W_STM = env_float("W_STM", W_STM)
+    NONEMPTY_TILE_BONUS = env_float("NONEMPTY_TILE_BONUS", NONEMPTY_TILE_BONUS)
 
 CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, "latest.pt")
 
@@ -348,10 +350,13 @@ def _compute_losses(
     smooth_l1: nn.SmoothL1Loss,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     bsz = piece.size(0)
-    piece_logits = out["piece_logits"].reshape(-1, 13)
+    piece_logits_raw = out["piece_logits"].reshape(-1, 13)
     piece_target = piece.reshape(-1)
-    # tile-level CE -> sample-level mask by board_present/piece_mask
-    tile_loss = ce_piece(piece_logits, piece_target).reshape(bsz, 64).mean(dim=1)
+    # tile-level CE -> upweight non-empty tiles to avoid empty-dominant optimization.
+    tile_ce = ce_piece(piece_logits_raw, piece_target).reshape(bsz, 64)
+    nonempty_mask = (piece != 0).float()
+    tile_w = 1.0 + NONEMPTY_TILE_BONUS * nonempty_mask
+    tile_loss = (tile_ce * tile_w).sum(dim=1) / tile_w.sum(dim=1).clamp(min=1.0)
     denom = piece_mask.sum().clamp(min=1.0)
     piece_loss = (tile_loss * piece_mask).sum() / denom
 
@@ -383,7 +388,12 @@ def _compute_losses(
 @torch.no_grad()
 def evaluate(model: nn.Module, val_files: list[str]) -> Dict[str, float]:
     model.eval()
-    ce_piece = nn.CrossEntropyLoss(reduction="none")
+    piece_class_weights = torch.tensor(
+        [0.55] + [1.45] * 12,
+        dtype=torch.float32,
+        device=DEVICE,
+    )
+    ce_piece = nn.CrossEntropyLoss(reduction="none", weight=piece_class_weights)
     ce_aux = nn.CrossEntropyLoss()
     bce = nn.BCEWithLogitsLoss()
     smooth_l1 = nn.SmoothL1Loss(reduction="none")
@@ -393,6 +403,8 @@ def evaluate(model: nn.Module, val_files: list[str]) -> Dict[str, float]:
         "loss": 0.0,
         "tile_correct": 0.0,
         "tile_total": 0.0,
+        "nonempty_correct": 0.0,
+        "nonempty_total": 0.0,
         "board_correct": 0.0,
         "pov_correct": 0.0,
         "stm_correct": 0.0,
@@ -428,6 +440,10 @@ def evaluate(model: nn.Module, val_files: list[str]) -> Dict[str, float]:
             match = (pred_piece == piece).float().mean(dim=1)
             agg["tile_correct"] += float((match * piece_mask).sum().item()) * 64.0
             agg["tile_total"] += float(piece_mask.sum().item()) * 64.0
+            nonempty = (piece != 0).float()
+            nonempty_match = ((pred_piece == piece).float() * nonempty).sum()
+            agg["nonempty_correct"] += float(nonempty_match.item())
+            agg["nonempty_total"] += float(nonempty.sum().item())
 
             pred_board = (torch.sigmoid(out["board_logit"]) >= 0.5).long()
             agg["board_correct"] += float((pred_board == board_present.long()).sum().item())
@@ -441,17 +457,27 @@ def evaluate(model: nn.Module, val_files: list[str]) -> Dict[str, float]:
             torch.cuda.empty_cache()
 
     if total_samples == 0:
-        return {"loss": 0.0, "piece_acc": 0.0, "board_acc": 0.0, "pov_acc": 0.0, "stm_acc": 0.0, "score": 0.0}
+        return {
+            "loss": 0.0,
+            "piece_acc": 0.0,
+            "nonempty_acc": 0.0,
+            "board_acc": 0.0,
+            "pov_acc": 0.0,
+            "stm_acc": 0.0,
+            "score": 0.0,
+        }
 
     piece_acc = agg["tile_correct"] / max(1.0, agg["tile_total"])
+    nonempty_acc = agg["nonempty_correct"] / max(1.0, agg["nonempty_total"])
     board_acc = agg["board_correct"] / total_samples
     pov_acc = agg["pov_correct"] / total_samples
     stm_acc = agg["stm_correct"] / total_samples
     loss = agg["loss"] / total_samples
-    score = piece_acc + 0.25 * board_acc + 0.15 * pov_acc + 0.10 * stm_acc
+    score = 0.40 * piece_acc + 0.60 * nonempty_acc + 0.25 * board_acc + 0.15 * pov_acc + 0.10 * stm_acc
     return {
         "loss": loss,
         "piece_acc": piece_acc,
+        "nonempty_acc": nonempty_acc,
         "board_acc": board_acc,
         "pov_acc": pov_acc,
         "stm_acc": stm_acc,
@@ -475,7 +501,12 @@ def train() -> None:
         model = nn.DataParallel(model)
     model.to(DEVICE)
 
-    ce_piece = nn.CrossEntropyLoss(reduction="none")
+    piece_class_weights = torch.tensor(
+        [0.55] + [1.45] * 12,
+        dtype=torch.float32,
+        device=DEVICE,
+    )
+    ce_piece = nn.CrossEntropyLoss(reduction="none", weight=piece_class_weights)
     ce_aux = nn.CrossEntropyLoss()
     bce = nn.BCEWithLogitsLoss()
     smooth_l1 = nn.SmoothL1Loss(reduction="none")
@@ -595,7 +626,8 @@ def train() -> None:
         elapsed = time.time() - epoch_start
         print(
             f"✅ EPOCH {epoch + 1:03d} | train_loss={train_loss:.4f} val_loss={val['loss']:.4f} "
-            f"piece={val['piece_acc']:.4f} board={val['board_acc']:.4f} pov={val['pov_acc']:.4f} "
+            f"piece={val['piece_acc']:.4f} nonempty={val['nonempty_acc']:.4f} "
+            f"board={val['board_acc']:.4f} pov={val['pov_acc']:.4f} "
             f"stm={val['stm_acc']:.4f} score={val['score']:.4f} lr={lr:.2e} t={elapsed:.1f}s"
         )
 
@@ -652,9 +684,19 @@ def train() -> None:
 
         scheduler.step()
 
-    final_state = model.module.state_dict() if GPU_COUNT > 1 else model.state_dict()
-    torch.save(final_state, FINAL_MODEL_SAVE_PATH)
-    print(f"\n🎉 Training complete! Final model saved: {FINAL_MODEL_SAVE_PATH}")
+    if os.path.exists(MODEL_SAVE_PATH):
+        shutil.copy2(MODEL_SAVE_PATH, FINAL_MODEL_SAVE_PATH)
+        print(
+            f"\n🎉 Training complete! Final model saved from protected best: "
+            f"{FINAL_MODEL_SAVE_PATH}"
+        )
+    else:
+        final_state = model.module.state_dict() if GPU_COUNT > 1 else model.state_dict()
+        torch.save(final_state, FINAL_MODEL_SAVE_PATH)
+        print(
+            f"\n🎉 Training complete! Final model saved from last epoch state: "
+            f"{FINAL_MODEL_SAVE_PATH}"
+        )
 
 
 if __name__ == "__main__":
