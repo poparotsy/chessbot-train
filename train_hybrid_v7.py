@@ -19,7 +19,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
-SCRIPT_REV = "v7-train-2026-03-12-r2"
+SCRIPT_REV = "v7-train-2026-03-12-r4"
 
 
 def env_int(name: str, default: int) -> int:
@@ -39,14 +39,14 @@ def env_str(name: str, default: str) -> str:
 
 # ============ HUMAN CONFIG (EDIT THESE) ============
 DATA_DIR = "tensors_v7"
-MODEL_SAVE_PATH = "models/model_hybrid_v7_scratch_latest_best.pt"
-FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v7_scratch_final.pt"
-CHECKPOINT_DIR = "models/checkpoints_v7_scratch"
+MODEL_SAVE_PATH = "models/model_hybrid_v7_latest_best.pt"
+FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v7_final.pt"
+CHECKPOINT_DIR = "models/checkpoints_v7"
 BASE_MODEL_PATH = ""
 EPOCHS = 120
 LEARNING_RATE = 3e-5
 BATCH_SIZE_PER_GPU = 20
-RESUME_FROM_CHECKPOINT = False
+RESUME_FROM_CHECKPOINT = True
 W_PIECE = 1.0
 W_GEOM = 0.35
 W_BOARD = 0.25
@@ -58,8 +58,8 @@ HARDSET_EVAL_SCRIPT = "scripts/rank_models_hardset.py"
 HARDSET_TRUTH_JSON = "images_4_test/truth_verified.json"
 HARDSET_COMPARE_FULL_FEN = False
 HARDSET_REQUIRE_NON_REGRESSION = True
-HARDSET_MAX_CONSECUTIVE_REGRESSIONS = 6
-HARDSET_MIN_PASS_WITHOUT_BASELINE = 10
+HARDSET_MAX_CONSECUTIVE_REGRESSIONS = 30
+HARDSET_MIN_PASS_WITHOUT_BASELINE = 0
 HARDSET_FAIL_ON_ZERO_BASELINE = True
 MIN_SCORE_IMPROVEMENT = 1e-6
 BACKUP_EXISTING_BEST_MODEL = False
@@ -86,6 +86,14 @@ if APPLY_ENV_OVERRIDES:
     W_POV = env_float("W_POV", W_POV)
     W_STM = env_float("W_STM", W_STM)
     NONEMPTY_TILE_BONUS = env_float("NONEMPTY_TILE_BONUS", NONEMPTY_TILE_BONUS)
+    HARDSET_REQUIRE_NON_REGRESSION = env_str(
+        "HARDSET_REQUIRE_NON_REGRESSION",
+        "1" if HARDSET_REQUIRE_NON_REGRESSION else "0",
+    ) == "1"
+    HARDSET_MAX_CONSECUTIVE_REGRESSIONS = env_int(
+        "HARDSET_MAX_CONSECUTIVE_REGRESSIONS",
+        HARDSET_MAX_CONSECUTIVE_REGRESSIONS,
+    )
     HARDSET_MIN_PASS_WITHOUT_BASELINE = env_int(
         "HARDSET_MIN_PASS_WITHOUT_BASELINE",
         HARDSET_MIN_PASS_WITHOUT_BASELINE,
@@ -710,12 +718,21 @@ def train() -> int:
                         )
 
                 if not accept_candidate:
-                    train.consecutive_hardset_regressions += 1
-                    print(f"   ⛔ Rejecting candidate due to {reject_reason}")
-                    print(
-                        "   ⏱️ Consecutive hardset regressions: "
-                        f"{train.consecutive_hardset_regressions}/{HARDSET_MAX_CONSECUTIVE_REGRESSIONS}"
+                    count_regression = (
+                        train.best_hardset is not None
+                        and candidate_hardset is not None
+                        and int(candidate_hardset["passed"]) < int(train.best_hardset["passed"])
                     )
+                    if count_regression:
+                        train.consecutive_hardset_regressions += 1
+                    print(f"   ⛔ Rejecting candidate due to {reject_reason}")
+                    if count_regression:
+                        print(
+                            "   ⏱️ Consecutive hardset regressions: "
+                            f"{train.consecutive_hardset_regressions}/{HARDSET_MAX_CONSECUTIVE_REGRESSIONS}"
+                        )
+                    else:
+                        print("   ⏱️ Regression counter unchanged (no protected hardset baseline yet).")
 
                 if accept_candidate:
                     best_score = val["score"]
@@ -728,7 +745,10 @@ def train() -> int:
                 else:
                     if os.path.exists(candidate_path):
                         os.remove(candidate_path)
-                    if train.consecutive_hardset_regressions >= HARDSET_MAX_CONSECUTIVE_REGRESSIONS:
+                    if (
+                        train.best_hardset is not None
+                        and train.consecutive_hardset_regressions >= HARDSET_MAX_CONSECUTIVE_REGRESSIONS
+                    ):
                         print("🛑 Early stop: repeated hardset regressions despite val score improvements.")
                         break
 
