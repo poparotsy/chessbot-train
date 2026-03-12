@@ -867,6 +867,17 @@ DEBUG_MODE = False
 USE_SQUARE_DETECTION = True
 USE_EDGE_DETECTION = True
 PIECE_LOG_PRIOR = -0.20
+LOW_SAT_SPARSE_SAT_MEAN_MAX = 44.0
+LOW_SAT_SPARSE_PIECE_MAX = 10
+LOW_SAT_SPARSE_EMPTY_ALT_MIN = 0.015
+
+
+def debug_event(kind, **fields):
+    if not DEBUG_MODE:
+        return
+    payload = {"kind": kind}
+    payload.update(fields)
+    print(f"DEBUG_JSON {json.dumps(payload, sort_keys=True)}", file=sys.stderr)
 
 
 def parse_fen_board_rows(fen_board):
@@ -1020,6 +1031,156 @@ def board_plausibility_score(fen_board):
     return score
 
 
+def image_saturation_stats(img):
+    arr = np.array(img.convert("RGB"))
+    hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
+    sat = hsv[:, :, 1].astype(np.float32)
+    val = hsv[:, :, 2].astype(np.float32)
+    return {
+        "sat_mean": float(np.mean(sat)),
+        "sat_std": float(np.std(sat)),
+        "val_mean": float(np.mean(val)),
+        "val_std": float(np.std(val)),
+    }
+
+
+def tile_confidence_summary(tile_infos):
+    if not tile_infos:
+        return {
+            "tiles": 0,
+            "mean_top1": 0.0,
+            "p10_top1": 0.0,
+            "mean_empty_prob": 0.0,
+            "mean_piece_alt_prob": 0.0,
+        }
+    top1 = np.array([float(tile.get("top1_prob", tile.get("prob", 0.0))) for tile in tile_infos], dtype=np.float32)
+    empty = np.array([float(tile.get("empty_prob", 0.0)) for tile in tile_infos], dtype=np.float32)
+    piece_alt = np.array([float(tile.get("best_piece_alt_prob", 0.0)) for tile in tile_infos], dtype=np.float32)
+    return {
+        "tiles": len(tile_infos),
+        "mean_top1": float(np.mean(top1)),
+        "p10_top1": float(np.percentile(top1, 10)),
+        "mean_empty_prob": float(np.mean(empty)),
+        "mean_piece_alt_prob": float(np.mean(piece_alt)),
+    }
+
+
+def _label_prob_from_topk(tile, label):
+    for alt_label, alt_prob in tile["topk"]:
+        if alt_label == label:
+            return float(alt_prob)
+    return 1e-12
+
+
+def _labels_to_fen(labels):
+    rows = []
+    for r in range(8):
+        row = "".join(labels[r * 8 : (r + 1) * 8])
+        rows.append(row)
+    board = "/".join(rows)
+    return "/".join(re.sub(r"1+", lambda m: str(len(m.group())), row) for row in board.split("/"))
+
+
+def _king_health_from_labels(labels):
+    fen = _labels_to_fen(labels)
+    return int(fen.count("K") == 1) + int(fen.count("k") == 1)
+
+
+def rescore_low_saturation_sparse_from_topk(tile_infos, base_fen, base_conf):
+    """
+    Global low-saturation sparse-board rescue.
+    Uses only tile top-k probabilities + board plausibility; no image IDs/per-square constants.
+    """
+    if not tile_infos:
+        return None
+
+    base_labels = [tile["label"] for tile in tile_infos]
+    base_piece_count = sum(1 for x in base_labels if x != "1")
+    if base_piece_count > LOW_SAT_SPARSE_PIECE_MAX:
+        return None
+
+    uncertain = []
+    for idx, tile in enumerate(tile_infos):
+        if tile["label"] != "1":
+            continue
+        empty_prob = float(tile.get("empty_prob", _label_prob_from_topk(tile, "1")))
+        best_piece_label = None
+        best_piece_prob = 0.0
+        for alt_label, alt_prob in tile["topk"]:
+            if alt_label == "1":
+                continue
+            prob = float(alt_prob)
+            if prob > best_piece_prob:
+                best_piece_prob = prob
+                best_piece_label = alt_label
+        if best_piece_label is None or best_piece_prob < LOW_SAT_SPARSE_EMPTY_ALT_MIN:
+            continue
+        gain = best_piece_prob - empty_prob
+        uncertain.append((gain, idx, best_piece_label, best_piece_prob))
+
+    if not uncertain:
+        return None
+    uncertain.sort(reverse=True)
+    uncertain = uncertain[:12]
+
+    # Beam over at most 2 promotions from empty->piece.
+    beam = [(base_labels, 0, 0.0)]
+    for _gain, idx, alt_label, alt_prob in uncertain:
+        next_beam = {}
+        for labels, changes, log_bonus in beam:
+            key_keep = tuple(labels)
+            prev_keep = next_beam.get(key_keep)
+            if prev_keep is None or log_bonus > prev_keep[2]:
+                next_beam[key_keep] = (labels, changes, log_bonus)
+
+            if changes >= 2:
+                continue
+            new_labels = list(labels)
+            new_labels[idx] = alt_label
+            new_log_bonus = log_bonus + float(np.log(max(alt_prob, 1e-12)))
+            key_new = tuple(new_labels)
+            prev_new = next_beam.get(key_new)
+            if prev_new is None or new_log_bonus > prev_new[2]:
+                next_beam[key_new] = (new_labels, changes + 1, new_log_bonus)
+
+        scored = []
+        for labels, changes, log_bonus in next_beam.values():
+            fen = _labels_to_fen(labels)
+            plaus = board_plausibility_score(fen)
+            k_health = _king_health_from_labels(labels)
+            piece_count = sum(1 for x in labels if x != "1")
+            objective = plaus + 1.5 * k_health + 0.25 * piece_count + 0.5 * (log_bonus / 8.0)
+            scored.append((objective, labels, changes, log_bonus))
+        scored.sort(key=lambda row: row[0], reverse=True)
+        beam = [(labels, changes, log_bonus) for _obj, labels, changes, log_bonus in scored[:24]]
+
+    def eval_labels(labels, log_bonus):
+        fen = _labels_to_fen(labels)
+        plaus = board_plausibility_score(fen)
+        k_health = _king_health_from_labels(labels)
+        piece_count = sum(1 for x in labels if x != "1")
+        probs = np.array([_label_prob_from_topk(tile_infos[i], labels[i]) for i in range(64)], dtype=np.float32)
+        conf = float(np.mean(probs))
+        objective = plaus + 1.5 * k_health + 0.25 * piece_count + 0.5 * (log_bonus / 8.0)
+        return objective, fen, conf, piece_count, k_health, plaus
+
+    base_obj, _, _, _, base_kh, _base_plaus = eval_labels(base_labels, 0.0)
+    best = (base_obj, base_fen, base_conf, base_piece_count, base_kh)
+    for labels, _changes, log_bonus in beam:
+        obj, fen, conf, piece_count, k_health, _plaus = eval_labels(labels, log_bonus)
+        if k_health < base_kh:
+            continue
+        if piece_count < base_piece_count:
+            continue
+        if obj > best[0]:
+            best = (obj, fen, conf, piece_count, k_health)
+
+    improved = best[0] > (base_obj + 0.15)
+    if not improved or best[1] == base_fen:
+        return None
+    return best[1], float(best[2]), int(best[3])
+
+
 def repair_missing_kings_from_topk(tile_infos):
     """
     If a king is missing, promote the highest-probability king alternative from tile top-k.
@@ -1135,6 +1296,7 @@ def infer_fen_on_image_deep_topk(
     use_square_detection,
     board_perspective="white",
     topk_k=8,
+    return_details=False,
 ):
     """v5 tile inference with deeper per-tile top-k for cleaner structural repair."""
     if board_perspective not in {"white", "black"}:
@@ -1200,12 +1362,21 @@ def infer_fen_on_image_deep_topk(
                     piece_count += 1
                 max_prob = float(torch.max(out).item())
                 confs.append(max_prob)
+                empty_prob = float(out[empty_idx].item())
+                best_piece_alt_prob = 0.0
+                for alt_label, alt_prob in topk:
+                    if alt_label == "1":
+                        continue
+                    best_piece_alt_prob = max(best_piece_alt_prob, float(alt_prob))
                 tile_infos.append(
                     {
                         "row": r,
                         "col": c,
                         "label": label,
                         "prob": max_prob,
+                        "top1_prob": max_prob,
+                        "empty_prob": empty_prob,
+                        "best_piece_alt_prob": best_piece_alt_prob,
                         "topk": topk,
                     }
                 )
@@ -1216,25 +1387,64 @@ def infer_fen_on_image_deep_topk(
         [re.sub(r"1+", lambda m: str(len(m.group())), row) for row in result.split("/")]
     )
     repaired = v4.repair_duplicate_kings(tile_infos)
+    final_fen = result
+    final_conf = float(np.mean(confs))
+    final_piece_count = piece_count
     if repaired is not None:
         repaired_fen, repaired_conf, repaired_piece_count = repaired
         # Only short-circuit when duplicate-king repair actually changed the board.
         if repaired_fen != result:
-            return repaired_fen, repaired_conf, repaired_piece_count
+            final_fen, final_conf, final_piece_count = repaired_fen, repaired_conf, repaired_piece_count
+            details = {
+                "base_fen": result,
+                "final_fen": final_fen,
+                "tile_infos": tile_infos,
+                "confidence_summary": tile_confidence_summary(tile_infos),
+            }
+            if return_details:
+                return final_fen, final_conf, final_piece_count, details
+            return final_fen, final_conf, final_piece_count
     repaired_missing = repair_missing_kings_from_topk(tile_infos)
     if repaired_missing is not None:
         repaired_fen, repaired_conf, repaired_piece_count = repaired_missing
         if repaired_fen != result:
             if DEBUG_MODE:
                 print(f"DEBUG: repaired missing king {result} -> {repaired_fen}", file=sys.stderr)
-            return repaired_fen, repaired_conf, repaired_piece_count
+            final_fen, final_conf, final_piece_count = repaired_fen, repaired_conf, repaired_piece_count
+            details = {
+                "base_fen": result,
+                "final_fen": final_fen,
+                "tile_infos": tile_infos,
+                "confidence_summary": tile_confidence_summary(tile_infos),
+            }
+            if return_details:
+                return final_fen, final_conf, final_piece_count, details
+            return final_fen, final_conf, final_piece_count
     repaired_sparse_pawn = repair_sparse_missing_pawn(tile_infos)
     if repaired_sparse_pawn is not None:
         repaired_fen, repaired_conf, repaired_piece_count = repaired_sparse_pawn
         if DEBUG_MODE and repaired_fen != result:
             print(f"DEBUG: repaired sparse pawn {result} -> {repaired_fen}", file=sys.stderr)
-        return repaired_fen, repaired_conf, repaired_piece_count
-    return result, float(np.mean(confs)), piece_count
+        final_fen, final_conf, final_piece_count = repaired_fen, repaired_conf, repaired_piece_count
+        details = {
+            "base_fen": result,
+            "final_fen": final_fen,
+            "tile_infos": tile_infos,
+            "confidence_summary": tile_confidence_summary(tile_infos),
+        }
+        if return_details:
+            return final_fen, final_conf, final_piece_count, details
+        return final_fen, final_conf, final_piece_count
+
+    details = {
+        "base_fen": result,
+        "final_fen": final_fen,
+        "tile_infos": tile_infos,
+        "confidence_summary": tile_confidence_summary(tile_infos),
+    }
+    if return_details:
+        return final_fen, final_conf, final_piece_count, details
+    return final_fen, final_conf, final_piece_count
 
 
 class BoardDetector:
@@ -1278,7 +1488,7 @@ class BoardDetector:
         metrics = v4.compute_quad_metrics(corners, iw, ih)
         trusted = v4.is_warp_geometry_trustworthy(metrics)
         relaxed = v4.is_warp_geometry_relaxed(metrics)
-        return {
+        candidate = {
             "tag": tag,
             "corners": corners,
             "metrics": metrics,
@@ -1293,6 +1503,21 @@ class BoardDetector:
             ),
             "raw_score": None if raw_score is None else float(raw_score),
         }
+        debug_event(
+            "v6_geometry_candidate",
+            tag=tag,
+            trusted=bool(trusted),
+            relaxed=bool(relaxed),
+            area=round(float(metrics["area_ratio"]), 6),
+            opp=round(float(metrics["opposite_similarity"]), 6),
+            asp=round(float(metrics["aspect_similarity"]), 6),
+            min_angle=round(float(metrics["min_angle"]), 4),
+            max_angle=round(float(metrics["max_angle"]), 4),
+            warp_quality=round(float(candidate["warp_quality"]), 6),
+            lens_confidence=round(float(candidate["lens_confidence"]), 6),
+            raw_score=None if raw_score is None else round(float(raw_score), 6),
+        )
+        return candidate
 
     def _angular_distance_deg(self, a, b):
         d = abs(a - b) % 180.0
@@ -2104,12 +2329,30 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
     scored = []
     for tag, candidate_img, warp_quality, warp_trusted in candidates:
         candidate_img = v4.trim_dark_edge_bars(candidate_img)
-        fen, conf, piece_count = infer_fen_on_image_deep_topk(
+        fen, conf, piece_count, details = infer_fen_on_image_deep_topk(
             candidate_img,
             model,
             device,
             USE_SQUARE_DETECTION,
+            return_details=True,
         )
+        sat_stats = image_saturation_stats(candidate_img)
+        low_sat_sparse = (
+            sat_stats["sat_mean"] <= LOW_SAT_SPARSE_SAT_MEAN_MAX
+            and piece_count <= LOW_SAT_SPARSE_PIECE_MAX
+        )
+        rescore_applied = False
+        if low_sat_sparse:
+            rescored = rescore_low_saturation_sparse_from_topk(
+                details.get("tile_infos", []),
+                base_fen=fen,
+                base_conf=conf,
+            )
+            if rescored is not None:
+                fen, conf, piece_count = rescored
+                rescore_applied = True
+                details["final_fen"] = fen
+
         if board_perspective == "auto":
             if label_perspective_result is None:
                 detected_perspective = "white"
@@ -2142,13 +2385,21 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
                 warp_trusted,
             )
         )
-        if DEBUG_MODE:
-            print(
-                f"DEBUG: V5 Candidate={tag} conf={conf:.4f} pieces={piece_count} "
-                f"perspective={detected_perspective} source={perspective_source} "
-                f"warp_q={warp_quality:.3f} trusted={warp_trusted}",
-                file=sys.stderr,
-            )
+        debug_event(
+            "v6_candidate_decode",
+            tag=tag,
+            conf=round(float(conf), 6),
+            piece_count=int(piece_count),
+            perspective=detected_perspective,
+            perspective_source=perspective_source,
+            warp_quality=round(float(warp_quality), 6),
+            warp_trusted=bool(warp_trusted),
+            sat_mean=round(float(sat_stats["sat_mean"]), 4),
+            sat_std=round(float(sat_stats["sat_std"]), 4),
+            low_sat_sparse_mode=bool(low_sat_sparse),
+            rescore_applied=bool(rescore_applied),
+            confidence_summary=details.get("confidence_summary", {}),
+        )
 
     def king_health(fen_board):
         rows = v4.expand_fen_board(fen_board)
@@ -2265,6 +2516,14 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
             f"model={resolved_model_path}",
             file=sys.stderr,
         )
+    debug_event(
+        "v6_selected_candidate",
+        tag=best_tag,
+        confidence=round(float(best_conf), 6),
+        perspective=best_perspective,
+        perspective_source=best_perspective_source,
+        model=str(resolved_model_path),
+    )
     return best_fen, best_conf
 
 
