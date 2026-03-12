@@ -14,6 +14,8 @@ IMG_SIZE, FEN_CHARS = 64, "1PNBRQKpnbrqk"
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_FILENAMES = [
+    "model_hybrid_v6_latest_best.pt",
+    "model_hybrid_v5_latest_best.pt",
     "model_hybrid_v4_300e_last_best.pt",
     "model_hybrid_v4_300e_best.pt",
     "model_hybrid_v4_final.pt",
@@ -707,7 +709,10 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
     resolved_model_path = model_path or MODEL_PATH
     if not resolved_model_path:
         raise FileNotFoundError(
-            "No default model found. Expected models/model_hybrid_v4_150e.pt. "
+            "No default model found. Expected one of: "
+            "models/model_hybrid_v6_latest_best.pt, "
+            "models/model_hybrid_v5_latest_best.pt, "
+            "models/model_hybrid_v4_300e_last_best.pt. "
             "Use --model-path to provide an explicit checkpoint."
         )
 
