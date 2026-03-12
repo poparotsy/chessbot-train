@@ -19,6 +19,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
+SCRIPT_REV = "v7-train-2026-03-12-r2"
+
 
 def env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
@@ -57,6 +59,8 @@ HARDSET_TRUTH_JSON = "images_4_test/truth_verified.json"
 HARDSET_COMPARE_FULL_FEN = False
 HARDSET_REQUIRE_NON_REGRESSION = True
 HARDSET_MAX_CONSECUTIVE_REGRESSIONS = 6
+HARDSET_MIN_PASS_WITHOUT_BASELINE = 10
+HARDSET_FAIL_ON_ZERO_BASELINE = True
 MIN_SCORE_IMPROVEMENT = 1e-6
 BACKUP_EXISTING_BEST_MODEL = False
 USE_EXISTING_MODEL_SAVE_BASELINE = False
@@ -82,6 +86,14 @@ if APPLY_ENV_OVERRIDES:
     W_POV = env_float("W_POV", W_POV)
     W_STM = env_float("W_STM", W_STM)
     NONEMPTY_TILE_BONUS = env_float("NONEMPTY_TILE_BONUS", NONEMPTY_TILE_BONUS)
+    HARDSET_MIN_PASS_WITHOUT_BASELINE = env_int(
+        "HARDSET_MIN_PASS_WITHOUT_BASELINE",
+        HARDSET_MIN_PASS_WITHOUT_BASELINE,
+    )
+    HARDSET_FAIL_ON_ZERO_BASELINE = env_str(
+        "HARDSET_FAIL_ON_ZERO_BASELINE",
+        "1" if HARDSET_FAIL_ON_ZERO_BASELINE else "0",
+    ) == "1"
 
 CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, "latest.pt")
 
@@ -485,12 +497,13 @@ def evaluate(model: nn.Module, val_files: list[str]) -> Dict[str, float]:
     }
 
 
-def train() -> None:
+def train() -> int:
     train_files = sorted(glob.glob(os.path.join(DATA_DIR, "train_*.pt")))
     val_files = sorted(glob.glob(os.path.join(DATA_DIR, "val_*.pt")))
     if not train_files or not val_files:
         raise RuntimeError(f"Missing v7 tensors in {DATA_DIR}. train={len(train_files)} val={len(val_files)}")
 
+    print(f"\n🧾 Script revision: {SCRIPT_REV}")
     print("\n🚀 STARTING BEAST MODE TRAINING")
     print(f"💻 Hardware: {DEVICE} ({GPU_COUNT} GPUs) | Batch Size: {BATCH_SIZE}")
     print(f"📚 Data Dir: {DATA_DIR} | Base Model: {BASE_MODEL_PATH or '(none)'}")
@@ -564,6 +577,15 @@ def train() -> None:
             best_baseline_src = src
 
     if best_baseline is not None:
+        if (
+            HARDSET_FAIL_ON_ZERO_BASELINE
+            and int(best_baseline["passed"]) == 0
+            and int(best_baseline["total"]) > 0
+        ):
+            raise RuntimeError(
+                "Hardset baseline evaluated to 0/N. "
+                "This indicates a bad baseline model or recognizer mismatch; aborting."
+            )
         train.best_hardset = best_baseline
         print(
             f"📌 Hardset baseline protected from {best_baseline_src}: "
@@ -573,116 +595,160 @@ def train() -> None:
             shutil.copy2(best_baseline_src, MODEL_SAVE_PATH)
             print(f"📦 Promoted best baseline to save path: {MODEL_SAVE_PATH}")
     else:
-        print("⚠️ Hardset baseline unavailable; save gating will use val score only.")
+        if HARDSET_REQUIRE_NON_REGRESSION:
+            print(
+                "⚠️ Hardset baseline unavailable; save gating requires candidate hardset "
+                f">= {HARDSET_MIN_PASS_WITHOUT_BASELINE}/{49}."
+            )
+        else:
+            print("⚠️ Hardset baseline unavailable; save gating will use val score only.")
 
-    print(f"🧠 Multi-head v7 config | epochs={EPOCHS} lr={LEARNING_RATE:.2e}")
+    print(
+        "🧠 Multi-head v7 config | "
+        f"epochs={EPOCHS} lr={LEARNING_RATE:.2e} "
+        f"hardset_floor_no_baseline={HARDSET_MIN_PASS_WITHOUT_BASELINE}"
+    )
 
-    for epoch in range(start_epoch, EPOCHS):
-        model.train()
-        epoch_start = time.time()
-        loss_sum = 0.0
-        seen = 0
+    interrupted = False
+    last_completed_epoch = start_epoch - 1
 
-        for i, tf in enumerate(train_files):
-            loader = _make_loader(tf, batch_size=BATCH_SIZE, shuffle=True)
-            for bx, piece, piece_mask, corners, board_present, pov, stm in loader:
-                bx = bx.to(DEVICE)
-                piece = piece.to(DEVICE)
-                piece_mask = piece_mask.to(DEVICE)
-                corners = corners.to(DEVICE)
-                board_present = board_present.to(DEVICE)
-                pov = pov.to(DEVICE)
-                stm = stm.to(DEVICE)
+    accepted_any_best = False
+    try:
+        for epoch in range(start_epoch, EPOCHS):
+            model.train()
+            epoch_start = time.time()
+            loss_sum = 0.0
+            seen = 0
 
-                optimizer.zero_grad()
-                out = model(bx)
-                total, _metrics = _compute_losses(
-                    out=out,
-                    piece=piece,
-                    piece_mask=piece_mask,
-                    corners=corners,
-                    board_present=board_present,
-                    pov=pov,
-                    stm=stm,
-                    ce_piece=ce_piece,
-                    ce_aux=ce_aux,
-                    bce=bce,
-                    smooth_l1=smooth_l1,
-                )
-                total.backward()
-                optimizer.step()
-                loss_sum += float(total.item()) * bx.size(0)
-                seen += bx.size(0)
-            del loader
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            if (i + 1) % 2 == 0:
-                print(f"   Epoch {epoch + 1:03d} | Chunk {i + 1}/{len(train_files)}")
+            for i, tf in enumerate(train_files):
+                loader = _make_loader(tf, batch_size=BATCH_SIZE, shuffle=True)
+                for bx, piece, piece_mask, corners, board_present, pov, stm in loader:
+                    bx = bx.to(DEVICE)
+                    piece = piece.to(DEVICE)
+                    piece_mask = piece_mask.to(DEVICE)
+                    corners = corners.to(DEVICE)
+                    board_present = board_present.to(DEVICE)
+                    pov = pov.to(DEVICE)
+                    stm = stm.to(DEVICE)
 
-        val = evaluate(model, val_files)
-        train_loss = loss_sum / max(1, seen)
-        lr = scheduler.get_last_lr()[0]
-        elapsed = time.time() - epoch_start
-        print(
-            f"✅ EPOCH {epoch + 1:03d} | train_loss={train_loss:.4f} val_loss={val['loss']:.4f} "
-            f"piece={val['piece_acc']:.4f} nonempty={val['nonempty_acc']:.4f} "
-            f"board={val['board_acc']:.4f} pov={val['pov_acc']:.4f} "
-            f"stm={val['stm_acc']:.4f} score={val['score']:.4f} lr={lr:.2e} t={elapsed:.1f}s"
-        )
+                    optimizer.zero_grad()
+                    out = model(bx)
+                    total, _metrics = _compute_losses(
+                        out=out,
+                        piece=piece,
+                        piece_mask=piece_mask,
+                        corners=corners,
+                        board_present=board_present,
+                        pov=pov,
+                        stm=stm,
+                        ce_piece=ce_piece,
+                        ce_aux=ce_aux,
+                        bce=bce,
+                        smooth_l1=smooth_l1,
+                    )
+                    total.backward()
+                    optimizer.step()
+                    loss_sum += float(total.item()) * bx.size(0)
+                    seen += bx.size(0)
+                del loader
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                if (i + 1) % 2 == 0:
+                    print(f"   Epoch {epoch + 1:03d} | Chunk {i + 1}/{len(train_files)}")
 
+            val = evaluate(model, val_files)
+            train_loss = loss_sum / max(1, seen)
+            lr = scheduler.get_last_lr()[0]
+            elapsed = time.time() - epoch_start
+            print(
+                f"✅ EPOCH {epoch + 1:03d} | train_loss={train_loss:.4f} val_loss={val['loss']:.4f} "
+                f"piece={val['piece_acc']:.4f} nonempty={val['nonempty_acc']:.4f} "
+                f"board={val['board_acc']:.4f} pov={val['pov_acc']:.4f} "
+                f"stm={val['stm_acc']:.4f} score={val['score']:.4f} lr={lr:.2e} t={elapsed:.1f}s"
+            )
+
+            state = model.module.state_dict() if GPU_COUNT > 1 else model.state_dict()
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state": state,
+                    "optimizer_state": optimizer.state_dict(),
+                    "scheduler_state": scheduler.state_dict(),
+                    "best_score": best_score,
+                    "val": val,
+                },
+                CHECKPOINT_PATH,
+            )
+            last_completed_epoch = epoch
+
+            if val["score"] > (best_score + MIN_SCORE_IMPROVEMENT):
+                candidate_path = MODEL_SAVE_PATH.replace(".pt", "_candidate.pt")
+                torch.save(state, candidate_path)
+
+                candidate_hardset = run_hardset_eval_on_model(candidate_path)
+                accept_candidate = True
+                reject_reason = None
+                if HARDSET_REQUIRE_NON_REGRESSION:
+                    if candidate_hardset is None:
+                        accept_candidate = False
+                        reject_reason = "candidate hardset unavailable"
+                    elif train.best_hardset is None:
+                        if int(candidate_hardset["passed"]) < HARDSET_MIN_PASS_WITHOUT_BASELINE:
+                            accept_candidate = False
+                            reject_reason = (
+                                "candidate hardset below minimum without baseline: "
+                                f"{candidate_hardset['passed']}/{candidate_hardset['total']} < "
+                                f"{HARDSET_MIN_PASS_WITHOUT_BASELINE}/{candidate_hardset['total']}"
+                            )
+                    elif candidate_hardset["passed"] < train.best_hardset["passed"]:
+                        accept_candidate = False
+                        reject_reason = (
+                            "hardset regression: "
+                            f"{candidate_hardset['passed']}/{candidate_hardset['total']} < "
+                            f"{train.best_hardset['passed']}/{train.best_hardset['total']}"
+                        )
+
+                if not accept_candidate:
+                    train.consecutive_hardset_regressions += 1
+                    print(f"   ⛔ Rejecting candidate due to {reject_reason}")
+                    print(
+                        "   ⏱️ Consecutive hardset regressions: "
+                        f"{train.consecutive_hardset_regressions}/{HARDSET_MAX_CONSECUTIVE_REGRESSIONS}"
+                    )
+
+                if accept_candidate:
+                    best_score = val["score"]
+                    os.replace(candidate_path, MODEL_SAVE_PATH)
+                    if candidate_hardset is not None:
+                        train.best_hardset = candidate_hardset
+                    train.consecutive_hardset_regressions = 0
+                    accepted_any_best = True
+                    print(f"   💾 Best model saved (score: {best_score:.4f})")
+                else:
+                    if os.path.exists(candidate_path):
+                        os.remove(candidate_path)
+                    if train.consecutive_hardset_regressions >= HARDSET_MAX_CONSECUTIVE_REGRESSIONS:
+                        print("🛑 Early stop: repeated hardset regressions despite val score improvements.")
+                        break
+
+            scheduler.step()
+    except KeyboardInterrupt:
+        interrupted = True
         state = model.module.state_dict() if GPU_COUNT > 1 else model.state_dict()
         torch.save(
             {
-                "epoch": epoch,
+                "epoch": last_completed_epoch,
                 "model_state": state,
                 "optimizer_state": optimizer.state_dict(),
                 "scheduler_state": scheduler.state_dict(),
                 "best_score": best_score,
-                "val": val,
+                "interrupted": True,
             },
             CHECKPOINT_PATH,
         )
-
-        if val["score"] > (best_score + MIN_SCORE_IMPROVEMENT):
-            best_score = val["score"]
-            candidate_path = MODEL_SAVE_PATH.replace(".pt", "_candidate.pt")
-            torch.save(state, candidate_path)
-
-            candidate_hardset = run_hardset_eval_on_model(candidate_path)
-            accept_candidate = True
-            if (
-                HARDSET_REQUIRE_NON_REGRESSION
-                and train.best_hardset is not None
-                and candidate_hardset is not None
-                and candidate_hardset["passed"] < train.best_hardset["passed"]
-            ):
-                accept_candidate = False
-                train.consecutive_hardset_regressions += 1
-                print(
-                    "   ⛔ Rejecting candidate due to hardset regression: "
-                    f"{candidate_hardset['passed']}/{candidate_hardset['total']} < "
-                    f"{train.best_hardset['passed']}/{train.best_hardset['total']}"
-                )
-                print(
-                    "   ⏱️ Consecutive hardset regressions: "
-                    f"{train.consecutive_hardset_regressions}/{HARDSET_MAX_CONSECUTIVE_REGRESSIONS}"
-                )
-
-            if accept_candidate:
-                os.replace(candidate_path, MODEL_SAVE_PATH)
-                if candidate_hardset is not None:
-                    train.best_hardset = candidate_hardset
-                train.consecutive_hardset_regressions = 0
-                print(f"   💾 Best model saved (score: {best_score:.4f})")
-            else:
-                if os.path.exists(candidate_path):
-                    os.remove(candidate_path)
-                if train.consecutive_hardset_regressions >= HARDSET_MAX_CONSECUTIVE_REGRESSIONS:
-                    print("🛑 Early stop: repeated hardset regressions despite val score improvements.")
-                    break
-
-        scheduler.step()
+        print("\n🛑 Interrupted by user (Ctrl+C). Checkpoint saved. Exiting cleanly.")
+        return 130
 
     if os.path.exists(MODEL_SAVE_PATH):
         shutil.copy2(MODEL_SAVE_PATH, FINAL_MODEL_SAVE_PATH)
@@ -691,13 +757,20 @@ def train() -> None:
             f"{FINAL_MODEL_SAVE_PATH}"
         )
     else:
+        if HARDSET_REQUIRE_NON_REGRESSION and not accepted_any_best:
+            print(
+                "\n🛑 Training ended with no hardset-accepted best model. "
+                "No final model was exported."
+            )
+            return 2
         final_state = model.module.state_dict() if GPU_COUNT > 1 else model.state_dict()
         torch.save(final_state, FINAL_MODEL_SAVE_PATH)
         print(
             f"\n🎉 Training complete! Final model saved from last epoch state: "
             f"{FINAL_MODEL_SAVE_PATH}"
         )
+    return 0
 
 
 if __name__ == "__main__":
-    train()
+    raise SystemExit(train())

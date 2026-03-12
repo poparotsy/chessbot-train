@@ -18,6 +18,7 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
+SCRIPT_REV = "v7-generate-2026-03-12-r1"
 
 FEN_CHARS = "1PNBRQKpnbrqk"  # 13 classes
 POV_UNKNOWN = 2
@@ -750,6 +751,7 @@ def main() -> None:
         json.dumps(manifest, indent=2),
         encoding="utf-8",
     )
+    print(f"🧾 Script revision: {SCRIPT_REV}")
     print(
         f"Generating v7 tensors -> {OUTPUT_DIR} | IMG={IMG_SIZE} | "
         f"train_chunks={CHUNKS_TRAIN} val_chunks={CHUNKS_VAL} boards_per_chunk={BOARDS_PER_CHUNK} "
