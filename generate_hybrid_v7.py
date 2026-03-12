@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import io
+import json
+import math
 import os
 import random
 import signal
@@ -42,14 +44,39 @@ IMG_SIZE = env_int("IMG_SIZE", 320)
 BOARD_RENDER_SIZE = env_int("BOARD_RENDER_SIZE", 512)
 CANVAS_W = env_int("CANVAS_W", 1280)
 CANVAS_H = env_int("CANVAS_H", 720)
-BOARDS_PER_CHUNK = env_int("BOARDS_PER_CHUNK", 640)
-CHUNKS_TRAIN = env_int("CHUNKS_TRAIN", 20)
-CHUNKS_VAL = env_int("CHUNKS_VAL", 5)
 MIN_PLIES = env_int("MIN_PLIES", 6)
 MAX_PLIES = env_int("MAX_PLIES", 42)
-BOARD_ABSENT_PROB = env_float("BOARD_ABSENT_PROB", 0.08)
 SEED = env_int("SEED", 1337)
-RECIPE_NAME = env_str("RECIPE_NAME", "boot_v1")
+
+# Stable default preset for Kaggle/local consistency.
+DATASET_PRESETS = {
+    "smoke_v1": {
+        "BOARDS_PER_CHUNK": 16,
+        "CHUNKS_TRAIN": 1,
+        "CHUNKS_VAL": 1,
+        "BOARD_ABSENT_PROB": 0.08,
+        "RECIPE_NAME": "boot_v1",
+    },
+    "kaggle_safe_v1": {
+        "BOARDS_PER_CHUNK": 640,
+        "CHUNKS_TRAIN": 20,
+        "CHUNKS_VAL": 5,
+        "BOARD_ABSENT_PROB": 0.08,
+        "RECIPE_NAME": "boot_v1",
+    },
+}
+DATASET_PRESET = env_str("DATASET_PRESET", "kaggle_safe_v1")
+if DATASET_PRESET not in DATASET_PRESETS:
+    raise ValueError(
+        f"Unknown DATASET_PRESET={DATASET_PRESET}. "
+        f"Valid: {', '.join(sorted(DATASET_PRESETS))}"
+    )
+PRESET = DATASET_PRESETS[DATASET_PRESET]
+BOARDS_PER_CHUNK = int(PRESET["BOARDS_PER_CHUNK"])
+CHUNKS_TRAIN = int(PRESET["CHUNKS_TRAIN"])
+CHUNKS_VAL = int(PRESET["CHUNKS_VAL"])
+BOARD_ABSENT_PROB = float(PRESET["BOARD_ABSENT_PROB"])
+RECIPE_NAME = str(PRESET["RECIPE_NAME"])
 
 # ============ PATHS ============
 BASE_DIR = Path(__file__).resolve().parent
@@ -94,6 +121,19 @@ SEVERITY_WEIGHTS_BY_RECIPE = {
 SEVERITY_WEIGHTS = SEVERITY_WEIGHTS_BY_RECIPE.get(RECIPE_NAME, SEVERITY_WEIGHTS_BY_RECIPE["stable_v1"])
 INTERRUPTED = False
 
+# Board annotation augmentation (enabled by default for robustness)
+ANNOTATION_BOARD_PROB = 0.90
+ANNOTATION_MIN_ACTIONS = 1
+ANNOTATION_MAX_ACTIONS = 3
+ARROW_ACTION_PROB = 0.80
+HIGHLIGHT_ACTION_PROB = 0.75
+MARKER_ACTION_PROB = 0.70
+LOGO_ACTION_PROB = 0.75
+FULL_LOGO_PROB = 0.55
+PIECE_OCCLUSION_PROB = 0.25
+LOCAL_PIECE_TILT_PROB = 0.30
+LOCAL_PIECE_TILT_MAX_DEG = 18.0
+
 
 def _signal_handler(sig, frame):
     del sig, frame
@@ -132,6 +172,194 @@ def draw_board_labels(draw: ImageDraw.ImageDraw, ts: int, pov_black: bool) -> No
     for i, rank in enumerate(ranks):
         y = i * ts + 4
         draw.text((x, y), rank, fill=(128, 128, 128, 180), font=font)
+
+
+def _draw_arrow(draw: ImageDraw.ImageDraw, start_square: tuple[int, int], end_square: tuple[int, int], color: tuple[int, int, int, int], ts: int) -> None:
+    sx = start_square[1] * ts + ts // 2
+    sy = start_square[0] * ts + ts // 2
+    ex = end_square[1] * ts + ts // 2
+    ey = end_square[0] * ts + ts // 2
+    draw.line([sx, sy, ex, ey], fill=color, width=random.randint(8, 14))
+    angle = math.atan2(ey - sy, ex - sx)
+    ah = max(10, ts // 3)
+    p1 = (ex, ey)
+    p2 = (ex - ah * math.cos(angle - math.pi / 6), ey - ah * math.sin(angle - math.pi / 6))
+    p3 = (ex - ah * math.cos(angle + math.pi / 6), ey - ah * math.sin(angle + math.pi / 6))
+    draw.polygon([p1, p2, p3], fill=color)
+
+
+def _draw_marker(draw: ImageDraw.ImageDraw, square_rc: tuple[int, int], ts: int) -> None:
+    r, c = square_rc
+    x0, y0 = c * ts, r * ts
+    cx = x0 + random.randint(int(ts * 0.2), int(ts * 0.8))
+    cy = y0 + random.randint(int(ts * 0.2), int(ts * 0.8))
+    radius = random.randint(max(6, ts // 8), max(10, ts // 5))
+    style = random.choice(("ring", "!", "!!"))
+    if style == "ring":
+        draw.ellipse([cx - radius, cy - radius, cx + radius, cy + radius], outline=(255, 0, 0, 185), width=3)
+        return
+    badge = random.choice([(37, 176, 176, 230), (29, 166, 167, 230), (42, 183, 184, 225)])
+    draw.ellipse([cx - radius, cy - radius, cx + radius, cy + radius], fill=badge, outline=(18, 120, 120, 170), width=1)
+    count = 2 if style == "!!" else 1
+    bw = max(2, radius // 3)
+    bh = max(6, int(radius * 0.9))
+    gap = max(2, bw // 2)
+    total = count * bw + (count - 1) * gap
+    sx = cx - total // 2
+    sy = cy - int(radius * 0.55)
+    for i in range(count):
+        x1 = sx + i * (bw + gap)
+        draw.rounded_rectangle([x1, sy, x1 + bw, sy + bh], radius=1, fill=(245, 245, 245, 255))
+        dy = sy + bh + 2
+        draw.rounded_rectangle([x1, dy, x1 + bw, dy + max(2, bw)], radius=1, fill=(245, 245, 245, 255))
+
+
+def _draw_logo_overlay(img: Image.Image, draw: ImageDraw.ImageDraw, square_rc: tuple[int, int], ts: int) -> None:
+    r, c = square_rc
+    x0, y0 = c * ts, r * ts
+    if random.random() < FULL_LOGO_PROB:
+        # Full tile-ish logo with king silhouette + 3-cap wordmark
+        bw = int(ts * random.uniform(0.78, 1.02))
+        bh = int(ts * random.uniform(0.72, 0.98))
+        bx0 = max(0, min(img.size[0] - bw, x0 + random.randint(-int(ts * 0.15), int(ts * 0.08))))
+        by0 = max(0, min(img.size[1] - bh, y0 + random.randint(-int(ts * 0.04), int(ts * 0.14))))
+        bx1, by1 = bx0 + bw, by0 + bh
+        cx = (bx0 + bx1) // 2
+        draw.rounded_rectangle(
+            [bx0, by0, bx1, by1],
+            radius=max(4, int(ts * 0.08)),
+            fill=random.choice([(236, 233, 216, 210), (232, 228, 208, 220), (238, 236, 221, 200)]),
+            outline=random.choice([(142, 132, 110, 160), (120, 112, 95, 150)]),
+            width=1,
+        )
+        kcol = (24, 24, 24, random.randint(160, 230))
+        kw = int(bw * 0.34)
+        kh = int(bh * 0.36)
+        kcy = by0 + int(bh * 0.56)
+        draw.rounded_rectangle([cx - kw // 2, kcy - int(kh * 0.14), cx + kw // 2, kcy + kh // 2], radius=3, fill=kcol)
+        draw.ellipse([cx - int(kw * 0.18), kcy - int(kh * 0.58), cx + int(kw * 0.18), kcy - int(kh * 0.20)], fill=kcol)
+        cw = max(1, kw // 12)
+        draw.rectangle([cx - cw, kcy - int(kh * 0.70), cx + cw, kcy - int(kh * 0.45)], fill=kcol)
+        draw.rectangle([cx - int(cw * 2.6), kcy - int(kh * 0.58), cx + int(cw * 2.6), kcy - int(kh * 0.50)], fill=kcol)
+        label = random.choice(("SLC", "S.C.C", "LCC", "ICC"))
+        try:
+            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", max(10, int(ts * 0.20)))
+        except Exception:
+            font = ImageFont.load_default()
+        draw.text((cx - int(ts * 0.18), by1 - int(bh * 0.35)), label, fill=(18, 18, 18, random.randint(170, 235)), font=font)
+        return
+
+    # Small corner watermark logo
+    cx = x0 + random.randint(int(ts * 0.20), int(ts * 0.80))
+    cy = y0 + random.randint(int(ts * 0.20), int(ts * 0.80))
+    half = max(8, int(ts * random.uniform(0.22, 0.34)))
+    draw.ellipse([cx - half, cy - half, cx + half, cy + half], fill=(120, 120, 120, random.randint(70, 120)))
+    sil = random.choice(("rook", "king"))
+    scol = (236, 236, 236, random.randint(105, 150))
+    bx = cx - int(half * 0.45)
+    by = cy - int(half * 0.50)
+    bw = int(half * 0.9)
+    bh = int(half * 1.0)
+    if sil == "rook":
+        draw.rounded_rectangle([bx, by + int(bh * 0.28), bx + bw, by + bh], radius=2, fill=scol)
+        tw = max(2, bw // 4)
+        gap = max(1, tw // 3)
+        for i in range(3):
+            tx0 = bx + i * (tw + gap)
+            draw.rectangle([tx0, by + int(bh * 0.08), tx0 + tw, by + int(bh * 0.32)], fill=scol)
+    else:
+        draw.rounded_rectangle([bx, by + int(bh * 0.23), bx + bw, by + bh], radius=2, fill=scol)
+        draw.ellipse([cx - int(bw * 0.22), by + int(bh * 0.02), cx + int(bw * 0.22), by + int(bh * 0.3)], fill=scol)
+
+
+def apply_board_annotations(img: Image.Image, rows: list[list[str]]) -> Image.Image:
+    if random.random() >= ANNOTATION_BOARD_PROB:
+        return img
+    draw = ImageDraw.Draw(img, "RGBA")
+    ts = img.size[0] // 8
+    occupied = [(r, c) for r in range(8) for c in range(8) if rows[r][c] != "1"]
+    empties = [(r, c) for r in range(8) for c in range(8) if rows[r][c] == "1"]
+    actions = random.randint(ANNOTATION_MIN_ACTIONS, ANNOTATION_MAX_ACTIONS)
+    for _ in range(actions):
+        modes = []
+        if random.random() < ARROW_ACTION_PROB:
+            modes.append("arrow")
+        if random.random() < HIGHLIGHT_ACTION_PROB:
+            modes.append("highlight")
+        if random.random() < MARKER_ACTION_PROB:
+            modes.append("marker")
+        if random.random() < LOGO_ACTION_PROB:
+            modes.append("logo")
+        if not modes:
+            modes = ["highlight"]
+        mode = random.choice(modes)
+        if mode == "arrow":
+            s = random.randint(0, 7), random.randint(0, 7)
+            e = max(0, min(7, s[0] + random.randint(-3, 3))), max(0, min(7, s[1] + random.randint(-3, 3)))
+            if s != e:
+                col = random.choice([(0, 255, 0, 110), (255, 165, 0, 110), (255, 0, 0, 110), (0, 150, 255, 110)])
+                _draw_arrow(draw, s, e, col, ts)
+        elif mode == "highlight":
+            r, c = random.randint(0, 7), random.randint(0, 7)
+            col = random.choice([(0, 255, 0, 65), (255, 255, 0, 65), (255, 0, 0, 65), (0, 150, 255, 65)])
+            draw.rectangle([c * ts, r * ts, (c + 1) * ts, (r + 1) * ts], fill=col)
+        elif mode == "marker":
+            sq = random.choice(occupied if occupied else [(random.randint(0, 7), random.randint(0, 7))])
+            _draw_marker(draw, sq, ts)
+        else:  # logo
+            pool = empties if empties else [(random.randint(0, 7), random.randint(0, 7))]
+            sq = random.choice(pool)
+            _draw_logo_overlay(img, draw, sq, ts)
+    return img
+
+
+def apply_piece_occlusion_overlay(img: Image.Image, rows: list[list[str]]) -> Image.Image:
+    if random.random() >= PIECE_OCCLUSION_PROB:
+        return img
+    out = img.copy()
+    draw = ImageDraw.Draw(out, "RGBA")
+    ts = out.size[0] // 8
+    occupied = [(r, c) for r in range(8) for c in range(8) if rows[r][c] != "1"]
+    if not occupied:
+        return out
+    for r, c in random.sample(occupied, k=min(len(occupied), random.randint(1, 3))):
+        x0, y0 = c * ts, r * ts
+        x1, y1 = x0 + ts, y0 + ts
+        style = random.choice(("bar", "corner", "ellipse"))
+        col = random.choice([(38, 38, 38, 110), (245, 245, 245, 95), (18, 140, 220, 85), (200, 30, 30, 80)])
+        if style == "bar":
+            h = random.randint(max(6, ts // 8), max(10, ts // 4))
+            yb = random.randint(y0, max(y0, y1 - h))
+            draw.rectangle([x0, yb, x1, yb + h], fill=col)
+        elif style == "corner":
+            w = random.randint(max(8, ts // 5), max(12, ts // 2))
+            h = random.randint(max(8, ts // 5), max(12, ts // 2))
+            cx = x0 if random.random() < 0.5 else x1 - w
+            cy = y0 if random.random() < 0.5 else y1 - h
+            draw.rectangle([cx, cy, cx + w, cy + h], fill=col)
+        else:
+            pad = random.randint(5, max(6, ts // 4))
+            draw.ellipse([x0 + pad, y0 + pad, x1 - pad, y1 - pad], fill=col)
+    return out
+
+
+def apply_local_piece_tilt(img: Image.Image, rows: list[list[str]]) -> Image.Image:
+    if random.random() >= LOCAL_PIECE_TILT_PROB:
+        return img
+    ts = img.size[0] // 8
+    occupied = [(r, c) for r in range(8) for c in range(8) if rows[r][c] != "1"]
+    if not occupied:
+        return img
+    out = img.copy()
+    for r, c in random.sample(occupied, k=min(len(occupied), random.randint(1, 2))):
+        x0, y0 = c * ts, r * ts
+        tile = out.crop((x0, y0, x0 + ts, y0 + ts))
+        arr = np.asarray(tile, dtype=np.uint8)
+        fill = tuple(int(v) for v in np.median(arr.reshape(-1, 3), axis=0))
+        angle = random.uniform(-LOCAL_PIECE_TILT_MAX_DEG, LOCAL_PIECE_TILT_MAX_DEG)
+        tilted = tile.rotate(angle, resample=Image.BICUBIC, expand=False, fillcolor=fill)
+        out.paste(tilted, (x0, y0))
+    return out
 
 
 def _expand_fen_board(fen_board: str) -> list[list[str]]:
@@ -196,6 +424,10 @@ def render_board_image(board: chess.Board, pov_black: bool) -> tuple[Image.Image
     if random.random() < 0.70:
         draw = ImageDraw.Draw(out)
         draw_board_labels(draw, ts, pov_black=False)
+
+    out = apply_board_annotations(out, rows)
+    out = apply_piece_occlusion_overlay(out, rows)
+    out = apply_local_piece_tilt(out, rows)
 
     if pov_black:
         out = out.rotate(180, resample=Image.BICUBIC, expand=False)
@@ -497,10 +729,31 @@ def main() -> None:
     # rough lower-bound estimate (x tensor only + light metadata overhead)
     bytes_per_sample = (3 * IMG_SIZE * IMG_SIZE) + 320
     est_gb = (total_samples * bytes_per_sample) / (1024 ** 3)
+    manifest = {
+        "dataset_preset": DATASET_PRESET,
+        "img_size": IMG_SIZE,
+        "board_render_size": BOARD_RENDER_SIZE,
+        "canvas_w": CANVAS_W,
+        "canvas_h": CANVAS_H,
+        "boards_per_chunk": BOARDS_PER_CHUNK,
+        "chunks_train": CHUNKS_TRAIN,
+        "chunks_val": CHUNKS_VAL,
+        "min_plies": MIN_PLIES,
+        "max_plies": MAX_PLIES,
+        "board_absent_prob": BOARD_ABSENT_PROB,
+        "seed": SEED,
+        "recipe_name": RECIPE_NAME,
+        "total_samples": total_samples,
+        "estimated_disk_gb": round(est_gb, 3),
+    }
+    (OUTPUT_DIR / "generation_manifest_v7.json").write_text(
+        json.dumps(manifest, indent=2),
+        encoding="utf-8",
+    )
     print(
         f"Generating v7 tensors -> {OUTPUT_DIR} | IMG={IMG_SIZE} | "
         f"train_chunks={CHUNKS_TRAIN} val_chunks={CHUNKS_VAL} boards_per_chunk={BOARDS_PER_CHUNK} "
-        f"| total_samples≈{total_samples} | est_disk≈{est_gb:.2f}GB (+torch overhead)"
+        f"| preset={DATASET_PRESET} | total_samples≈{total_samples} | est_disk≈{est_gb:.2f}GB (+torch overhead)"
     )
     try:
         for i in range(CHUNKS_TRAIN):

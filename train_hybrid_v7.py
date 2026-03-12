@@ -37,10 +37,10 @@ def env_str(name: str, default: str) -> str:
 
 # ============ HUMAN CONFIG (EDIT THESE) ============
 DATA_DIR = "tensors_v7"
-MODEL_SAVE_PATH = "models/model_hybrid_v7_latest_best.pt"
-FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v7_final.pt"
-CHECKPOINT_DIR = "models/checkpoints_v7"
-BASE_MODEL_PATH = "models/model_hybrid_v5_latest_best.pt"
+MODEL_SAVE_PATH = "models/model_hybrid_v7_scratch_latest_best.pt"
+FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v7_scratch_final.pt"
+CHECKPOINT_DIR = "models/checkpoints_v7_scratch"
+BASE_MODEL_PATH = ""
 EPOCHS = 120
 LEARNING_RATE = 3e-5
 BATCH_SIZE_PER_GPU = 20
@@ -57,7 +57,8 @@ HARDSET_COMPARE_FULL_FEN = False
 HARDSET_REQUIRE_NON_REGRESSION = True
 HARDSET_MAX_CONSECUTIVE_REGRESSIONS = 6
 MIN_SCORE_IMPROVEMENT = 1e-6
-BACKUP_EXISTING_BEST_MODEL = True
+BACKUP_EXISTING_BEST_MODEL = False
+USE_EXISTING_MODEL_SAVE_BASELINE = False
 
 # Optional: allow env overrides for Kaggle/automation runs.
 APPLY_ENV_OVERRIDES = True
@@ -179,6 +180,9 @@ def _clean_state_dict_keys(state: dict) -> dict:
 
 
 def load_warmstart(model: MultiHeadChessNet, model_path: str) -> None:
+    if not model_path:
+        print("📦 Warm-start disabled (training from scratch).")
+        return
     if not os.path.exists(model_path):
         print(f"⚠️ Base model not found: {model_path} (training backbone from scratch)")
         return
@@ -223,6 +227,7 @@ def load_warmstart(model: MultiHeadChessNet, model_path: str) -> None:
 def run_rank_eval(
     model_path: str,
     truth_json: str,
+    recognizer_module: str = "recognizer_v7",
     images_dir: str | None = None,
     compare_full_fen: bool = False,
     label: str = "hardset",
@@ -243,7 +248,7 @@ def run_rank_eval(
         "--truth-json",
         truth_json,
         "--recognizer-module",
-        "recognizer_v7",
+        recognizer_module,
     ]
     if images_dir:
         cmd.extend(["--images-dir", images_dir])
@@ -301,9 +306,15 @@ def run_rank_eval(
 def run_hardset_eval_on_model(model_path: str) -> Dict[str, float] | None:
     if not RUN_HARDSET_EVAL_ON_BEST:
         return None
+    model_name = os.path.basename(model_path).lower()
+    if "v5" in model_name or "v4" in model_name:
+        recognizer_module = "recognizer_v5"
+    else:
+        recognizer_module = "recognizer_v7"
     return run_rank_eval(
         model_path=model_path,
         truth_json=HARDSET_TRUTH_JSON,
+        recognizer_module=recognizer_module,
         images_dir=None,
         compare_full_fen=HARDSET_COMPARE_FULL_FEN,
         label="hardset",
@@ -456,7 +467,7 @@ def train() -> None:
 
     print("\n🚀 STARTING BEAST MODE TRAINING")
     print(f"💻 Hardware: {DEVICE} ({GPU_COUNT} GPUs) | Batch Size: {BATCH_SIZE}")
-    print(f"📚 Data Dir: {DATA_DIR} | Base Model: {BASE_MODEL_PATH}")
+    print(f"📚 Data Dir: {DATA_DIR} | Base Model: {BASE_MODEL_PATH or '(none)'}")
 
     model = MultiHeadChessNet()
     load_warmstart(model, BASE_MODEL_PATH)
@@ -489,14 +500,19 @@ def train() -> None:
     elif RESUME_FROM_CHECKPOINT:
         print(f"ℹ️ No checkpoint found at {CHECKPOINT_PATH}; using base model warm-start.")
 
-    if os.path.exists(MODEL_SAVE_PATH) and BACKUP_EXISTING_BEST_MODEL:
+    if USE_EXISTING_MODEL_SAVE_BASELINE and os.path.exists(MODEL_SAVE_PATH) and BACKUP_EXISTING_BEST_MODEL:
         backup_path = MODEL_SAVE_PATH.replace(".pt", "_pretrain_backup.pt")
         if not os.path.exists(backup_path):
             shutil.copy2(MODEL_SAVE_PATH, backup_path)
             print(f"🛡️ Backed up existing best model: {backup_path}")
 
     baseline_sources = []
-    for p in (MODEL_SAVE_PATH, BASE_MODEL_PATH):
+    baseline_candidates = []
+    if USE_EXISTING_MODEL_SAVE_BASELINE and MODEL_SAVE_PATH:
+        baseline_candidates.append(MODEL_SAVE_PATH)
+    if BASE_MODEL_PATH:
+        baseline_candidates.append(BASE_MODEL_PATH)
+    for p in baseline_candidates:
         if p and os.path.exists(p) and p not in baseline_sources:
             baseline_sources.append(p)
 
