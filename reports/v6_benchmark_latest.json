@@ -1,0 +1,153 @@
+{
+  "timestamp_utc": "2026-03-13T00:08:32.987612+00:00",
+  "fingerprint": {
+    "python": "3.14.2",
+    "platform": "macOS-26.3.1-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "processor": "arm",
+    "torch": "2.10.0",
+    "cuda_available": false,
+    "cuda_version": null,
+    "gpu_count": 0,
+    "gpu_names": [],
+    "fingerprint_id": "801e59de6fda872d"
+  },
+  "metrics": {
+    "images": 12,
+    "board_pass": 11,
+    "timeouts": 0,
+    "median_sec": 4.586607,
+    "p95_sec": 5.643969,
+    "max_sec": 6.594025
+  },
+  "results": [
+    {
+      "image": "puzzle-00003.jpeg",
+      "elapsed_sec": 6.594,
+      "success": true,
+      "error": null,
+      "confidence": 0.9999742424115539,
+      "predicted_board": "7R/8/8/8/6pq/7k/4Np1r/5KbQ",
+      "board_ok": true
+    },
+    {
+      "image": "puzzle-00011.jpeg",
+      "elapsed_sec": 4.5405,
+      "success": true,
+      "error": null,
+      "confidence": 0.9999995995312929,
+      "predicted_board": "5rk1/1p1qbpp1/5n2/2Pp1b1p/rP1Bp3/P5P1/3NBP1P/R2QR1K1",
+      "board_ok": true
+    },
+    {
+      "image": "puzzle-00021.jpeg",
+      "elapsed_sec": 4.4764,
+      "success": true,
+      "error": null,
+      "confidence": 0.999999888241291,
+      "predicted_board": "8/8/8/8/K7/8/pp1Q4/k7",
+      "board_ok": true
+    },
+    {
+      "image": "puzzle-00024.jpeg",
+      "elapsed_sec": 4.469,
+      "success": true,
+      "error": null,
+      "confidence": 0.9822756332578138,
+      "predicted_board": "4Rnk1/pr3ppp/1p3q1N/6Q1/2p5/8/P4PPP/6K1",
+      "board_ok": true
+    },
+    {
+      "image": "puzzle-00028.jpeg",
+      "elapsed_sec": 4.0606,
+      "success": true,
+      "error": null,
+      "confidence": 0.9217849969863892,
+      "predicted_board": "8/3Nn3/4p3/8/4Kk2/8/1p1Q4/8",
+      "board_ok": false
+    },
+    {
+      "image": "puzzle-00030.jpeg",
+      "elapsed_sec": 4.7438,
+      "success": true,
+      "error": null,
+      "confidence": 0.9999926956370473,
+      "predicted_board": "r2q2rk/bpp2p1p/p4PbQ/6N1/8/3P4/PP4PP/4RR1K",
+      "board_ok": true
+    },
+    {
+      "image": "puzzle-00031.jpeg",
+      "elapsed_sec": 4.4385,
+      "success": true,
+      "error": null,
+      "confidence": 0.975944348378107,
+      "predicted_board": "kbK5/pp6/1P6/8/8/8/8/R7",
+      "board_ok": true
+    },
+    {
+      "image": "puzzle-00041.jpeg",
+      "elapsed_sec": 4.7771,
+      "success": true,
+      "error": null,
+      "confidence": 0.999999986961484,
+      "predicted_board": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R",
+      "board_ok": true
+    },
+    {
+      "image": "puzzle-00046.jpeg",
+      "elapsed_sec": 4.727,
+      "success": true,
+      "error": null,
+      "confidence": 0.9999994598329067,
+      "predicted_board": "6k1/1b3pp1/2p3Np/1pq5/8/2N3nP/5PP1/Q4BK1",
+      "board_ok": true
+    },
+    {
+      "image": "puzzle-00048.jpeg",
+      "elapsed_sec": 4.3727,
+      "success": true,
+      "error": null,
+      "confidence": 0.9999999888241291,
+      "predicted_board": "2rq1rk1/4npbp/p1bpp1p1/1p6/4PP1Q/P1PP4/B2BN1PP/R4R1K",
+      "board_ok": true
+    },
+    {
+      "image": "puzzle-00049.jpeg",
+      "elapsed_sec": 4.8667,
+      "success": true,
+      "error": null,
+      "confidence": 0.9873251290991902,
+      "predicted_board": "4b3/4B3/4KP2/pk5p/7P/8/8/8",
+      "board_ok": true
+    },
+    {
+      "image": "puzzle-00050.jpeg",
+      "elapsed_sec": 4.6327,
+      "success": true,
+      "error": null,
+      "confidence": 0.9999999962747097,
+      "predicted_board": "3r4/3kn2p/1p4pP/1p1B1pP1/1P1K1P2/P1P5/8/4R3",
+      "board_ok": true
+    }
+  ],
+  "baseline_check": {
+    "mode": "compare",
+    "fingerprint_id": "801e59de6fda872d",
+    "baseline_metrics": {
+      "images": 12,
+      "board_pass": 11,
+      "timeouts": 0,
+      "median_sec": 4.500005,
+      "p95_sec": 5.554255,
+      "max_sec": 6.536754
+    },
+    "checks": {
+      "timeouts_ok": true,
+      "median_ok": true,
+      "p95_ok": true,
+      "median_ratio": 1.019245,
+      "p95_ratio": 1.016152
+    },
+    "passed": true
+  }
+}

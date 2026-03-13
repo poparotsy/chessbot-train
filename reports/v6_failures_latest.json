@@ -1,22 +1,22 @@
 {
-  "images": 49,
-  "primary_pass": 48,
-  "board_pass": 48,
-  "full_pass": 46,
+  "images": 12,
+  "primary_pass": 11,
+  "board_pass": 11,
+  "full_pass": 10,
   "compare_full_fen": false,
   "failures": [
     {
       "image": "puzzle-00028.jpeg",
-      "elapsed_sec": 10.1949,
+      "elapsed_sec": 4.1865,
       "success": true,
-      "confidence": 0.9713,
-      "predicted_board": "3Nn3/3PkP2/4p3/8/8/4K3/8/3R4",
-      "predicted_full": "3Nn3/3PkP2/4p3/8/8/4K3/8/3R4 w - - 0 1",
+      "confidence": 0.9218,
+      "predicted_board": "8/3Nn3/4p3/8/4Kk2/8/1p1Q4/8",
+      "predicted_full": "8/3Nn3/4p3/8/4Kk2/8/1p1Q4/8 w - - 0 1",
       "expected_board": "3Nnr2/R2PkP2/4p3/8/8/4K3/8/3R4",
       "expected_full": "3Nnr2/R2PkP2/4p3/8/8/4K3/8/3R4 w - - 0 1",
       "board_ok": false,
       "full_ok": false,
-      "side_to_move_source": "default_no_check_signal"
+      "side_to_move_source": "default_double_check_conflict"
     }
   ]
 }

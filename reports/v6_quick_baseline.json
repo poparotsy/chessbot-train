@@ -1,0 +1,7 @@
+{
+  "created_at_utc": "2026-03-12T23:45:40.682876+00:00",
+  "required_pass": 11,
+  "total": 12,
+  "truth_signature": "2769f6ab1d16fa7cd30a21977250c15890e65115",
+  "truth_json": "/Users/guru/workspace/current/chessbot/chessbot-train/scripts/testdata/v6_quick_cases.json"
+}

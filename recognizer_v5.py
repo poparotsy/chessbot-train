@@ -770,11 +770,10 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
             if label_perspective_result is None:
                 detected_perspective = "white"
                 perspective_source = "default"
-                if labels_absent or labels_same:
-                    fallback_perspective = infer_board_perspective_from_piece_distribution(raw_fen)
-                    if fallback_perspective == "black":
-                        detected_perspective = "black"
-                        perspective_source = "piece_distribution_fallback"
+                fallback_perspective = infer_board_perspective_from_piece_distribution(raw_fen)
+                if fallback_perspective == "black":
+                    detected_perspective = "black"
+                    perspective_source = "piece_distribution_fallback"
             else:
                 detected_perspective = label_perspective_result["perspective"]
                 perspective_source = label_perspective_result["source"]
@@ -935,6 +934,25 @@ def infer_side_to_move_from_checks(fen_board):
     if white_in_check and black_in_check:
         return "w", "default_double_check_conflict"
     return "w", "default_no_check_signal"
+
+
+def parse_side_to_move_override(raw_value):
+    token = str(raw_value).strip().lower()
+    mapping = {
+        "w": "w",
+        "white": "w",
+        "wtm": "w",
+        "white_to_move": "w",
+        "b": "b",
+        "black": "b",
+        "blak": "b",
+        "btm": "b",
+        "black_to_move": "b",
+    }
+    if token not in mapping:
+        allowed = "wtm|btm|w|b|white|black"
+        raise ValueError(f"Invalid --side-to-move '{raw_value}'. Use one of: {allowed}")
+    return mapping[token]
 
 
 def board_plausibility_score(fen_board):
@@ -1362,11 +1380,10 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
             if label_perspective_result is None:
                 detected_perspective = "white"
                 perspective_source = "default"
-                if labels_absent or labels_same:
-                    fallback = v4.infer_board_perspective_from_piece_distribution(fen)
-                    if fallback == "black":
-                        detected_perspective = "black"
-                        perspective_source = "piece_distribution_fallback"
+                fallback = v4.infer_board_perspective_from_piece_distribution(fen)
+                if fallback == "black":
+                    detected_perspective = "black"
+                    perspective_source = "piece_distribution_fallback"
             else:
                 detected_perspective = label_perspective_result["perspective"]
                 perspective_source = label_perspective_result["source"]
@@ -1437,6 +1454,11 @@ if __name__ == "__main__":
     )
     parser.add_argument("--no-edge-detection", action="store_true", help="Disable edge detection")
     parser.add_argument("--no-square-detection", action="store_true", help="Disable square grid detection")
+    parser.add_argument(
+        "--side-to-move",
+        default=None,
+        help="Override side to move (aliases: wtm|btm|w|b|white|black)",
+    )
     parser.add_argument("--debug", action="store_true", help="Verbose debugging")
     args = parser.parse_args()
 
@@ -1450,7 +1472,11 @@ if __name__ == "__main__":
             model_path=args.model_path,
             board_perspective=args.board_perspective,
         )
-        side_to_move, side_source = infer_side_to_move_from_checks(fen)
+        if args.side_to_move is None:
+            side_to_move, side_source = infer_side_to_move_from_checks(fen)
+        else:
+            side_to_move = parse_side_to_move_override(args.side_to_move)
+            side_source = "override_cli"
         print(
             json.dumps(
                 {
