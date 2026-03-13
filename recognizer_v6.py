@@ -57,6 +57,10 @@ WARP_PIECE_COVERAGE_RATIO = 0.45
 WARP_PIECE_COVERAGE_MIN_FULL = 8
 FULL_CONF_FOR_COVERAGE_GUARD = 0.95
 TILE_CONTEXT_PAD = 2
+ORIENTATION_STRONG_PIECE_MARGIN = 2.0
+ORIENTATION_BEST_GUESS_MIN_MARGIN = 0.6
+ORIENTATION_BEST_GUESS_MIN_PIECES = 10
+ORIENTATION_BEST_GUESS_MIN_PAWNS_PER_COLOR = 1
 
 
 class StandaloneBeastClassifier(nn.Module):
@@ -476,6 +480,152 @@ def infer_board_perspective_from_piece_distribution(fen_board, threshold=2.0):
     return "white"
 
 
+def orientation_piece_margin(fen_board):
+    rows = expand_fen_board(fen_board)
+    white_rows = []
+    black_rows = []
+    for r, row in enumerate(rows):
+        for ch in row:
+            if ch == "1":
+                continue
+            if ch.isupper():
+                white_rows.append(r)
+            else:
+                black_rows.append(r)
+    if not white_rows or not black_rows:
+        return 0.0
+    white_mean = sum(white_rows) / len(white_rows)
+    black_mean = sum(black_rows) / len(black_rows)
+    return float(abs(white_mean - black_mean))
+
+
+def _orientation_features(oriented_fen):
+    rows = expand_fen_board(oriented_fen)
+    white_rows = []
+    black_rows = []
+    white_pawn_rows = []
+    black_pawn_rows = []
+    white_king = None
+    black_king = None
+
+    for r, row in enumerate(rows):
+        for c, ch in enumerate(row):
+            if ch == "1":
+                continue
+            if ch.isupper():
+                white_rows.append(r)
+            else:
+                black_rows.append(r)
+            if ch == "P":
+                white_pawn_rows.append(r)
+            elif ch == "p":
+                black_pawn_rows.append(r)
+            elif ch == "K":
+                white_king = (r, c)
+            elif ch == "k":
+                black_king = (r, c)
+
+    piece_delta = 0.0
+    if white_rows and black_rows:
+        piece_delta = (sum(white_rows) / len(white_rows)) - (sum(black_rows) / len(black_rows))
+
+    pawn_delta = 0.0
+    if white_pawn_rows and black_pawn_rows:
+        pawn_delta = (sum(white_pawn_rows) / len(white_pawn_rows)) - (
+            sum(black_pawn_rows) / len(black_pawn_rows)
+        )
+
+    king_delta = 0.0
+    if white_king is not None and black_king is not None:
+        king_delta = float(white_king[0] - black_king[0])
+
+    wk_in_check = False
+    bk_in_check = False
+    if white_king is not None:
+        wk_in_check = is_square_attacked(rows, white_king[0], white_king[1], by_white=False)
+    if black_king is not None:
+        bk_in_check = is_square_attacked(rows, black_king[0], black_king[1], by_white=True)
+
+    # Lightweight legality-style signals: both kings in check is heavily suspicious;
+    # exactly one checked king is informative for orientation in tactical screenshots.
+    check_score = -1.5 if (wk_in_check and bk_in_check) else (0.25 if (wk_in_check or bk_in_check) else 0.0)
+
+    # Encourage both kings being present once.
+    king_count_score = 0.0
+    wk_count = oriented_fen.count("K")
+    bk_count = oriented_fen.count("k")
+    if wk_count != 1 or bk_count != 1:
+        king_count_score = -2.0
+
+    # Scores are clipped to keep this as a last-resort prior, not an override hammer.
+    piece_term = max(-3.0, min(3.0, piece_delta))
+    pawn_term = max(-3.0, min(3.0, pawn_delta))
+    king_term = max(-3.0, min(3.0, king_delta))
+
+    score = 0.45 * piece_term + 0.35 * pawn_term + 0.20 * king_term + check_score + king_count_score
+    return {
+        "score": float(score),
+        "white_piece_count": int(len(white_rows)),
+        "black_piece_count": int(len(black_rows)),
+        "total_piece_count": int(len(white_rows) + len(black_rows)),
+        "white_pawn_count": int(len(white_pawn_rows)),
+        "black_pawn_count": int(len(black_pawn_rows)),
+        "piece_delta": float(piece_delta),
+        "pawn_delta": float(pawn_delta),
+        "king_delta": float(king_delta),
+        "wk_in_check": bool(wk_in_check),
+        "bk_in_check": bool(bk_in_check),
+        "wk_count": int(wk_count),
+        "bk_count": int(bk_count),
+    }
+
+
+def orientation_best_guess(fen_board, min_margin=ORIENTATION_BEST_GUESS_MIN_MARGIN):
+    white_features = _orientation_features(fen_board)
+    black_board = rotate_fen_180(fen_board)
+    black_features = _orientation_features(black_board)
+
+    total_pieces = int(white_features.get("total_piece_count", 0))
+    white_pawns = int(white_features.get("white_pawn_count", 0))
+    black_pawns = int(white_features.get("black_pawn_count", 0))
+    if total_pieces < ORIENTATION_BEST_GUESS_MIN_PIECES:
+        return None, {
+            "reason": "insufficient_piece_signal",
+            "total_piece_count": total_pieces,
+            "min_piece_count": int(ORIENTATION_BEST_GUESS_MIN_PIECES),
+            "white": white_features,
+            "black": black_features,
+        }
+    if min(white_pawns, black_pawns) < ORIENTATION_BEST_GUESS_MIN_PAWNS_PER_COLOR:
+        return None, {
+            "reason": "insufficient_pawn_signal",
+            "white_pawn_count": white_pawns,
+            "black_pawn_count": black_pawns,
+            "min_pawns_per_color": int(ORIENTATION_BEST_GUESS_MIN_PAWNS_PER_COLOR),
+            "white": white_features,
+            "black": black_features,
+        }
+
+    white_score = float(white_features["score"])
+    black_score = float(black_features["score"])
+    margin = abs(white_score - black_score)
+    if margin < float(min_margin):
+        return None, {
+            "margin": margin,
+            "white": white_features,
+            "black": black_features,
+            "min_margin": float(min_margin),
+        }
+
+    perspective = "white" if white_score >= black_score else "black"
+    return perspective, {
+        "margin": margin,
+        "white": white_features,
+        "black": black_features,
+        "min_margin": float(min_margin),
+    }
+
+
 def expand_fen_board(fen):
     rows = []
     for row in fen.split("/"):
@@ -802,11 +952,10 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
             if label_perspective_result is None:
                 detected_perspective = "white"
                 perspective_source = "default"
-                if labels_absent or labels_same:
-                    fallback_perspective = infer_board_perspective_from_piece_distribution(raw_fen)
-                    if fallback_perspective == "black":
-                        detected_perspective = "black"
-                        perspective_source = "piece_distribution_fallback"
+                fallback_perspective = infer_board_perspective_from_piece_distribution(raw_fen)
+                if fallback_perspective == "black":
+                    detected_perspective = "black"
+                    perspective_source = "piece_distribution_fallback"
             else:
                 detected_perspective = label_perspective_result["perspective"]
                 perspective_source = label_perspective_result["source"]
@@ -872,6 +1021,7 @@ DEBUG_MODE = False
 USE_SQUARE_DETECTION = True
 USE_EDGE_DETECTION = True
 PIECE_LOG_PRIOR = -0.20
+MAX_DECODE_CANDIDATES = 12
 LOW_SAT_SPARSE_SAT_MEAN_MAX = 44.0
 LOW_SAT_SPARSE_PIECE_MAX = 10
 LOW_SAT_SPARSE_EMPTY_ALT_MIN = 0.015
@@ -978,6 +1128,25 @@ def infer_side_to_move_from_checks(fen_board):
     if white_in_check and black_in_check:
         return "w", "default_double_check_conflict"
     return "w", "default_no_check_signal"
+
+
+def parse_side_to_move_override(raw_value):
+    token = str(raw_value).strip().lower()
+    mapping = {
+        "w": "w",
+        "white": "w",
+        "wtm": "w",
+        "white_to_move": "w",
+        "b": "b",
+        "black": "b",
+        "blak": "b",
+        "btm": "b",
+        "black_to_move": "b",
+    }
+    if token not in mapping:
+        allowed = "wtm|btm|w|b|white|black"
+        raise ValueError(f"Invalid --side-to-move '{raw_value}'. Use one of: {allowed}")
+    return mapping[token]
 
 
 def board_plausibility_score(fen_board):
@@ -1319,73 +1488,82 @@ def infer_fen_on_image_deep_topk(
         xe = np.linspace(0, w, 9).astype(int)
         ye = np.linspace(0, h, 9).astype(int)
 
-    fen_rows = []
     confs = []
     tile_infos = []
     piece_count = 0
     empty_idx = v4.FEN_CHARS.index("1")
+    labels = ["1"] * 64
+    tile_tensors = []
+    tile_meta = []
+
+    for r in range(8):
+        for c in range(8):
+            image_r = r
+            image_c = c
+            if board_perspective == "black":
+                image_r = 7 - r
+                image_c = 7 - c
+
+            x0 = max(0, int(xe[image_c] - v4.TILE_CONTEXT_PAD))
+            y0 = max(0, int(ye[image_r] - v4.TILE_CONTEXT_PAD))
+            x1 = min(w, int(xe[image_c + 1] + v4.TILE_CONTEXT_PAD))
+            y1 = min(h, int(ye[image_r + 1] + v4.TILE_CONTEXT_PAD))
+            tile = img.crop((x0, y0, x1, y1)).resize((v4.IMG_SIZE, v4.IMG_SIZE), Image.LANCZOS)
+            img_np = np.array(tile).transpose(2, 0, 1)
+            tensor = (torch.from_numpy(img_np).float() / 127.5) - 1.0
+            tile_tensors.append(tensor)
+            tile_meta.append((r, c))
+
     with torch.no_grad():
-        for r in range(8):
-            row = ""
-            for c in range(8):
-                image_r = r
-                image_c = c
-                if board_perspective == "black":
-                    image_r = 7 - r
-                    image_c = 7 - c
+        batch = torch.stack(tile_tensors, dim=0).to(device)
+        out_batch = torch.softmax(model(batch), dim=1)
 
-                x0 = max(0, int(xe[image_c] - v4.TILE_CONTEXT_PAD))
-                y0 = max(0, int(ye[image_r] - v4.TILE_CONTEXT_PAD))
-                x1 = min(w, int(xe[image_c + 1] + v4.TILE_CONTEXT_PAD))
-                y1 = min(h, int(ye[image_r + 1] + v4.TILE_CONTEXT_PAD))
-                tile = img.crop((x0, y0, x1, y1)).resize((v4.IMG_SIZE, v4.IMG_SIZE), Image.LANCZOS)
-                img_np = np.array(tile).transpose(2, 0, 1)
-                tensor = torch.from_numpy(img_np).float().to(device)
-                tensor = (tensor / 127.5) - 1.0
-                tensor = tensor.unsqueeze(0)
+    for idx, (r, c) in enumerate(tile_meta):
+        out = out_batch[idx]
+        topk_probs, topk_pred = torch.topk(out, k=min(topk_k, len(v4.FEN_CHARS)))
+        topk = [
+            (v4.FEN_CHARS[int(k_idx.item())], float(prob.item()))
+            for prob, k_idx in zip(topk_probs, topk_pred)
+        ]
 
-                out = torch.softmax(model(tensor), dim=1)[0]
-                topk_probs, topk_pred = torch.topk(out, k=min(topk_k, len(v4.FEN_CHARS)))
-                topk = [
-                    (v4.FEN_CHARS[int(idx.item())], float(prob.item()))
-                    for prob, idx in zip(topk_probs, topk_pred)
-                ]
+        # Global sparsity prior: empty squares are slightly favored unless
+        # a piece probability is clearly stronger.
+        adjusted_scores = torch.log(out + 1e-12) + PIECE_LOG_PRIOR
+        adjusted_scores[empty_idx] = torch.log(out[empty_idx] + 1e-12)
+        pred_idx = int(torch.argmax(adjusted_scores).item())
+        pred_prob = float(out[pred_idx].item())
 
-                # Global sparsity prior: empty squares are slightly favored unless
-                # a piece probability is clearly stronger.
-                adjusted_scores = torch.log(out + 1e-12) + PIECE_LOG_PRIOR
-                adjusted_scores[empty_idx] = torch.log(out[empty_idx] + 1e-12)
-                pred_idx = int(torch.argmax(adjusted_scores).item())
-                pred_prob = float(out[pred_idx].item())
+        if pred_prob < 0.35:
+            label = "1"
+        else:
+            label = v4.FEN_CHARS[pred_idx]
 
-                if pred_prob < 0.35:
-                    label = "1"
-                else:
-                    label = v4.FEN_CHARS[pred_idx]
-                row += label
-                if label != "1":
-                    piece_count += 1
-                max_prob = float(torch.max(out).item())
-                confs.append(max_prob)
-                empty_prob = float(out[empty_idx].item())
-                best_piece_alt_prob = 0.0
-                for alt_label, alt_prob in topk:
-                    if alt_label == "1":
-                        continue
-                    best_piece_alt_prob = max(best_piece_alt_prob, float(alt_prob))
-                tile_infos.append(
-                    {
-                        "row": r,
-                        "col": c,
-                        "label": label,
-                        "prob": max_prob,
-                        "top1_prob": max_prob,
-                        "empty_prob": empty_prob,
-                        "best_piece_alt_prob": best_piece_alt_prob,
-                        "topk": topk,
-                    }
-                )
-            fen_rows.append(row)
+        labels[r * 8 + c] = label
+        if label != "1":
+            piece_count += 1
+
+        max_prob = float(torch.max(out).item())
+        confs.append(max_prob)
+        empty_prob = float(out[empty_idx].item())
+        best_piece_alt_prob = 0.0
+        for alt_label, alt_prob in topk:
+            if alt_label == "1":
+                continue
+            best_piece_alt_prob = max(best_piece_alt_prob, float(alt_prob))
+        tile_infos.append(
+            {
+                "row": r,
+                "col": c,
+                "label": label,
+                "prob": max_prob,
+                "top1_prob": max_prob,
+                "empty_prob": empty_prob,
+                "best_piece_alt_prob": best_piece_alt_prob,
+                "topk": topk,
+            }
+        )
+
+    fen_rows = ["".join(labels[r * 8 : (r + 1) * 8]) for r in range(8)]
 
     result = "/".join(fen_rows)
     result = "/".join(
@@ -2312,6 +2490,24 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
     img = Image.open(image_path).convert("RGB")
     detector = BoardDetector(debug=DEBUG_MODE)
     candidates = detector.candidate_images(img) if USE_EDGE_DETECTION else [("full", img, 0.0, True)]
+    if len(candidates) > MAX_DECODE_CANDIDATES:
+        full = [candidates[0]]
+        others = sorted(
+            candidates[1:],
+            key=lambda item: (
+                int(item[3]),  # trusted first
+                float(item[2]),  # higher warp quality first
+                0 if str(item[0]).endswith("_inset2") else 1,  # prefer non-inset on ties
+            ),
+            reverse=True,
+        )
+        candidates = full + others[: max(0, MAX_DECODE_CANDIDATES - 1)]
+        debug_event(
+            "v6_candidate_cap",
+            original_count=len(full) + len(others),
+            capped_count=len(candidates),
+            max_decode_candidates=MAX_DECODE_CANDIDATES,
+        )
 
     full_candidate_img = v4.trim_dark_edge_bars(candidates[0][1].copy())
     label_perspective_result = None
@@ -2362,11 +2558,34 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
             if label_perspective_result is None:
                 detected_perspective = "white"
                 perspective_source = "default"
-                if labels_absent or labels_same:
-                    fallback = v4.infer_board_perspective_from_piece_distribution(fen)
+                piece_margin = orientation_piece_margin(fen)
+                if piece_margin >= ORIENTATION_STRONG_PIECE_MARGIN:
+                    fallback = v4.infer_board_perspective_from_piece_distribution(
+                        fen,
+                        threshold=ORIENTATION_STRONG_PIECE_MARGIN,
+                    )
                     if fallback == "black":
                         detected_perspective = "black"
-                        perspective_source = "piece_distribution_fallback"
+                    perspective_source = "piece_distribution_fallback"
+                    debug_event(
+                        "v6_orientation_fallback",
+                        strategy="piece_distribution",
+                        margin=round(float(piece_margin), 4),
+                        selected=detected_perspective,
+                    )
+                else:
+                    best_guess, guess_details = orientation_best_guess(fen)
+                    if best_guess in {"white", "black"}:
+                        detected_perspective = best_guess
+                        perspective_source = "orientation_best_guess"
+                    debug_event(
+                        "v6_orientation_fallback",
+                        strategy="orientation_best_guess",
+                        piece_margin=round(float(piece_margin), 4),
+                        selected=detected_perspective,
+                        guessed=best_guess,
+                        guess_details=guess_details,
+                    )
             else:
                 detected_perspective = label_perspective_result["perspective"]
                 perspective_source = label_perspective_result["source"]
@@ -2544,6 +2763,11 @@ if __name__ == "__main__":
     )
     parser.add_argument("--no-edge-detection", action="store_true", help="Disable edge detection")
     parser.add_argument("--no-square-detection", action="store_true", help="Disable square grid detection")
+    parser.add_argument(
+        "--side-to-move",
+        default=None,
+        help="Override side to move (aliases: wtm|btm|w|b|white|black)",
+    )
     parser.add_argument("--debug", action="store_true", help="Verbose debugging")
     args = parser.parse_args()
 
@@ -2557,7 +2781,11 @@ if __name__ == "__main__":
             model_path=args.model_path,
             board_perspective=args.board_perspective,
         )
-        side_to_move, side_source = infer_side_to_move_from_checks(fen)
+        if args.side_to_move is None:
+            side_to_move, side_source = infer_side_to_move_from_checks(fen)
+        else:
+            side_to_move = parse_side_to_move_override(args.side_to_move)
+            side_source = "override_cli"
         print(
             json.dumps(
                 {

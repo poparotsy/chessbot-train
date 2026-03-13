@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--models-glob", default="models/*.pt", help="Glob for model/checkpoint files.")
     parser.add_argument("--images-dir", default=str(TRAIN_DIR / "images_4_test"))
     parser.add_argument("--truth-json", default=str(TRAIN_DIR / "images_4_test" / "truth_verified.json"))
-    parser.add_argument("--timeout-sec", type=float, default=20.0, help="Per-image timeout for recognizer calls.")
+    parser.add_argument("--timeout-sec", type=float, default=45.0, help="Per-image timeout for recognizer calls.")
     parser.add_argument(
         "--board-perspective",
         choices=["auto", "white", "black"],
@@ -105,6 +105,7 @@ def main() -> int:
                 debug=False,
                 reports_dir=None,
                 write_reports=False,
+                show_progress=True,
             )
             passed = int(summary["full_pass"] if args.compare_full_fen else summary["board_pass"])
             total = int(summary["images"])

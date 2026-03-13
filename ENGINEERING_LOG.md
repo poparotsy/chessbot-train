@@ -102,3 +102,63 @@ Every commit must be documented with:
     - `00046` pass
     - `00049` pass
   - v6 data/training lane is now standalone and ready for targeted runs.
+
+## Entry
+
+- commit: `pending`
+- objective: Add a deterministic post-change v6 test system (quick gate + internal invariants + relative performance baseline).
+- files:
+  - `scripts/test_after_change_v6.py`
+  - `scripts/benchmark_v6.py`
+  - `scripts/tests_v6/__init__.py`
+  - `scripts/tests_v6/test_internal_v6.py`
+  - `scripts/testdata/v6_quick_cases.json`
+  - `scripts/testdata/v6_orientation_cases.json`
+- behavior_change:
+  - Added a single default post-change command for v6:
+    - `python3 scripts/test_after_change_v6.py --profile quick`
+  - Added orientation regression checks with forced `white`/`black` consistency and `auto` validation.
+  - Added quick hardset baseline gating (`no drop` vs stored baseline pass count).
+  - Added internal invariant tests (`unittest`) for:
+    - side-to-move alias parsing,
+    - FEN 180-rotation involution,
+    - batched deep-topk tile inference call count,
+    - decode-candidate cap enforcement,
+    - timeout-safe evaluator behavior.
+  - Added performance benchmark + relative baseline check keyed by machine fingerprint:
+    - median latency ratio gate,
+    - p95 latency ratio gate,
+    - timeout-free requirement.
+- validation:
+  - `python3 -m py_compile scripts/benchmark_v6.py scripts/test_after_change_v6.py scripts/tests_v6/test_internal_v6.py`
+  - `python3 -m unittest discover -s scripts/tests_v6 -p 'test_*.py' -v`
+  - `python3 scripts/benchmark_v6.py --update-baseline --model-path models/model_hybrid_v5_latest_best.pt`
+  - `python3 scripts/test_after_change_v6.py --profile quick --update-quick-baseline --update-perf-baseline --model-path models/model_hybrid_v5_latest_best.pt`
+  - `python3 scripts/test_after_change_v6.py --profile quick --model-path models/model_hybrid_v5_latest_best.pt`
+- result:
+  - Quick gate is operational and repeatable.
+  - Current quick baseline initialized at `11/12` (remaining miss: `puzzle-00028.jpeg`).
+  - Performance baseline check passes on this machine fingerprint after bootstrap.
+
+## Entry
+
+- commit: `pending`
+- objective: Add `orientation_best_guess` as a last-resort auto-POV heuristic in `recognizer_v6`, following a global pros-style fallback stack.
+- files:
+  - `recognizer_v6.py`
+  - `scripts/tests_v6/test_internal_v6.py`
+- behavior_change:
+  - Auto orientation in `recognizer_v6` now uses this fallback order:
+    1. board labels (`a`/`h`) if high-confidence,
+    2. strong piece-distribution margin,
+    3. `orientation_best_guess` (global pawn/king/check structural scoring),
+    4. default.
+  - Added strict low-signal guards so best-guess does not trigger on sparse/ambiguous boards.
+  - Added internal tests to lock low-signal suppression and high-signal guess behavior.
+- validation:
+  - `python3 -m py_compile recognizer_v6.py`
+  - `python3 -m unittest discover -s scripts/tests_v6 -p 'test_*.py' -v`
+  - `python3 scripts/test_after_change_v6.py --profile quick --model-path models/model_hybrid_v5_latest_best.pt`
+- result:
+  - Quick gate remains green at `11/12` (only `00028` still failing in quick set).
+  - Recovered from intermediate regression on sparse boards (`00021`/`00049`) by tightening best-guess activation thresholds.

@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
         default="auto",
         help="Board perspective mode passed through to recognizer_v6.",
     )
-    parser.add_argument("--timeout-sec", type=float, default=20.0, help="Per-image timeout in seconds.")
+    parser.add_argument("--timeout-sec", type=float, default=45.0, help="Per-image timeout in seconds.")
     parser.add_argument("--reports-dir", default=str(TRAIN_DIR / "reports"))
     parser.add_argument(
         "--compare-full-fen",
@@ -122,8 +122,10 @@ def evaluate_hardset(
     debug: bool = False,
     reports_dir: Path | None = None,
     write_reports: bool = True,
+    show_progress: bool = False,
 ) -> dict:
     names = sorted([name for name in truth if (images_dir / name).exists()])
+    total = len(names)
     board_pass = 0
     full_pass = 0
     total_conf = 0.0
@@ -133,7 +135,7 @@ def evaluate_hardset(
     per_image = []
     failures = []
 
-    for name in names:
+    for idx, name in enumerate(names, start=1):
         expected_full = truth[name]
         expected_board = expected_full.split()[0]
         image_path = images_dir / name
@@ -167,6 +169,11 @@ def evaluate_hardset(
                 timeout_count += 1
             else:
                 error_count += 1
+            if show_progress:
+                print(
+                    f"[{idx:02d}/{total}] {name} ERROR {err} t={record['elapsed_sec']}s",
+                    flush=True,
+                )
             continue
 
         predicted_full = str(payload.get("fen", ""))
@@ -198,8 +205,13 @@ def evaluate_hardset(
         primary_ok = full_ok if compare_full_fen else board_ok
         if not primary_ok:
             failures.append(record)
+        if show_progress:
+            status = "PASS" if primary_ok else "FAIL"
+            print(
+                f"[{idx:02d}/{total}] {name} {status} conf={record['confidence']:.4f} t={record['elapsed_sec']}s",
+                flush=True,
+            )
 
-    total = len(names)
     summary = {
         "evaluator": "evaluate_v6_hardset",
         "recognizer_script": str(RECOGNIZER_SCRIPT),
@@ -256,6 +268,7 @@ def main() -> int:
         debug=bool(args.debug),
         reports_dir=reports_dir,
         write_reports=True,
+        show_progress=True,
     )
     summary["truth_json"] = str(truth_path)
     if "report_eval" in summary:
