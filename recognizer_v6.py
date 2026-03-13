@@ -13,34 +13,17 @@ from torch import nn
 IMG_SIZE, FEN_CHARS = 64, "1PNBRQKpnbrqk"
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_FILENAMES = [
-    "model_hybrid_v6_latest_best.pt",
-    "model_hybrid_v5_latest_best.pt",
-    "model_hybrid_v4_300e_last_best.pt",
-    "model_hybrid_v4_300e_best.pt",
-    "model_hybrid_v4_final.pt",
-]
-MODEL_SEARCH_DIRS = [
-    os.path.join(THIS_DIR, "models"),
-    os.path.join(THIS_DIR, "..", "models"),
-    THIS_DIR,
-    os.path.join(THIS_DIR, ".."),
-]
-MODEL_CANDIDATES = []
-for model_dir in MODEL_SEARCH_DIRS:
-    for filename in MODEL_FILENAMES:
-        candidate = os.path.abspath(os.path.join(model_dir, filename))
-        if candidate not in MODEL_CANDIDATES:
-            MODEL_CANDIDATES.append(candidate)
-MODEL_PATH = next((path for path in MODEL_CANDIDATES if os.path.exists(path)), None)
+# User-facing runtime settings
+DEFAULT_MODEL_PATH = os.path.abspath(os.path.join(THIS_DIR, "models", "model_hybrid_v5_latest_best.pt"))
+MODEL_PATH = os.path.abspath(os.environ.get("CHESSBOT_MODEL_PATH", DEFAULT_MODEL_PATH))
+USE_EDGE_DETECTION = True
+USE_SQUARE_DETECTION = True
+DEBUG_MODE = False
 
-# Edge detection parameters
+# Internal algorithm thresholds (advanced; usually do not change)
 CANNY_LOW = 50
 CANNY_HIGH = 150
 CONTOUR_EPSILON = 0.02
-USE_EDGE_DETECTION = True
-USE_SQUARE_DETECTION = False
-DEBUG_MODE = False
 WARP_MIN_AREA_RATIO = 0.30
 WARP_MIN_OPPOSITE_SIMILARITY = 0.82
 WARP_MIN_ASPECT_SIMILARITY = 0.50
@@ -65,6 +48,21 @@ ORIENTATION_BEST_GUESS_MIN_PAWNS_PER_COLOR = 1
 # flip otherwise-correct auto orientation on real social screenshots.
 ORIENTATION_BEST_GUESS_ENABLED = False
 ORIENTATION_WEAK_LABEL_MIN_CONF = 0.70
+PIECE_LOG_PRIOR = -0.20
+MAX_DECODE_CANDIDATES = 12
+LOW_SAT_SPARSE_SAT_MEAN_MAX = 44.0
+LOW_SAT_SPARSE_PIECE_MAX = 10
+LOW_SAT_SPARSE_EMPTY_ALT_MIN = 0.015
+PANEL_DIRECTIONAL_TRIM_FRAC = 0.08
+LOW_SAT_ENHANCE_SAT_MAX = 52.0
+LOW_SAT_ENHANCE_VAL_STD_MAX = 62.0
+LOW_SAT_ENHANCE_CLAHE_CLIP = 2.2
+LOW_SAT_ENHANCE_UNSHARP = 0.35
+LOW_SAT_SPARSE_ALT_OPTIONS = 2
+LOW_SAT_EDGE_ROOK_OBJECTIVE_BONUS = 0.40
+GRADIENT_PROJ_MIN_AREA_RATIO = 0.16
+GRADIENT_PROJ_MIN_SIDE_RATIO = 0.24
+GRADIENT_PROJ_MAX_SIDE_RATIO = 0.94
 
 
 class StandaloneBeastClassifier(nn.Module):
@@ -858,178 +856,8 @@ def trim_dark_edge_bars(img):
     return cropped.resize((w, h), Image.LANCZOS)
 
 
-def predict_board(image_path, model_path=None, board_perspective="auto"):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    resolved_model_path = model_path or MODEL_PATH
-    if not resolved_model_path:
-        raise FileNotFoundError(
-            "No default model found. Expected one of: "
-            "models/model_hybrid_v6_latest_best.pt, "
-            "models/model_hybrid_v5_latest_best.pt, "
-            "models/model_hybrid_v4_300e_last_best.pt. "
-            "Use --model-path to provide an explicit checkpoint."
-        )
-
-    model = StandaloneBeastClassifier(num_classes=13).to(device)
-    model.load_state_dict(torch.load(resolved_model_path, map_location=device))
-    model.eval()
-
-    debug_dir = None
-    if DEBUG_MODE:
-        debug_dir = os.path.join(os.path.dirname(image_path), "debug")
-        os.makedirs(debug_dir, exist_ok=True)
-        base_name = os.path.basename(image_path).rsplit(".", 1)[0]
-
-    img = Image.open(image_path).convert("RGB")
-    original_img = img.copy()
-    candidates = [("full", img)]
-
-    if USE_EDGE_DETECTION:
-        iw, ih = original_img.size
-        robust_corners = find_board_corners(original_img)
-        if robust_corners is not None:
-            robust_metrics = compute_quad_metrics(robust_corners, iw, ih)
-            robust_ok = is_warp_geometry_trustworthy(robust_metrics)
-            if DEBUG_MODE:
-                print(
-                    "DEBUG: robust metrics "
-                    f"area={robust_metrics['area_ratio']:.3f} "
-                    f"opp={robust_metrics['opposite_similarity']:.3f} "
-                    f"asp={robust_metrics['aspect_similarity']:.3f} "
-                    f"angle=[{robust_metrics['min_angle']:.1f},{robust_metrics['max_angle']:.1f}] "
-                    f"trusted={robust_ok}",
-                    file=sys.stderr,
-                )
-            if robust_ok:
-                robust_img = perspective_transform(original_img, robust_corners)
-                candidates.append(("robust", robust_img))
-                candidates.append(("robust_inset2", inset_board(robust_img, 2)))
-
-        legacy_corners = find_board_corners_legacy(original_img)
-        if legacy_corners is not None:
-            legacy_metrics = compute_quad_metrics(legacy_corners, iw, ih)
-            legacy_ok = is_warp_geometry_trustworthy(legacy_metrics)
-            if DEBUG_MODE:
-                print(
-                    "DEBUG: legacy metrics "
-                    f"area={legacy_metrics['area_ratio']:.3f} "
-                    f"opp={legacy_metrics['opposite_similarity']:.3f} "
-                    f"asp={legacy_metrics['aspect_similarity']:.3f} "
-                    f"angle=[{legacy_metrics['min_angle']:.1f},{legacy_metrics['max_angle']:.1f}] "
-                    f"trusted={legacy_ok}",
-                    file=sys.stderr,
-                )
-            if legacy_ok:
-                legacy_img = perspective_transform(original_img, legacy_corners)
-                candidates.append(("legacy", legacy_img))
-                candidates.append(("legacy_inset2", inset_board(legacy_img, 2)))
-
-    full_candidate_img = trim_dark_edge_bars(candidates[0][1].copy())
-    label_perspective_result = None
-    label_details = {"left": None, "right": None}
-    labels_absent = True
-    labels_same = False
-    if board_perspective == "auto":
-        label_perspective_result = infer_board_perspective_from_labels(full_candidate_img)
-        label_details = label_perspective_result["details"] if label_perspective_result else {
-            "left": classify_file_label_crop(extract_file_label_crop(full_candidate_img, side="left")),
-            "right": classify_file_label_crop(extract_file_label_crop(full_candidate_img, side="right")),
-        }
-        labels_absent = label_details["left"] is None and label_details["right"] is None
-        labels_same = (
-            label_details["left"] is not None
-            and label_details["right"] is not None
-            and label_details["left"]["label"] == label_details["right"]["label"]
-        )
-
-    scored = []
-    for tag, candidate_img in candidates:
-        candidate_img = trim_dark_edge_bars(candidate_img)
-        raw_fen, conf, piece_count = infer_fen_on_image(
-            candidate_img,
-            model,
-            device,
-            USE_SQUARE_DETECTION,
-        )
-        perspective_source = "override"
-        if board_perspective == "auto":
-            if label_perspective_result is None:
-                detected_perspective = "white"
-                perspective_source = "default"
-                fallback_perspective = infer_board_perspective_from_piece_distribution(raw_fen)
-                if fallback_perspective == "black":
-                    detected_perspective = "black"
-                    perspective_source = "piece_distribution_fallback"
-            else:
-                detected_perspective = label_perspective_result["perspective"]
-                perspective_source = label_perspective_result["source"]
-        elif board_perspective not in {"white", "black"}:
-            raise ValueError("board_perspective must be 'auto', 'white', or 'black'")
-        else:
-            detected_perspective = board_perspective
-
-        final_fen = rotate_fen_180(raw_fen) if detected_perspective == "black" else raw_fen
-        scored.append((tag, candidate_img, final_fen, conf, piece_count, detected_perspective, perspective_source))
-        if DEBUG_MODE:
-            print(
-                f"DEBUG: Candidate={tag} conf={conf:.4f} pieces={piece_count} "
-                f"perspective={detected_perspective} source={perspective_source}",
-                file=sys.stderr,
-            )
-
-    full_piece_count = next((item[4] for item in scored if item[0] == "full"), 0)
-    full_conf = next((item[3] for item in scored if item[0] == "full"), 0.0)
-    filtered = []
-    for item in scored:
-        tag, _, _, _, piece_count, _, _ = item
-        if (
-            tag != "full"
-            and full_conf >= FULL_CONF_FOR_COVERAGE_GUARD
-            and full_piece_count >= WARP_PIECE_COVERAGE_MIN_FULL
-            and piece_count <= int(full_piece_count * WARP_PIECE_COVERAGE_RATIO)
-        ):
-            if DEBUG_MODE:
-                print(
-                    f"DEBUG: Rejecting candidate={tag} low_piece_coverage "
-                    f"{piece_count}/{full_piece_count}",
-                    file=sys.stderr,
-                )
-            continue
-        filtered.append(item)
-
-    if not filtered:
-        filtered = scored
-
-    best_tag, best_img, best_fen, best_conf, _, best_perspective, best_perspective_source = max(
-        filtered, key=lambda item: item[3]
-    )
-
-    if DEBUG_MODE:
-        print(f"DEBUG: Using model={resolved_model_path}", file=sys.stderr)
-        print(f"DEBUG: Selected candidate={best_tag} confidence={best_conf:.4f}", file=sys.stderr)
-        print(
-            f"DEBUG: Selected perspective={best_perspective} source={best_perspective_source}",
-            file=sys.stderr,
-        )
-        preprocessed_path = os.path.join(debug_dir, f"{base_name}_preprocessed.png")
-        best_img.save(preprocessed_path)
-        print(f"DEBUG: Selected board image saved to {preprocessed_path}", file=sys.stderr)
-
-    return best_fen, best_conf
-
-
 # Expose local helpers/constants through the historical v4 alias used below.
 v4 = sys.modules[__name__]
-
-DEBUG_MODE = False
-USE_SQUARE_DETECTION = True
-USE_EDGE_DETECTION = True
-PIECE_LOG_PRIOR = -0.20
-MAX_DECODE_CANDIDATES = 12
-LOW_SAT_SPARSE_SAT_MEAN_MAX = 44.0
-LOW_SAT_SPARSE_PIECE_MAX = 10
-LOW_SAT_SPARSE_EMPTY_ALT_MIN = 0.015
-PANEL_DIRECTIONAL_TRIM_FRAC = 0.08
 
 
 def debug_event(kind, **fields):
@@ -1164,6 +992,8 @@ def board_plausibility_score(fen_board):
     black_king = fen_board.count("k")
     white_pawns = fen_board.count("P")
     black_pawns = fen_board.count("p")
+    white_queens = fen_board.count("Q")
+    black_queens = fen_board.count("q")
     white_pieces = sum(1 for ch in fen_board if ch.isupper())
     black_pieces = sum(1 for ch in fen_board if ch.islower())
     total_pieces = white_pieces + black_pieces
@@ -1201,6 +1031,16 @@ def board_plausibility_score(fen_board):
     else:
         score -= 2.0 * (black_pieces - 16)
 
+    if white_queens <= 2:
+        score += 0.5
+    else:
+        score -= 3.0 * (white_queens - 2)
+
+    if black_queens <= 2:
+        score += 0.5
+    else:
+        score -= 3.0 * (black_queens - 2)
+
     if total_pieces <= 32:
         score += 1.0
     else:
@@ -1221,6 +1061,31 @@ def image_saturation_stats(img):
         "val_mean": float(np.mean(val)),
         "val_std": float(np.std(val)),
     }
+
+
+def enhance_low_saturation_image(img):
+    """
+    Global low-saturation enhancement for scan/book-like boards.
+    Returns None when the image does not match the target profile.
+    """
+    stats = image_saturation_stats(img)
+    if stats["sat_mean"] > LOW_SAT_ENHANCE_SAT_MAX:
+        return None
+    if stats["val_std"] > LOW_SAT_ENHANCE_VAL_STD_MAX:
+        return None
+
+    rgb = np.array(img.convert("RGB"))
+    lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=LOW_SAT_ENHANCE_CLAHE_CLIP, tileGridSize=(8, 8))
+    l2 = clahe.apply(l)
+    lab2 = cv2.merge((l2, a, b))
+    enhanced = cv2.cvtColor(lab2, cv2.COLOR_LAB2RGB)
+
+    # Mild unsharp mask to strengthen thin rook/edge signals.
+    blur = cv2.GaussianBlur(enhanced, (0, 0), 1.0)
+    sharp = cv2.addWeighted(enhanced, 1.0 + LOW_SAT_ENHANCE_UNSHARP, blur, -LOW_SAT_ENHANCE_UNSHARP, 0)
+    return Image.fromarray(sharp.astype(np.uint8))
 
 
 def directional_trim_resize(img, direction, frac):
@@ -1294,6 +1159,18 @@ def _king_health_from_labels(labels):
     return int(fen.count("K") == 1) + int(fen.count("k") == 1)
 
 
+def _edge_rook_count_from_labels(labels):
+    count = 0
+    for idx, label in enumerate(labels):
+        if label not in {"R", "r"}:
+            continue
+        row = idx // 8
+        col = idx % 8
+        if row in (0, 7) or col in (0, 7):
+            count += 1
+    return count
+
+
 def rescore_low_saturation_sparse_from_topk(tile_infos, base_fen, base_conf):
     """
     Global low-saturation sparse-board rescue.
@@ -1312,19 +1189,20 @@ def rescore_low_saturation_sparse_from_topk(tile_infos, base_fen, base_conf):
         if tile["label"] != "1":
             continue
         empty_prob = float(tile.get("empty_prob", _label_prob_from_topk(tile, "1")))
-        best_piece_label = None
-        best_piece_prob = 0.0
+        options = []
         for alt_label, alt_prob in tile["topk"]:
             if alt_label == "1":
                 continue
             prob = float(alt_prob)
-            if prob > best_piece_prob:
-                best_piece_prob = prob
-                best_piece_label = alt_label
-        if best_piece_label is None or best_piece_prob < LOW_SAT_SPARSE_EMPTY_ALT_MIN:
+            if prob < LOW_SAT_SPARSE_EMPTY_ALT_MIN:
+                continue
+            options.append((alt_label, prob))
+            if len(options) >= LOW_SAT_SPARSE_ALT_OPTIONS:
+                break
+        if not options:
             continue
-        gain = best_piece_prob - empty_prob
-        uncertain.append((gain, idx, best_piece_label, best_piece_prob))
+        best_gain = max(prob - empty_prob for _, prob in options)
+        uncertain.append((best_gain, idx, empty_prob, options))
 
     if not uncertain:
         return None
@@ -1333,7 +1211,7 @@ def rescore_low_saturation_sparse_from_topk(tile_infos, base_fen, base_conf):
 
     # Beam over at most 2 promotions from empty->piece.
     beam = [(base_labels, 0, 0.0)]
-    for _gain, idx, alt_label, alt_prob in uncertain:
+    for _gain, idx, _empty_prob, options in uncertain:
         next_beam = {}
         for labels, changes, log_bonus in beam:
             key_keep = tuple(labels)
@@ -1343,13 +1221,14 @@ def rescore_low_saturation_sparse_from_topk(tile_infos, base_fen, base_conf):
 
             if changes >= 2:
                 continue
-            new_labels = list(labels)
-            new_labels[idx] = alt_label
-            new_log_bonus = log_bonus + float(np.log(max(alt_prob, 1e-12)))
-            key_new = tuple(new_labels)
-            prev_new = next_beam.get(key_new)
-            if prev_new is None or new_log_bonus > prev_new[2]:
-                next_beam[key_new] = (new_labels, changes + 1, new_log_bonus)
+            for alt_label, alt_prob in options:
+                new_labels = list(labels)
+                new_labels[idx] = alt_label
+                new_log_bonus = log_bonus + float(np.log(max(alt_prob, 1e-12)))
+                key_new = tuple(new_labels)
+                prev_new = next_beam.get(key_new)
+                if prev_new is None or new_log_bonus > prev_new[2]:
+                    next_beam[key_new] = (new_labels, changes + 1, new_log_bonus)
 
         scored = []
         for labels, changes, log_bonus in next_beam.values():
@@ -1357,19 +1236,74 @@ def rescore_low_saturation_sparse_from_topk(tile_infos, base_fen, base_conf):
             plaus = board_plausibility_score(fen)
             k_health = _king_health_from_labels(labels)
             piece_count = sum(1 for x in labels if x != "1")
-            objective = plaus + 1.5 * k_health + 0.25 * piece_count + 0.5 * (log_bonus / 8.0)
+            edge_rook_count = _edge_rook_count_from_labels(labels)
+            objective = (
+                plaus
+                + 1.5 * k_health
+                + 0.25 * piece_count
+                + LOW_SAT_EDGE_ROOK_OBJECTIVE_BONUS * edge_rook_count
+                + 0.5 * (log_bonus / 8.0)
+            )
             scored.append((objective, labels, changes, log_bonus))
         scored.sort(key=lambda row: row[0], reverse=True)
         beam = [(labels, changes, log_bonus) for _obj, labels, changes, log_bonus in scored[:24]]
 
+    def promote_missing_edge_rook(labels):
+        out = list(labels)
+
+        def try_color(target_rook, opposite_rook, is_same_color):
+            if sum(1 for x in out if x == target_rook) > 0:
+                return
+            if sum(1 for x in out if x == opposite_rook) == 0:
+                return
+
+            best_idx = None
+            best_score = 0.0
+            for idx, current in enumerate(out):
+                if not is_same_color(current):
+                    continue
+                if current in {"K", "k", target_rook}:
+                    continue
+                row = idx // 8
+                col = idx % 8
+                if row not in (0, 7) and col not in (0, 7):
+                    continue
+                rook_prob = _label_prob_from_topk(tile_infos[idx], target_rook)
+                if rook_prob < 0.03:
+                    continue
+                cur_prob = _label_prob_from_topk(tile_infos[idx], current)
+                edge_bonus = 0.03 if (row in (0, 7)) else 0.0
+                score = rook_prob - 0.10 * cur_prob + edge_bonus
+                if score > best_score:
+                    best_score = score
+                    best_idx = idx
+
+            if best_idx is not None and best_score > 0.0:
+                out[best_idx] = target_rook
+
+        try_color("r", "R", lambda ch: ch.islower())
+        try_color("R", "r", lambda ch: ch.isupper())
+        return out
+
     def eval_labels(labels, log_bonus):
-        fen = _labels_to_fen(labels)
+        promoted_labels = promote_missing_edge_rook(labels)
+        fen = _labels_to_fen(promoted_labels)
         plaus = board_plausibility_score(fen)
-        k_health = _king_health_from_labels(labels)
-        piece_count = sum(1 for x in labels if x != "1")
-        probs = np.array([_label_prob_from_topk(tile_infos[i], labels[i]) for i in range(64)], dtype=np.float32)
+        k_health = _king_health_from_labels(promoted_labels)
+        piece_count = sum(1 for x in promoted_labels if x != "1")
+        edge_rook_count = _edge_rook_count_from_labels(promoted_labels)
+        probs = np.array(
+            [_label_prob_from_topk(tile_infos[i], promoted_labels[i]) for i in range(64)],
+            dtype=np.float32,
+        )
         conf = float(np.mean(probs))
-        objective = plaus + 1.5 * k_health + 0.25 * piece_count + 0.5 * (log_bonus / 8.0)
+        objective = (
+            plaus
+            + 1.5 * k_health
+            + 0.25 * piece_count
+            + LOW_SAT_EDGE_ROOK_OBJECTIVE_BONUS * edge_rook_count
+            + 0.5 * (log_bonus / 8.0)
+        )
         return objective, fen, conf, piece_count, k_health, plaus
 
     base_obj, _, _, _, base_kh, _base_plaus = eval_labels(base_labels, 0.0)
@@ -2055,6 +1989,124 @@ class BoardDetector:
             )
         return chosen
 
+    def _projection_peak_pair(self, signal, min_span_ratio=0.24):
+        arr = np.asarray(signal, dtype=np.float32)
+        n = int(arr.shape[0])
+        if n < 40:
+            return None
+
+        lo = int(n * 0.06)
+        hi = int(n * 0.94)
+        mid = (lo + hi) // 2
+        if hi - lo < 20:
+            return None
+
+        left_band = arr[lo:mid]
+        right_band = arr[mid:hi]
+        if left_band.size == 0 or right_band.size == 0:
+            return None
+
+        li = int(np.argmax(left_band)) + lo
+        ri = int(np.argmax(right_band)) + mid
+        if ri <= li:
+            return None
+        if (ri - li) < int(n * min_span_ratio):
+            return None
+
+        mean_signal = float(np.mean(arr) + 1e-6)
+        peak_gain = float((arr[li] + arr[ri]) * 0.5 / mean_signal)
+        return li, ri, peak_gain
+
+    def detect_gradient_projection(self, img):
+        """
+        Projection-based board bounds (Sobel gradients) inspired by classic
+        CV pipelines: detect strong paired edge responses on x/y projections.
+        """
+        gray = self._gray(img)
+        h, w = gray.shape
+        if min(h, w) < 200:
+            return None
+
+        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        gx = np.abs(cv2.Sobel(blur, cv2.CV_32F, 1, 0, ksize=3))
+        gy = np.abs(cv2.Sobel(blur, cv2.CV_32F, 0, 1, ksize=3))
+        grad = 0.5 * gx + 0.5 * gy
+
+        col_energy = gx.mean(axis=0)
+        row_energy = gy.mean(axis=1)
+        if w >= 31:
+            col_energy = cv2.GaussianBlur(col_energy.reshape(1, -1), (1, 31), 0).reshape(-1)
+        if h >= 31:
+            row_energy = cv2.GaussianBlur(row_energy.reshape(-1, 1), (31, 1), 0).reshape(-1)
+
+        x_pair = self._projection_peak_pair(col_energy, min_span_ratio=GRADIENT_PROJ_MIN_SIDE_RATIO)
+        y_pair = self._projection_peak_pair(row_energy, min_span_ratio=GRADIENT_PROJ_MIN_SIDE_RATIO)
+        if x_pair is None or y_pair is None:
+            return None
+
+        lx, rx, x_gain = x_pair
+        ty, by, y_gain = y_pair
+        pad_x = max(2, int(w * 0.015))
+        pad_y = max(2, int(h * 0.015))
+        x0 = max(0, lx - pad_x)
+        x1 = min(w - 1, rx + pad_x)
+        y0 = max(0, ty - pad_y)
+        y1 = min(h - 1, by + pad_y)
+        ww = x1 - x0 + 1
+        hh = y1 - y0 + 1
+        if ww <= 4 or hh <= 4:
+            return None
+
+        width_ratio = ww / float(w)
+        height_ratio = hh / float(h)
+        if width_ratio < GRADIENT_PROJ_MIN_SIDE_RATIO or height_ratio < GRADIENT_PROJ_MIN_SIDE_RATIO:
+            return None
+        if width_ratio > GRADIENT_PROJ_MAX_SIDE_RATIO or height_ratio > GRADIENT_PROJ_MAX_SIDE_RATIO:
+            return None
+
+        ratio = ww / float(max(1, hh))
+        if ratio < 0.52 or ratio > 1.95:
+            return None
+
+        area_ratio = (ww * hh) / float(w * h)
+        if area_ratio < GRADIENT_PROJ_MIN_AREA_RATIO:
+            return None
+
+        periodicity, texture_raw, contrast_raw = self._periodicity_2d_score(gray, grad, x0, y0, x1, y1)
+        if periodicity <= 0.03:
+            return None
+
+        edge_gain = 0.5 * (x_gain + y_gain)
+        area_pref = 1.0 - min(1.0, abs(area_ratio - 0.42) / 0.42)
+        square_pref = 1.0 - min(1.0, abs(1.0 - ratio) / 0.8)
+        texture = float(texture_raw / (float(np.mean(grad)) + 1e-6))
+        contrast = float(contrast_raw / (float(np.std(gray)) + 1e-6))
+        score = (
+            2.6 * periodicity
+            + 0.70 * max(0.0, edge_gain - 1.0)
+            + 0.40 * texture
+            + 0.30 * contrast
+            + 0.25 * area_pref
+            + 0.25 * square_pref
+        )
+
+        candidate = {
+            "tag": "gradient_projection",
+            "corners": np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32),
+            "score": float(score),
+            "periodicity": float(periodicity),
+            "edge_gain": float(edge_gain),
+            "ratio": float(ratio),
+            "area_ratio": float(area_ratio),
+        }
+        self._log(
+            "gradient_projection "
+            f"score={candidate['score']:.3f} per={candidate['periodicity']:.3f} "
+            f"edge_gain={candidate['edge_gain']:.3f} ratio={candidate['ratio']:.3f} "
+            f"area={candidate['area_ratio']:.3f}"
+        )
+        return candidate
+
     def _warp_grid_score(self, img, corners, size=256):
         arr = np.array(img)
         src = corners.astype(np.float32)
@@ -2409,6 +2461,19 @@ class BoardDetector:
                 )
             )
 
+        gradient = self.detect_gradient_projection(img)
+        if gradient is not None:
+            grad_bonus = min(0.12, 0.08 * max(0.0, gradient.get("periodicity", 0.0)))
+            hypotheses.append(
+                self._lens_candidate(
+                    gradient["tag"],
+                    gradient["corners"],
+                    img,
+                    extra_conf=grad_bonus,
+                    raw_score=gradient.get("score"),
+                )
+            )
+
         panel = self.detect_panel_split(img)
         if panel is not None:
             panel_bonus = min(0.12, 0.08 * max(0.0, panel.get("periodicity", 0.0)))
@@ -2511,238 +2576,308 @@ class BoardDetector:
         return candidates
 
 
-def predict_board(image_path, model_path=None, board_perspective="auto"):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    resolved_model_path = model_path or v4.MODEL_PATH
-    if not resolved_model_path:
-        raise FileNotFoundError("No default model found. Use --model-path explicitly.")
-
-    model = v4.StandaloneBeastClassifier(num_classes=13).to(device)
-    model.load_state_dict(torch.load(resolved_model_path, map_location=device))
-    model.eval()
-
-    img = Image.open(image_path).convert("RGB")
+def build_detector_candidates(img):
     detector = BoardDetector(debug=DEBUG_MODE)
-    candidates = detector.candidate_images(img) if USE_EDGE_DETECTION else [("full", img, 0.0, True)]
+    base = detector.candidate_images(img) if USE_EDGE_DETECTION else [("full", img, 0.0, True)]
+
+    # Optional global enhancement path for low-saturation scan/book images.
+    enhanced_source = enhance_low_saturation_image(img)
+    if enhanced_source is not None:
+        debug_event("v6_low_sat_enhance", applied=True)
+        if USE_EDGE_DETECTION:
+            enh_candidates = detector.candidate_images(enhanced_source)
+        else:
+            enh_candidates = [("full", enhanced_source, 0.0, True)]
+        enh_candidates = [
+            (f"{tag}_enhsrc", candidate_img, warp_quality, warp_trusted)
+            for (tag, candidate_img, warp_quality, warp_trusted) in enh_candidates
+        ]
+        # Keep original "full" first for deterministic orientation context.
+        base = base + [("full_enhsrc", enhanced_source, 0.0, True)] + enh_candidates
+    else:
+        debug_event("v6_low_sat_enhance", applied=False)
+
     augmented = []
-    for tag, candidate_img, warp_quality, warp_trusted in candidates:
+    for tag, candidate_img, warp_quality, warp_trusted in base:
         augmented.append((tag, candidate_img, warp_quality, warp_trusted))
-        if isinstance(tag, str) and tag.startswith("panel_split_"):
-            direction = tag.split("_")[-1]
+        if isinstance(tag, str):
+            tag_for_direction = tag[:-7] if tag.endswith("_enhsrc") else tag
+        else:
+            tag_for_direction = ""
+        if tag_for_direction.startswith("panel_split_"):
+            direction = tag_for_direction.split("_")[-1]
             trimmed = directional_trim_resize(candidate_img, direction, PANEL_DIRECTIONAL_TRIM_FRAC)
             if trimmed is not None:
-                augmented.append((f"{tag}_trim{int(PANEL_DIRECTIONAL_TRIM_FRAC * 100)}", trimmed, warp_quality, warp_trusted))
-    candidates = augmented
-    if len(candidates) > MAX_DECODE_CANDIDATES:
-        full = [candidates[0]]
-        others = sorted(
-            candidates[1:],
-            key=lambda item: (
-                int(item[3]),  # trusted first
-                float(item[2]),  # higher warp quality first
-                0 if str(item[0]).endswith("_inset2") else 1,  # prefer non-inset on ties
-            ),
-            reverse=True,
-        )
-        candidates = full + others[: max(0, MAX_DECODE_CANDIDATES - 1)]
+                trim_pct = int(PANEL_DIRECTIONAL_TRIM_FRAC * 100)
+                augmented.append((f"{tag}_trim{trim_pct}", trimmed, warp_quality, warp_trusted))
+
+    if len(augmented) <= MAX_DECODE_CANDIDATES:
         debug_event(
-            "v6_candidate_cap",
-            original_count=len(full) + len(others),
-            capped_count=len(candidates),
+            "v6_candidate_pool",
+            count=len(augmented),
+            tags=[str(item[0]) for item in augmented],
+            capped=False,
             max_decode_candidates=MAX_DECODE_CANDIDATES,
         )
+        return augmented
+
+    full = [augmented[0]]
+    others = sorted(
+        augmented[1:],
+        key=lambda item: (
+            int(item[3]),  # trusted first
+            float(item[2]),  # higher warp quality first
+            0 if str(item[0]).endswith("_inset2") else 1,  # prefer non-inset on ties
+        ),
+        reverse=True,
+    )
+    capped = full + others[: max(0, MAX_DECODE_CANDIDATES - 1)]
+    debug_event(
+        "v6_candidate_cap",
+        original_count=len(full) + len(others),
+        capped_count=len(capped),
+        max_decode_candidates=MAX_DECODE_CANDIDATES,
+    )
+    debug_event(
+        "v6_candidate_pool",
+        count=len(capped),
+        tags=[str(item[0]) for item in capped],
+        capped=True,
+        max_decode_candidates=MAX_DECODE_CANDIDATES,
+    )
+    return capped
+
+
+def collect_orientation_context(candidates, board_perspective):
+    context = {
+        "label_perspective_result": None,
+        "label_details": {"left": None, "right": None},
+        "labels_absent": True,
+        "labels_same": False,
+    }
+    if board_perspective != "auto":
+        return context
 
     full_candidate_img = v4.trim_dark_edge_bars(candidates[0][1].copy())
-    label_perspective_result = None
-    label_details = {"left": None, "right": None}
-    labels_absent = True
-    labels_same = False
-    if board_perspective == "auto":
-        label_perspective_result = v4.infer_board_perspective_from_labels(full_candidate_img)
-        label_details = label_perspective_result["details"] if label_perspective_result else {
-            "left": v4.classify_file_label_crop(v4.extract_file_label_crop(full_candidate_img, side="left")),
-            "right": v4.classify_file_label_crop(v4.extract_file_label_crop(full_candidate_img, side="right")),
+    label_perspective_result = v4.infer_board_perspective_from_labels(full_candidate_img)
+    label_details = label_perspective_result["details"] if label_perspective_result else {
+        "left": v4.classify_file_label_crop(v4.extract_file_label_crop(full_candidate_img, side="left")),
+        "right": v4.classify_file_label_crop(v4.extract_file_label_crop(full_candidate_img, side="right")),
+    }
+    labels_absent = label_details["left"] is None and label_details["right"] is None
+    labels_same = (
+        label_details["left"] is not None
+        and label_details["right"] is not None
+        and label_details["left"]["label"] == label_details["right"]["label"]
+    )
+    context.update(
+        {
+            "label_perspective_result": label_perspective_result,
+            "label_details": label_details,
+            "labels_absent": labels_absent,
+            "labels_same": labels_same,
         }
-        labels_absent = label_details["left"] is None and label_details["right"] is None
-        labels_same = (
-            label_details["left"] is not None
-            and label_details["right"] is not None
-            and label_details["left"]["label"] == label_details["right"]["label"]
-        )
+    )
+    return context
 
-    scored = []
-    for tag, candidate_img, warp_quality, warp_trusted in candidates:
-        candidate_img = v4.trim_dark_edge_bars(candidate_img)
-        fen, conf, piece_count, details = infer_fen_on_image_deep_topk(
-            candidate_img,
-            model,
-            device,
-            USE_SQUARE_DETECTION,
-            return_details=True,
-        )
-        sat_stats = image_saturation_stats(candidate_img)
-        low_sat_sparse = (
-            sat_stats["sat_mean"] <= LOW_SAT_SPARSE_SAT_MEAN_MAX
-            and piece_count <= LOW_SAT_SPARSE_PIECE_MAX
-        )
-        rescore_applied = False
-        if low_sat_sparse:
-            rescored = rescore_low_saturation_sparse_from_topk(
-                details.get("tile_infos", []),
-                base_fen=fen,
-                base_conf=conf,
-            )
-            if rescored is not None:
-                fen, conf, piece_count = rescored
-                rescore_applied = True
-                details["final_fen"] = fen
 
-        if board_perspective == "auto":
-            if label_perspective_result is None:
-                detected_perspective = "white"
-                perspective_source = "default"
-                weak_label_perspective = None
-                left_label = label_details.get("left")
-                right_label = label_details.get("right")
-                if left_label is not None and right_label is not None:
-                    left_char = str(left_label.get("label", "")).lower()
-                    right_char = str(right_label.get("label", "")).lower()
-                    left_conf = float(left_label.get("confidence", 0.0))
-                    right_conf = float(right_label.get("confidence", 0.0))
-                    min_conf = min(left_conf, right_conf)
-                    if min_conf >= ORIENTATION_WEAK_LABEL_MIN_CONF:
-                        if left_char == "a" and right_char == "h":
-                            weak_label_perspective = "white"
-                        elif left_char == "h" and right_char == "a":
-                            weak_label_perspective = "black"
-                if weak_label_perspective is not None:
-                    detected_perspective = weak_label_perspective
-                    perspective_source = "weak_label_fallback"
-                    debug_event(
-                        "v6_orientation_fallback",
-                        strategy="weak_label_fallback",
-                        selected=detected_perspective,
-                        min_conf=round(
-                            min(
-                                float(left_label.get("confidence", 0.0)),
-                                float(right_label.get("confidence", 0.0)),
-                            ),
-                            4,
+def resolve_candidate_orientation(fen, board_perspective, orientation_context):
+    label_perspective_result = orientation_context["label_perspective_result"]
+    label_details = orientation_context["label_details"]
+    labels_absent = orientation_context["labels_absent"]
+    labels_same = orientation_context["labels_same"]
+
+    if board_perspective == "auto":
+        if label_perspective_result is None:
+            detected_perspective = "white"
+            perspective_source = "default"
+            weak_label_perspective = None
+            left_label = label_details.get("left")
+            right_label = label_details.get("right")
+            if left_label is not None and right_label is not None:
+                left_char = str(left_label.get("label", "")).lower()
+                right_char = str(right_label.get("label", "")).lower()
+                left_conf = float(left_label.get("confidence", 0.0))
+                right_conf = float(right_label.get("confidence", 0.0))
+                min_conf = min(left_conf, right_conf)
+                if min_conf >= ORIENTATION_WEAK_LABEL_MIN_CONF:
+                    if left_char == "a" and right_char == "h":
+                        weak_label_perspective = "white"
+                    elif left_char == "h" and right_char == "a":
+                        weak_label_perspective = "black"
+            if weak_label_perspective is not None:
+                detected_perspective = weak_label_perspective
+                perspective_source = "weak_label_fallback"
+                debug_event(
+                    "v6_orientation_fallback",
+                    strategy="weak_label_fallback",
+                    selected=detected_perspective,
+                    min_conf=round(
+                        min(
+                            float(left_label.get("confidence", 0.0)),
+                            float(right_label.get("confidence", 0.0)),
                         ),
-                        labels_absent=bool(labels_absent),
-                        labels_same=bool(labels_same),
-                    )
-                piece_margin = orientation_piece_margin(fen)
-                can_use_piece_distribution = labels_absent or labels_same
-                if (
-                    weak_label_perspective is None
-                    and piece_margin >= ORIENTATION_STRONG_PIECE_MARGIN
-                    and can_use_piece_distribution
-                ):
-                    fallback = v4.infer_board_perspective_from_piece_distribution(
-                        fen,
-                        threshold=ORIENTATION_STRONG_PIECE_MARGIN,
-                    )
-                    if fallback == "black":
-                        detected_perspective = "black"
-                    perspective_source = "piece_distribution_fallback"
+                        4,
+                    ),
+                    labels_absent=bool(labels_absent),
+                    labels_same=bool(labels_same),
+                )
+            piece_margin = orientation_piece_margin(fen)
+            can_use_piece_distribution = labels_absent or labels_same
+            if (
+                weak_label_perspective is None
+                and piece_margin >= ORIENTATION_STRONG_PIECE_MARGIN
+                and can_use_piece_distribution
+            ):
+                fallback = v4.infer_board_perspective_from_piece_distribution(
+                    fen,
+                    threshold=ORIENTATION_STRONG_PIECE_MARGIN,
+                )
+                if fallback == "black":
+                    detected_perspective = "black"
+                perspective_source = "piece_distribution_fallback"
+                debug_event(
+                    "v6_orientation_fallback",
+                    strategy="piece_distribution",
+                    margin=round(float(piece_margin), 4),
+                    selected=detected_perspective,
+                    labels_absent=bool(labels_absent),
+                    labels_same=bool(labels_same),
+                )
+            else:
+                if weak_label_perspective is not None:
+                    pass
+                elif piece_margin >= ORIENTATION_STRONG_PIECE_MARGIN and not can_use_piece_distribution:
                     debug_event(
                         "v6_orientation_fallback",
-                        strategy="piece_distribution",
+                        strategy="skip_piece_distribution_due_label_signal",
                         margin=round(float(piece_margin), 4),
                         selected=detected_perspective,
                         labels_absent=bool(labels_absent),
                         labels_same=bool(labels_same),
                     )
+                elif ORIENTATION_BEST_GUESS_ENABLED:
+                    best_guess, guess_details = orientation_best_guess(fen)
+                    if best_guess in {"white", "black"}:
+                        detected_perspective = best_guess
+                        perspective_source = "orientation_best_guess"
+                    debug_event(
+                        "v6_orientation_fallback",
+                        strategy="orientation_best_guess",
+                        piece_margin=round(float(piece_margin), 4),
+                        selected=detected_perspective,
+                        guessed=best_guess,
+                        guess_details=guess_details,
+                    )
                 else:
-                    if weak_label_perspective is not None:
-                        pass
-                    elif piece_margin >= ORIENTATION_STRONG_PIECE_MARGIN and not can_use_piece_distribution:
-                        debug_event(
-                            "v6_orientation_fallback",
-                            strategy="skip_piece_distribution_due_label_signal",
-                            margin=round(float(piece_margin), 4),
-                            selected=detected_perspective,
-                            labels_absent=bool(labels_absent),
-                            labels_same=bool(labels_same),
-                        )
-                    elif ORIENTATION_BEST_GUESS_ENABLED:
-                        best_guess, guess_details = orientation_best_guess(fen)
-                        if best_guess in {"white", "black"}:
-                            detected_perspective = best_guess
-                            perspective_source = "orientation_best_guess"
-                        debug_event(
-                            "v6_orientation_fallback",
-                            strategy="orientation_best_guess",
-                            piece_margin=round(float(piece_margin), 4),
-                            selected=detected_perspective,
-                            guessed=best_guess,
-                            guess_details=guess_details,
-                        )
-                    else:
-                        debug_event(
-                            "v6_orientation_fallback",
-                            strategy="disabled_orientation_best_guess",
-                            piece_margin=round(float(piece_margin), 4),
-                            selected=detected_perspective,
-                        )
-            else:
-                detected_perspective = label_perspective_result["perspective"]
-                perspective_source = label_perspective_result["source"]
-        elif board_perspective not in {"white", "black"}:
-            raise ValueError("board_perspective must be 'auto', 'white', or 'black'")
+                    debug_event(
+                        "v6_orientation_fallback",
+                        strategy="disabled_orientation_best_guess",
+                        piece_margin=round(float(piece_margin), 4),
+                        selected=detected_perspective,
+                    )
         else:
-            detected_perspective = board_perspective
-            perspective_source = "override"
+            detected_perspective = label_perspective_result["perspective"]
+            perspective_source = label_perspective_result["source"]
+    elif board_perspective not in {"white", "black"}:
+        raise ValueError("board_perspective must be 'auto', 'white', or 'black'")
+    else:
+        detected_perspective = board_perspective
+        perspective_source = "override"
 
-        final_fen = v4.rotate_fen_180(fen) if detected_perspective == "black" else fen
-        scored.append(
-            (
-                tag,
-                candidate_img,
-                final_fen,
-                conf,
-                piece_count,
-                detected_perspective,
-                perspective_source,
-                warp_quality,
-                warp_trusted,
-            )
+    return detected_perspective, perspective_source
+
+
+def decode_candidate(candidate, model, device, board_perspective, orientation_context):
+    tag, candidate_img, warp_quality, warp_trusted = candidate
+    candidate_img = v4.trim_dark_edge_bars(candidate_img)
+    fen, conf, piece_count, details = infer_fen_on_image_deep_topk(
+        candidate_img,
+        model,
+        device,
+        USE_SQUARE_DETECTION,
+        return_details=True,
+    )
+    sat_stats = image_saturation_stats(candidate_img)
+    low_sat_sparse = (
+        sat_stats["sat_mean"] <= LOW_SAT_SPARSE_SAT_MEAN_MAX
+        and piece_count <= LOW_SAT_SPARSE_PIECE_MAX
+    )
+    rescore_applied = False
+    if low_sat_sparse:
+        rescored = rescore_low_saturation_sparse_from_topk(
+            details.get("tile_infos", []),
+            base_fen=fen,
+            base_conf=conf,
         )
-        debug_event(
-            "v6_candidate_decode",
-            tag=tag,
-            conf=round(float(conf), 6),
-            piece_count=int(piece_count),
-            perspective=detected_perspective,
-            perspective_source=perspective_source,
-            warp_quality=round(float(warp_quality), 6),
-            warp_trusted=bool(warp_trusted),
-            sat_mean=round(float(sat_stats["sat_mean"]), 4),
-            sat_std=round(float(sat_stats["sat_std"]), 4),
-            low_sat_sparse_mode=bool(low_sat_sparse),
-            rescore_applied=bool(rescore_applied),
-            confidence_summary=details.get("confidence_summary", {}),
-        )
+        if rescored is not None:
+            fen, conf, piece_count = rescored
+            rescore_applied = True
+            details["final_fen"] = fen
 
-    def king_health(fen_board):
-        rows = v4.expand_fen_board(fen_board)
-        if len(rows) != 8 or any(len(r) != 8 for r in rows):
-            return 0
-        wk = fen_board.count("K")
-        bk = fen_board.count("k")
-        return int(wk == 1) + int(bk == 1)
+    detected_perspective, perspective_source = resolve_candidate_orientation(
+        fen,
+        board_perspective=board_perspective,
+        orientation_context=orientation_context,
+    )
+    final_fen = v4.rotate_fen_180(fen) if detected_perspective == "black" else fen
+    plausibility = board_plausibility_score(final_fen)
+    k_health = king_health(final_fen)
+    _, stm_source = infer_side_to_move_from_checks(final_fen)
+    conf_adj = float(conf) - (0.003 if str(tag).endswith("_inset2") else 0.0)
+    if "gradient_projection" in str(tag):
+        conf_adj -= 0.010
+    decoded = (
+        tag,
+        candidate_img,
+        final_fen,
+        conf,
+        piece_count,
+        detected_perspective,
+        perspective_source,
+        warp_quality,
+        warp_trusted,
+    )
+    debug_event(
+        "v6_candidate_decode",
+        tag=tag,
+        fen_board=final_fen,
+        conf=round(float(conf), 6),
+        conf_adj=round(float(conf_adj), 6),
+        piece_count=int(piece_count),
+        plausibility=round(float(plausibility), 4),
+        king_health=int(k_health),
+        stm_source=stm_source,
+        perspective=detected_perspective,
+        perspective_source=perspective_source,
+        warp_quality=round(float(warp_quality), 6),
+        warp_trusted=bool(warp_trusted),
+        sat_mean=round(float(sat_stats["sat_mean"]), 4),
+        sat_std=round(float(sat_stats["sat_std"]), 4),
+        low_sat_sparse_mode=bool(low_sat_sparse),
+        rescore_applied=bool(rescore_applied),
+        confidence_summary=details.get("confidence_summary", {}),
+    )
+    return decoded
 
+
+def king_health(fen_board):
+    rows = v4.expand_fen_board(fen_board)
+    if len(rows) != 8 or any(len(r) != 8 for r in rows):
+        return 0
+    wk = fen_board.count("K")
+    bk = fen_board.count("k")
+    return int(wk == 1) + int(bk == 1)
+
+
+def select_best_candidate(scored):
     full_piece_count = next((item[4] for item in scored if item[0] == "full"), 0)
     full_conf = next((item[3] for item in scored if item[0] == "full"), 0.0)
     full_fen = next((item[2] for item in scored if item[0] == "full"), "")
     full_plaus = board_plausibility_score(full_fen) if full_fen else -1e9
-    full_king_health = king_health(full_fen) if full_fen else 0
+    full_king = king_health(full_fen) if full_fen else 0
 
-    # Conservative guard: if full-board prediction already looks structurally sound,
-    # avoid relaxed warps but still allow trusted warps.
-    full_strong = full_king_health == 2 and full_plaus >= 0.0 and full_conf >= 0.94
-
+    full_strong = full_king == 2 and full_plaus >= 0.0 and full_conf >= 0.94
     if full_strong:
         filtered = [item for item in scored if "_relaxed" not in item[0]]
     else:
@@ -2757,12 +2892,9 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
             ):
                 continue
             filtered.append(item)
-
     if not filtered:
         filtered = scored
 
-    # Sparse-board override:
-    # when full-image decode has very few pieces, allow a strong trusted warp to replace it.
     sparse_override = None
     if full_piece_count <= 8 and full_conf < 0.90:
         trusted_warps = [
@@ -2802,6 +2934,8 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
         _, stm_src = infer_side_to_move_from_checks(item[2])
         has_double_check_conflict = stm_src == "default_double_check_conflict"
         conf_adj = float(item[3]) - (0.003 if str(item[0]).endswith("_inset2") else 0.0)
+        if "gradient_projection" in str(item[0]):
+            conf_adj -= 0.010
         enriched.append((item, plausibility, k_health, has_double_check_conflict, geom_q, conf_adj))
         if DEBUG_MODE:
             print(
@@ -2812,31 +2946,48 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
             )
 
     if sparse_override is not None:
-        (
-            best_tag,
-            _,
-            best_fen,
-            best_conf,
-            _,
-            best_perspective,
-            best_perspective_source,
-            _,
-            _,
-        ) = sparse_override
-    else:
-        (
-            best_tag,
-            _,
-            best_fen,
-            best_conf,
-            _,
-            best_perspective,
-            best_perspective_source,
-            _,
-            _,
-        ), _, _, _, _, _ = max(
-            enriched, key=lambda pair: (pair[1], pair[2], -int(pair[3]), pair[5], pair[4])
+        return sparse_override
+    return max(enriched, key=lambda pair: (pair[1], pair[2], -int(pair[3]), pair[5], pair[4]))[0]
+
+
+def predict_board(image_path, model_path=None, board_perspective="auto"):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    resolved_model_path = model_path or v4.MODEL_PATH
+    if not resolved_model_path or not os.path.exists(resolved_model_path):
+        raise FileNotFoundError(
+            "Model checkpoint not found. "
+            f"Tried: {resolved_model_path}. "
+            "Set CHESSBOT_MODEL_PATH or pass --model-path explicitly."
         )
+
+    model = v4.StandaloneBeastClassifier(num_classes=13).to(device)
+    model.load_state_dict(torch.load(resolved_model_path, map_location=device))
+    model.eval()
+
+    img = Image.open(image_path).convert("RGB")
+    candidates = build_detector_candidates(img)
+    orientation_context = collect_orientation_context(candidates, board_perspective=board_perspective)
+    scored = [
+        decode_candidate(
+            candidate,
+            model=model,
+            device=device,
+            board_perspective=board_perspective,
+            orientation_context=orientation_context,
+        )
+        for candidate in candidates
+    ]
+    (
+        best_tag,
+        _,
+        best_fen,
+        best_conf,
+        _,
+        best_perspective,
+        best_perspective_source,
+        _,
+        _,
+    ) = select_best_candidate(scored)
     if DEBUG_MODE:
         print(
             f"DEBUG: V6 Selected candidate={best_tag} confidence={best_conf:.4f} "

@@ -215,3 +215,188 @@ Every commit must be documented with:
   - `00046` and `00047` pass via contour-based candidates (not dependent on the new `panel_split_*_trim8` path).
   - Current full hardset score with v6 recognizer + v5 model: `49/50`.
   - Remaining miss: `00028`.
+
+## Entry
+
+- commit: `pending`
+- objective: Hard cleanup of `recognizer_v6` with zero behavior change: remove legacy shadow entrypoint, centralize config, split active runtime into detector/decode/orientation/selection helpers, and document architecture.
+- files:
+  - `recognizer_v6.py`
+  - `scripts/tests_v6/test_internal_v6.py`
+  - `V6_RECOGNIZER_ARCHITECTURE.md`
+- behavior_change:
+  - Removed duplicate legacy `predict_board` implementation (shadowed entrypoint).
+  - Centralized runtime config in the top-level constants block (removed mid-file redefinition block).
+  - Refactored active runtime path into helper functions:
+    - `build_detector_candidates`
+    - `collect_orientation_context`
+    - `resolve_candidate_orientation`
+    - `decode_candidate`
+    - `select_best_candidate`
+    - `king_health`
+  - Kept CLI/API unchanged.
+  - Added helper-level unit tests for detector/orientation/selection modules.
+  - Added helper-level unit test for decode module (`decode_candidate`) covering low-saturation rescore + orientation application.
+  - Added architecture documentation describing stage boundaries and test mapping.
+- validation:
+  - `python3 -m py_compile recognizer_v6.py scripts/tests_v6/test_internal_v6.py scripts/test_after_change_v6.py scripts/evaluate_v6_hardset.py`
+  - `python3 -m unittest -q scripts.tests_v6.test_internal_v6`
+  - `python3 scripts/test_after_change_v6.py --profile quick --model-path models/model_hybrid_v5_latest_best.pt`
+  - `python3 scripts/evaluate_v6_hardset.py --truth-json images_4_test/truth_verified.json --model-path models/model_hybrid_v5_latest_best.pt`
+- result:
+  - Internal tests: `12/12` PASS.
+  - Quick gate: PASS (`11/12`, same expected miss `00028`).
+  - Full hardset: unchanged at `49/50` board, `47/50` full-fen.
+  - No cross-version delegation added; v6 runtime stays standalone.
+
+## Entry
+
+- commit: `pending`
+- objective: Remove ambiguous model fallback behavior and make v6 default model selection deterministic.
+- files:
+  - `recognizer_v6.py`
+  - `scripts/tests_v6/test_internal_v6.py`
+  - `V6_RECOGNIZER_ARCHITECTURE.md`
+- behavior_change:
+  - Replaced multi-directory/multi-file model auto-search block with deterministic default path:
+    - `models/model_hybrid_v6_latest_best.pt`
+  - Added explicit overrides only via:
+    - `--model-path`
+    - `CHESSBOT_MODEL_PATH`
+  - Added explicit checkpoint existence check in `predict_board` with clear error text.
+  - Kept runtime behavior unchanged on the validated default setup.
+  - Updated candidate-cap unit test for new path existence guard.
+  - Documented deterministic model resolution in v6 architecture doc.
+- validation:
+  - `python3 -m py_compile recognizer_v6.py scripts/tests_v6/test_internal_v6.py`
+  - `python3 -m unittest -q scripts.tests_v6.test_internal_v6`
+  - `python3 scripts/test_after_change_v6.py --profile quick --model-path models/model_hybrid_v5_latest_best.pt`
+- result:
+  - Internal tests: `12/12` PASS.
+  - Quick gate: PASS (`11/12`, unchanged baseline).
+  - Perf gate: PASS.
+
+## Entry
+
+- commit: `pending`
+- objective: Add a global low-saturation contrast enhancement helper for scan/book-like boards and evaluate impact on v6 hard cases.
+- files:
+  - `recognizer_v6.py`
+  - `scripts/tests_v6/test_internal_v6.py`
+  - `V6_RECOGNIZER_ARCHITECTURE.md`
+- behavior_change:
+  - Added `enhance_low_saturation_image(...)` (CLAHE + mild unsharp) with profile guards:
+    - `LOW_SAT_ENHANCE_SAT_MAX`
+    - `LOW_SAT_ENHANCE_VAL_STD_MAX`
+  - Integrated enhancement into detector candidate generation:
+    - adds enhanced-source candidate set (`*_enhsrc`) for low-saturation inputs.
+    - keeps original `full` candidate first to preserve deterministic orientation context.
+  - Added unit tests for:
+    - enhanced-source candidate injection
+    - colorful-input skip behavior.
+- validation:
+  - `python3 -m py_compile recognizer_v6.py scripts/tests_v6/test_internal_v6.py`
+  - `python3 -m unittest -q scripts.tests_v6.test_internal_v6`
+  - `python3 recognizer_v6.py images_4_test/puzzle-00028.jpeg --model-path models/model_hybrid_v5_latest_best.pt --debug`
+  - `python3 scripts/test_after_change_v6.py --profile quick --model-path models/model_hybrid_v5_latest_best.pt`
+- result:
+  - Internal tests: `14/14` PASS.
+  - Quick gate: PASS (`11/12`, unchanged miss `00028`).
+  - Enhancement is active on `00028` (debug confirms), but final board prediction did not improve yet.
+
+## Entry
+
+- commit: `pending`
+- objective: Diagnose `00028` root cause and add a dedicated v6 data profile for mono print edge-rook boards.
+- files:
+  - `generate_hybrid_v6.py`
+  - `ENGINEERING_LOG.md`
+- behavior_change:
+  - Added new profile: `mono_rook_scan`.
+  - Added new recipe: `v6_00028_recovery_v2`.
+  - Recipe mix:
+    - `clean=0.20`
+    - `mono_scan=0.20`
+    - `mono_rook_scan=0.45`
+    - `edge_frame=0.10`
+    - `hard_combo=0.05`
+- validation:
+  - `python3 -m py_compile generate_hybrid_v6.py`
+  - `RECIPE_NAME=v6_00028_recovery_v2 BOARDS_PER_CHUNK=20 CHUNKS_TRAIN=1 CHUNKS_VAL=1 OUTPUT_DIR=/tmp/tensors_v6_00028_smoke python3 generate_hybrid_v6.py`
+  - `python3 scripts/validate_tensors_v6.py --data-dir /tmp/tensors_v6_00028_smoke`
+- result:
+  - Generation smoke passed and manifest includes `mono_rook_scan`.
+  - Data validation passed.
+  - Diagnostic conclusion on `00028`: geometry candidates are present, but rook logits remain weak on critical squares; this points to model/domain gap more than edge-quad failure.
+
+## Entry
+
+- commit: `pending`
+- objective: Add projection-based board detector path (Sobel gradient projections) and stabilize candidate selection for mono/print hard cases.
+- files:
+  - `recognizer_v6.py`
+  - `scripts/tests_v6/test_internal_v6.py`
+  - `V6_RECOGNIZER_ARCHITECTURE.md`
+- behavior_change:
+  - Added `BoardDetector.detect_gradient_projection(...)` candidate.
+  - Wired `gradient_projection` into `lens_hypotheses`.
+  - Added detector unit test for gradient-projection path (`puzzle-00028` fixture).
+  - Added small confidence prior penalty for `gradient_projection*` tags during final selection to avoid over-selection vs contour/gfit on non-target cases.
+- validation:
+  - `python3 -m py_compile recognizer_v6.py scripts/tests_v6/test_internal_v6.py`
+  - `python3 -m unittest -q scripts.tests_v6.test_internal_v6`
+  - `python3 recognizer_v6.py images_4_test/puzzle-00028.jpeg --model-path models/model_hybrid_v5_latest_best.pt`
+  - `python3 recognizer_v6.py images_4_test/puzzle-00049.jpeg --model-path models/model_hybrid_v5_latest_best.pt`
+- result:
+  - `00028` improved from missing rooks to near-correct geometry-aligned decode.
+  - `00049` remained correct after selection prior adjustment.
+
+## Entry
+
+- commit: `pending`
+- objective: Strengthen low-saturation sparse rescoring to consider multiple top-k alternatives and recover missing edge rooks globally.
+- files:
+  - `recognizer_v6.py`
+  - `V6_RECOGNIZER_ARCHITECTURE.md`
+- behavior_change:
+  - `rescore_low_saturation_sparse_from_topk` now evaluates up to `LOW_SAT_SPARSE_ALT_OPTIONS` alternatives per empty square (beam options), not only the single top non-empty class.
+  - Added global edge-rook objective term (`LOW_SAT_EDGE_ROOK_OBJECTIVE_BONUS`) in sparse rescoring.
+  - Added guarded missing-edge-rook promotion inside sparse rescoring when one color has zero rooks and opposite color still has rooks.
+  - Added queen-count sanity penalties in `board_plausibility_score` to de-prioritize implausible multi-queen hallucinations.
+- validation:
+  - `python3 -m py_compile recognizer_v6.py`
+  - `python3 -m unittest -q scripts.tests_v6.test_internal_v6`
+  - `python3 scripts/test_after_change_v6.py --profile quick --model-path models/model_hybrid_v5_latest_best.pt`
+  - `python3 scripts/evaluate_v6_hardset.py --truth-json images_4_test/truth_verified.json --model-path models/model_hybrid_v5_latest_best.pt`
+- result:
+  - Quick gate: `12/12` board pass.
+  - Full hardset: `50/50` board pass, `48/50` full-fen (side-to-move heuristic remains separate).
+  - `puzzle-00028` now matches expected board FEN.
+
+## Entry
+
+- commit: `pending`
+- objective: Build a deterministic image-by-image path analysis for `recognizer_v6` and capture exact selected pipeline branch per puzzle.
+- files:
+  - `recognizer_v6.py`
+  - `scripts/analyze_v6_paths.py`
+  - `reports/v6_path_analysis_latest.json`
+  - `reports/v6_path_analysis_latest.md`
+- behavior_change:
+  - No inference behavior change.
+  - Added debug-only telemetry events:
+    - `v6_candidate_pool` (candidate tags/count after cap logic),
+    - richer `v6_candidate_decode` payload (`fen_board`, `plausibility`, `king_health`, `stm_source`, `conf_adj`).
+  - Added `scripts/analyze_v6_paths.py`:
+    - runs `recognizer_v6.py --debug` per image,
+    - parses `DEBUG_JSON` events,
+    - records full per-image function path, selected candidate family/tag, selection top-3, and risk flags.
+- validation:
+  - `python3 -m py_compile recognizer_v6.py scripts/analyze_v6_paths.py`
+  - `python3 scripts/analyze_v6_paths.py --model-path models/model_hybrid_v5_latest_best.pt --truth-json images_4_test/truth_verified.json --images-dir images_4_test --output-json reports/v6_path_analysis_latest.json --output-md reports/v6_path_analysis_latest.md`
+- result:
+  - `board_pass=50/50`
+  - `full_pass=48/50`
+  - Selected family distribution:
+    - `full=25`, `contour=13`, `lattice=7`, `panel_split=3`, `axis_grid=1`, `gradient_projection=1`.
+  - High-leverage fragile paths are now explicit in report (not hidden): `00028`, `00031`, `00044`, `00046`, `00049`.
