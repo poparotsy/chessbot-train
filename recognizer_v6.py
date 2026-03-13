@@ -61,6 +61,10 @@ ORIENTATION_STRONG_PIECE_MARGIN = 2.0
 ORIENTATION_BEST_GUESS_MIN_MARGIN = 0.6
 ORIENTATION_BEST_GUESS_MIN_PIECES = 10
 ORIENTATION_BEST_GUESS_MIN_PAWNS_PER_COLOR = 1
+# Keep disabled by default: this heuristic is useful for diagnostics but can
+# flip otherwise-correct auto orientation on real social screenshots.
+ORIENTATION_BEST_GUESS_ENABLED = False
+ORIENTATION_WEAK_LABEL_MIN_CONF = 0.70
 
 
 class StandaloneBeastClassifier(nn.Module):
@@ -1025,6 +1029,7 @@ MAX_DECODE_CANDIDATES = 12
 LOW_SAT_SPARSE_SAT_MEAN_MAX = 44.0
 LOW_SAT_SPARSE_PIECE_MAX = 10
 LOW_SAT_SPARSE_EMPTY_ALT_MIN = 0.015
+PANEL_DIRECTIONAL_TRIM_FRAC = 0.08
 
 
 def debug_event(kind, **fields):
@@ -1216,6 +1221,35 @@ def image_saturation_stats(img):
         "val_mean": float(np.mean(val)),
         "val_std": float(np.std(val)),
     }
+
+
+def directional_trim_resize(img, direction, frac):
+    if img is None:
+        return None
+    w, h = img.size
+    if w <= 2 or h <= 2:
+        return None
+    frac = float(max(0.0, min(0.2, frac)))
+    if frac <= 0.0:
+        return img.copy()
+
+    trim_x = int(round(w * frac))
+    trim_y = int(round(h * frac))
+    x0, y0, x1, y1 = 0, 0, w, h
+    if direction == "top":
+        y0 = min(h - 2, trim_y)
+    elif direction == "bottom":
+        y1 = max(2, h - trim_y)
+    elif direction == "left":
+        x0 = min(w - 2, trim_x)
+    elif direction == "right":
+        x1 = max(2, w - trim_x)
+    else:
+        return None
+
+    if x1 - x0 < 2 or y1 - y0 < 2:
+        return None
+    return img.crop((x0, y0, x1, y1)).resize((w, h), Image.LANCZOS)
 
 
 def tile_confidence_summary(tile_infos):
@@ -2490,6 +2524,15 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
     img = Image.open(image_path).convert("RGB")
     detector = BoardDetector(debug=DEBUG_MODE)
     candidates = detector.candidate_images(img) if USE_EDGE_DETECTION else [("full", img, 0.0, True)]
+    augmented = []
+    for tag, candidate_img, warp_quality, warp_trusted in candidates:
+        augmented.append((tag, candidate_img, warp_quality, warp_trusted))
+        if isinstance(tag, str) and tag.startswith("panel_split_"):
+            direction = tag.split("_")[-1]
+            trimmed = directional_trim_resize(candidate_img, direction, PANEL_DIRECTIONAL_TRIM_FRAC)
+            if trimmed is not None:
+                augmented.append((f"{tag}_trim{int(PANEL_DIRECTIONAL_TRIM_FRAC * 100)}", trimmed, warp_quality, warp_trusted))
+    candidates = augmented
     if len(candidates) > MAX_DECODE_CANDIDATES:
         full = [candidates[0]]
         others = sorted(
@@ -2558,8 +2601,44 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
             if label_perspective_result is None:
                 detected_perspective = "white"
                 perspective_source = "default"
+                weak_label_perspective = None
+                left_label = label_details.get("left")
+                right_label = label_details.get("right")
+                if left_label is not None and right_label is not None:
+                    left_char = str(left_label.get("label", "")).lower()
+                    right_char = str(right_label.get("label", "")).lower()
+                    left_conf = float(left_label.get("confidence", 0.0))
+                    right_conf = float(right_label.get("confidence", 0.0))
+                    min_conf = min(left_conf, right_conf)
+                    if min_conf >= ORIENTATION_WEAK_LABEL_MIN_CONF:
+                        if left_char == "a" and right_char == "h":
+                            weak_label_perspective = "white"
+                        elif left_char == "h" and right_char == "a":
+                            weak_label_perspective = "black"
+                if weak_label_perspective is not None:
+                    detected_perspective = weak_label_perspective
+                    perspective_source = "weak_label_fallback"
+                    debug_event(
+                        "v6_orientation_fallback",
+                        strategy="weak_label_fallback",
+                        selected=detected_perspective,
+                        min_conf=round(
+                            min(
+                                float(left_label.get("confidence", 0.0)),
+                                float(right_label.get("confidence", 0.0)),
+                            ),
+                            4,
+                        ),
+                        labels_absent=bool(labels_absent),
+                        labels_same=bool(labels_same),
+                    )
                 piece_margin = orientation_piece_margin(fen)
-                if piece_margin >= ORIENTATION_STRONG_PIECE_MARGIN:
+                can_use_piece_distribution = labels_absent or labels_same
+                if (
+                    weak_label_perspective is None
+                    and piece_margin >= ORIENTATION_STRONG_PIECE_MARGIN
+                    and can_use_piece_distribution
+                ):
                     fallback = v4.infer_board_perspective_from_piece_distribution(
                         fen,
                         threshold=ORIENTATION_STRONG_PIECE_MARGIN,
@@ -2572,20 +2651,41 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
                         strategy="piece_distribution",
                         margin=round(float(piece_margin), 4),
                         selected=detected_perspective,
+                        labels_absent=bool(labels_absent),
+                        labels_same=bool(labels_same),
                     )
                 else:
-                    best_guess, guess_details = orientation_best_guess(fen)
-                    if best_guess in {"white", "black"}:
-                        detected_perspective = best_guess
-                        perspective_source = "orientation_best_guess"
-                    debug_event(
-                        "v6_orientation_fallback",
-                        strategy="orientation_best_guess",
-                        piece_margin=round(float(piece_margin), 4),
-                        selected=detected_perspective,
-                        guessed=best_guess,
-                        guess_details=guess_details,
-                    )
+                    if weak_label_perspective is not None:
+                        pass
+                    elif piece_margin >= ORIENTATION_STRONG_PIECE_MARGIN and not can_use_piece_distribution:
+                        debug_event(
+                            "v6_orientation_fallback",
+                            strategy="skip_piece_distribution_due_label_signal",
+                            margin=round(float(piece_margin), 4),
+                            selected=detected_perspective,
+                            labels_absent=bool(labels_absent),
+                            labels_same=bool(labels_same),
+                        )
+                    elif ORIENTATION_BEST_GUESS_ENABLED:
+                        best_guess, guess_details = orientation_best_guess(fen)
+                        if best_guess in {"white", "black"}:
+                            detected_perspective = best_guess
+                            perspective_source = "orientation_best_guess"
+                        debug_event(
+                            "v6_orientation_fallback",
+                            strategy="orientation_best_guess",
+                            piece_margin=round(float(piece_margin), 4),
+                            selected=detected_perspective,
+                            guessed=best_guess,
+                            guess_details=guess_details,
+                        )
+                    else:
+                        debug_event(
+                            "v6_orientation_fallback",
+                            strategy="disabled_orientation_best_guess",
+                            piece_margin=round(float(piece_margin), 4),
+                            selected=detected_perspective,
+                        )
             else:
                 detected_perspective = label_perspective_result["perspective"]
                 perspective_source = label_perspective_result["source"]
@@ -2672,6 +2772,7 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
             and item[8]
             and item[3] >= full_conf + 0.06
             and item[4] >= full_piece_count + 6
+            and infer_side_to_move_from_checks(item[2])[1] != "default_double_check_conflict"
         ]
         if trusted_warps:
             trusted_warps.sort(
@@ -2698,12 +2799,15 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
         plausibility = board_plausibility_score(item[2])
         k_health = king_health(item[2])
         geom_q = float(item[7])
+        _, stm_src = infer_side_to_move_from_checks(item[2])
+        has_double_check_conflict = stm_src == "default_double_check_conflict"
         conf_adj = float(item[3]) - (0.003 if str(item[0]).endswith("_inset2") else 0.0)
-        enriched.append((item, plausibility, k_health, geom_q, conf_adj))
+        enriched.append((item, plausibility, k_health, has_double_check_conflict, geom_q, conf_adj))
         if DEBUG_MODE:
             print(
                 f"DEBUG: V6 Candidate={item[0]} plausibility={plausibility:.2f} "
-                f"king_health={k_health} warp_q={geom_q:.3f} conf={item[3]:.4f} conf_adj={conf_adj:.4f}",
+                f"king_health={k_health} double_check_conflict={has_double_check_conflict} "
+                f"warp_q={geom_q:.3f} conf={item[3]:.4f} conf_adj={conf_adj:.4f}",
                 file=sys.stderr,
             )
 
@@ -2730,8 +2834,8 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
             best_perspective_source,
             _,
             _,
-        ), _, _, _, _ = max(
-            enriched, key=lambda pair: (pair[1], pair[2], pair[4], pair[3])
+        ), _, _, _, _, _ = max(
+            enriched, key=lambda pair: (pair[1], pair[2], -int(pair[3]), pair[5], pair[4])
         )
     if DEBUG_MODE:
         print(

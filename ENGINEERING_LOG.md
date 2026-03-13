@@ -162,3 +162,56 @@ Every commit must be documented with:
 - result:
   - Quick gate remains green at `11/12` (only `00028` still failing in quick set).
   - Recovered from intermediate regression on sparse boards (`00021`/`00049`) by tightening best-guess activation thresholds.
+
+## Entry
+
+- commit: `pending`
+- objective: Stabilize `recognizer_v6` auto-orientation after fallback regressions and remove the recent hang-prone behavior path from default runtime decisions.
+- files:
+  - `recognizer_v6.py`
+- behavior_change:
+  - Disabled `orientation_best_guess` in active runtime path by default (`ORIENTATION_BEST_GUESS_ENABLED = False`).
+  - Tightened piece-distribution fallback usage in auto mode:
+    - only eligible when label signal is absent or ambiguous (`labels_absent || labels_same`),
+    - skipped when opposite-side weak labels exist.
+  - Added weak-label fallback for `a/h` detection with confidence threshold:
+    - `ORIENTATION_WEAK_LABEL_MIN_CONF = 0.70`,
+    - if left/right classify as `h/a` or `a/h` above threshold, orientation is set before piece-distribution fallback.
+- validation:
+  - `python3 -m py_compile recognizer_v6.py`
+  - `python3 recognizer_v6.py images_4_test/puzzle-00014.jpeg --model-path models/model_hybrid_v5_latest_best.pt`
+  - `python3 recognizer_v6.py images_4_test/puzzle-00019.jpeg --model-path models/model_hybrid_v5_latest_best.pt`
+  - `python3 recognizer_v6.py images_4_test/puzzle-00030.jpeg --model-path models/model_hybrid_v5_latest_best.pt`
+  - `python3 recognizer_v6.py images_4_test/puzzle-00050.jpeg --model-path models/model_hybrid_v5_latest_best.pt`
+  - `python3 scripts/rank_models_v6.py --models-glob "models/model_hybrid_v5_latest_best.pt" --truth-json images_4_test/truth_verified.json`
+- result:
+  - Recovered orientation regressions:
+    - `00014` PASS (was auto-flipped),
+    - `00019` PASS (was auto-flipped),
+    - `00050` PASS (was regressed during fallback tightening),
+    - `00030` remains PASS.
+  - Intermediate hardset after this patch: `48/50` (`00028`, `00044` pending).
+
+## Entry
+
+- commit: `pending`
+- objective: Fix residual geometry-selection miss on `00044` using a global panel-alignment rule and verify impact against neighboring hard cases (`00046`, `00047`).
+- files:
+  - `recognizer_v6.py`
+- behavior_change:
+  - Added directional trim-then-resize candidate for `panel_split_*` detections:
+    - `PANEL_DIRECTIONAL_TRIM_FRAC = 0.08`
+    - emits candidate tags like `panel_split_top_trim8`, `panel_split_left_trim8`.
+  - Added `directional_trim_resize(...)` helper (global, non-image-specific).
+  - Added candidate-selection penalty against `default_double_check_conflict` boards as a tie-breaker only (does not override plausibility-first ranking).
+- validation:
+  - `python3 -m py_compile recognizer_v6.py`
+  - `python3 recognizer_v6.py images_4_test/puzzle-00044.jpeg --model-path models/model_hybrid_v5_latest_best.pt --debug`
+  - `python3 recognizer_v6.py images_4_test/puzzle-00046.jpeg --model-path models/model_hybrid_v5_latest_best.pt --debug`
+  - `python3 recognizer_v6.py images_4_test/puzzle-00047.jpeg --model-path models/model_hybrid_v5_latest_best.pt --debug`
+  - `python3 scripts/rank_models_v6.py --models-glob "models/model_hybrid_v5_latest_best.pt" --truth-json images_4_test/truth_verified.json`
+- result:
+  - `00044` now PASS via `panel_split_top_trim8` candidate.
+  - `00046` and `00047` pass via contour-based candidates (not dependent on the new `panel_split_*_trim8` path).
+  - Current full hardset score with v6 recognizer + v5 model: `49/50`.
+  - Remaining miss: `00028`.
