@@ -26,3 +26,8 @@ Before or immediately after each commit, update `ENGINEERING_LOG.md` with:
 - files changed
 - behavior changes
 - validation commands and outcome
+
+7. V7 status guardrail:
+- Treat `v7` as experimental/failing until it beats the locked v6/v5 hardset baseline.
+- Do not switch defaults to `v7` model or recognizer in runtime paths.
+- Any future `v7` claim must include hardset proof versus `images_4_test/truth_verified.json`.

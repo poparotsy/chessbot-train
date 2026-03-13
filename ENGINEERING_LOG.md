@@ -14,6 +14,21 @@ Every commit must be documented with:
 
 ## Entry
 
+- commit: `pending`
+- objective: Record persistent guardrail that v7 remains experimental/failing unless it beats locked hardset baseline.
+- files:
+  - `MIND.md`
+  - `ENGINEERING_LOG.md`
+- behavior_change:
+  - Added a permanent project-memory rule:
+    - v7 is experimental/failing by default,
+    - no runtime default switch to v7,
+    - any v7 claim must show hardset proof against `images_4_test/truth_verified.json`.
+- validation:
+  - `sed -n '1,120p' MIND.md` (manual verify guardrail exists)
+- result:
+  - Guardrail added to persistent memory list; future work must explicitly prove v7 before promotion.
+
 - commit: `c629882`
 - objective: Add strict hardset guardrails and cleaner runtime visibility for v7 training.
 - files:
