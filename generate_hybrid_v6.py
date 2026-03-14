@@ -424,7 +424,7 @@ def build_soft_noise_map(width, height, low_res_side=24, low=0.78, high=1.18):
     small_h = max(4, height // low_res_side)
     small_w = max(4, width // low_res_side)
     noise = np.random.uniform(low, high, (small_h, small_w)).astype(np.float32)
-    noise_img = Image.fromarray(np.clip(noise * 255.0, 0, 255).astype(np.uint8), "L")
+    noise_img = Image.fromarray(np.clip(noise * 255.0, 0, 255).astype(np.uint8)).convert("L")
     noise_img = noise_img.resize((width, height), Image.BICUBIC)
     noise_img = noise_img.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.6, 1.4)))
     return np.asarray(noise_img, dtype=np.float32) / 255.0
@@ -454,7 +454,7 @@ def build_piece_damage_map(tile_size, edge_square=False):
         c1 = max(0, cc - random.randint(0, 1))
         c2 = min(low_res, cc + random.randint(1, 2))
         noise[r1:r2, c1:c2] *= random.uniform(0.05, 0.45 if edge_square else 0.65)
-    noise_img = Image.fromarray(np.clip(noise * 255.0, 0, 255).astype(np.uint8), "L")
+    noise_img = Image.fromarray(np.clip(noise * 255.0, 0, 255).astype(np.uint8)).convert("L")
     noise_img = noise_img.resize((tile_size, tile_size), Image.BICUBIC)
     return np.asarray(noise_img, dtype=np.float32) / 255.0
 
@@ -525,7 +525,7 @@ def apply_mono_structural_damage(src_img, mono_img, grid, cfg):
 
             out[y0:y1, x0:x1] = np.clip(out_tile + delta, 0, 255)
 
-    out_img = Image.fromarray(out.astype(np.uint8), "L")
+    out_img = Image.fromarray(out.astype(np.uint8)).convert("L")
     if random.random() < 0.55:
         out_img = out_img.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.25, 0.9)))
     if random.random() < 0.40:
@@ -1127,7 +1127,7 @@ def render_print_board_base(style, tile_size=64):
         fibers_y = fibers_y[:size, :size]
         arr = arr + (fibers_x - 1.0) * 14.0 + (fibers_y - 1.0) * 10.0
 
-    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "L").convert("RGB")
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("L").convert("RGB")
 
 
 def render_print_piece(char, style, row_idx, col_idx):
@@ -1155,7 +1155,7 @@ def render_print_piece(char, style, row_idx, col_idx):
         cutoff = random.uniform(0.10, 0.20 if edge_square else 0.15)
         arr = np.where(arr >= cutoff, arr, 0.0)
 
-    alpha = Image.fromarray(np.clip(arr * 255.0, 0, 255).astype(np.uint8), "L")
+    alpha = Image.fromarray(np.clip(arr * 255.0, 0, 255).astype(np.uint8)).convert("L")
     if style == "shirt_print" and random.random() < 0.80:
         alpha = alpha.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.35, 0.95)))
     elif style != "shirt_print" and random.random() < 0.25:
@@ -1187,7 +1187,7 @@ def render_print_piece(char, style, row_idx, col_idx):
     canvas[:, :, 1] = rgb_u8
     canvas[:, :, 2] = rgb_u8
     canvas[:, :, 3] = np.clip(alpha_arr, 0, 255).astype(np.uint8)
-    return Image.fromarray(canvas, "RGBA")
+    return Image.fromarray(canvas).convert("RGBA")
 
 
 def apply_print_capture_noise(img, style):

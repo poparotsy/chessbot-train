@@ -14,7 +14,7 @@ Every commit must be documented with:
 
 ## Entry
 
-- commit: `pending`
+- commit: `this commit`
 - objective: Record persistent guardrail that v7 remains experimental/failing unless it beats locked hardset baseline.
 - files:
   - `MIND.md`
@@ -550,3 +550,20 @@ Every commit must be documented with:
   - `evaluate_v6_hardset.py`: `board_pass=50/50`, `full_pass=48/50`
   - `rank_models_v6.py`: `models/model_hybrid_v5_latest_best.pt -> 50/50 (avg_conf=0.9976)`
   - `benchmark_v6.py`: `median=3.018s`, `p95=4.143s`, `timeouts=0`, baseline check passed
+
+## Entry
+
+- commit: `pending`
+- objective: Remove Pillow 13 deprecation warnings from the v6 generator before the next Kaggle run.
+- files:
+  - `generate_hybrid_v6.py`
+- behavior_change:
+  - Replaced `Image.fromarray(..., "L")` and `Image.fromarray(..., "RGBA")` calls with `Image.fromarray(...).convert(...)`.
+  - No intended rendering behavior change; this is compatibility cleanup only.
+- validation:
+  - `python3 -m py_compile generate_hybrid_v6.py`
+  - `python3 scripts/generate_samples.py --version v6 --profile mono-print-sparse-edge --count 1 --output-dir /tmp/v6_warn_smoke`
+- result:
+  - v6 generator remains runnable
+  - smoke sample generated at `/tmp/v6_warn_smoke/sample_v6_001.png`
+  - deprecated `mode` argument usage removed from `generate_hybrid_v6.py`
