@@ -1,0 +1,19 @@
+{
+  "truth_json": "images_4_test/truth_verified.json",
+  "images_dir": "images_4_test",
+  "model_path": "models/model_hybrid_v5_latest_best.pt",
+  "results": [
+    {
+      "script": "recognizer_v6.py",
+      "board_pass": 50,
+      "images": 50,
+      "failures": []
+    },
+    {
+      "script": "recognizer_v6_clean.py",
+      "board_pass": 50,
+      "images": 50,
+      "failures": []
+    }
+  ]
+}

@@ -607,3 +607,25 @@ Every commit must be documented with:
   - next v6 run is isolated to `tensors_v6_mono_logo_v2` / `models/model_hybrid_v6_mono_logo_v2_*`
   - trainer can resume from `latest.pt` by default and optionally auto-rank on each best save
   - rank output now prints the miss list without needing to scroll through the per-image progress log
+
+## Entry
+
+- commit: `pending`
+- objective: Save a temporary snapshot of the standalone `recognizer_v6_clean.py` experiment and its parity/eval artifacts without mixing it into the active v6 recipe work.
+- files:
+  - `recognizer_v6_clean.py`
+  - `scripts/compare_v6_parity_fast.py`
+  - `reports/v6_benchmark_latest.json`
+  - `reports/v6_clean_parity_fast.json`
+  - `reports/v6_clean_parity_fast.log`
+  - `reports/v6_eval_baseline_old.log`
+  - `reports/v6_eval_latest.json`
+  - `reports/v6_failures_latest.json`
+  - `reports/v6_perf_baselines.json`
+  - `reports/v6_quick_baseline.json`
+- behavior_change:
+  - No runtime promotion. This commit only preserves the temporary clean-rewrite candidate, the parity helper, and the evaluation/benchmark artifacts associated with that experiment.
+- validation:
+  - `python3 -m py_compile recognizer_v6_clean.py scripts/compare_v6_parity_fast.py`
+- result:
+  - temp v6 clean/parity work is preserved in git without touching the active `recognizer_v6.py` path

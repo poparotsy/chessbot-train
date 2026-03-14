@@ -1,0 +1,8 @@
+{
+  "images": 50,
+  "primary_pass": 50,
+  "board_pass": 50,
+  "full_pass": 48,
+  "compare_full_fen": false,
+  "failures": []
+}

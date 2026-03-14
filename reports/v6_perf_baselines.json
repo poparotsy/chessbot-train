@@ -1,0 +1,26 @@
+{
+  "801e59de6fda872d": {
+    "timestamp_utc": "2026-03-14T02:57:01.170634+00:00",
+    "fingerprint": {
+      "python": "3.14.2",
+      "platform": "macOS-26.3.1-arm64-arm-64bit-Mach-O",
+      "machine": "arm64",
+      "processor": "arm",
+      "torch": "2.10.0",
+      "cuda_available": false,
+      "cuda_version": null,
+      "gpu_count": 0,
+      "gpu_names": [],
+      "fingerprint_id": "801e59de6fda872d"
+    },
+    "metrics": {
+      "images": 12,
+      "board_pass": 12,
+      "timeouts": 0,
+      "median_sec": 4.188138,
+      "p95_sec": 6.983168,
+      "max_sec": 9.791787
+    },
+    "truth_json": "/Users/guru/workspace/current/chessbot/chessbot-train/scripts/testdata/v6_quick_cases.json"
+  }
+}
