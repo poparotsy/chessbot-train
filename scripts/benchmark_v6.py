@@ -28,6 +28,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--images-dir", default=str(TRAIN_DIR / "images_4_test"))
     parser.add_argument("--truth-json", default=str(SCRIPT_DIR / "testdata" / "v6_quick_cases.json"))
     parser.add_argument("--model-path", default=str(TRAIN_DIR / "models" / "model_hybrid_v5_latest_best.pt"))
+    parser.add_argument(
+        "--script",
+        default=str(TRAIN_DIR / "recognizer_v6.py"),
+        help="Recognizer script path (default: recognizer_v6.py).",
+    )
     parser.add_argument("--board-perspective", choices=["auto", "white", "black"], default="auto")
     parser.add_argument("--timeout-sec", type=float, default=45.0)
     parser.add_argument("--reports-dir", default=str(TRAIN_DIR / "reports"))
@@ -77,6 +82,7 @@ def benchmark_quick_set(
     truth: Dict[str, str],
     images_dir: Path,
     model_path: str,
+    script_path: str,
     board_perspective: str,
     timeout_sec: float,
 ) -> Dict:
@@ -93,6 +99,7 @@ def benchmark_quick_set(
             board_perspective=board_perspective,
             timeout_sec=timeout_sec,
             debug=False,
+            script_path=script_path,
         )
         row = {
             "image": image_name,
@@ -178,6 +185,7 @@ def main() -> int:
         truth=truth,
         images_dir=images_dir,
         model_path=args.model_path,
+        script_path=args.script,
         board_perspective=args.board_perspective,
         timeout_sec=float(args.timeout_sec),
     )
@@ -189,6 +197,7 @@ def main() -> int:
             "truth_json": str(Path(args.truth_json)),
             "images_dir": str(images_dir),
             "model_path": str(args.model_path),
+            "script": str(args.script),
             "board_perspective": args.board_perspective,
             "timeout_sec": float(args.timeout_sec),
         },

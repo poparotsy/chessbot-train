@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import multiprocessing as mp
 import sys
@@ -17,8 +18,7 @@ TRAIN_DIR = SCRIPT_DIR.parent
 RECOGNIZER_SCRIPT = TRAIN_DIR / "recognizer_v6.py"
 if str(TRAIN_DIR) not in sys.path:
     sys.path.insert(0, str(TRAIN_DIR))
-
-import recognizer_v6 as rec
+_RECOGNIZER_MODULE_CACHE = {}
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,12 +35,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout-sec", type=float, default=45.0, help="Per-image timeout in seconds.")
     parser.add_argument("--reports-dir", default=str(TRAIN_DIR / "reports"))
     parser.add_argument(
+        "--script",
+        default=str(RECOGNIZER_SCRIPT),
+        help="Path to recognizer script module (default: recognizer_v6.py).",
+    )
+    parser.add_argument(
         "--compare-full-fen",
         action="store_true",
         help="Primary score uses full FEN (including side-to-move) instead of board only.",
     )
     parser.add_argument("--debug", action="store_true", help="Pass --debug to recognizer_v6 subprocess.")
     return parser.parse_args()
+
+
+def _load_recognizer_module(script_path: str):
+    script = str(Path(script_path).resolve())
+    cached = _RECOGNIZER_MODULE_CACHE.get(script)
+    if cached is not None:
+        return cached
+    module_name = f"recognizer_dynamic_{abs(hash(script))}"
+    spec = importlib.util.spec_from_file_location(module_name, script)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Failed to load recognizer module from: {script}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    _RECOGNIZER_MODULE_CACHE[script] = module
+    return module
 
 
 def load_truth(path: Path) -> Dict[str, str]:
@@ -52,8 +73,9 @@ def load_truth(path: Path) -> Dict[str, str]:
     return data
 
 
-def _recognizer_worker(image_path, model_path, board_perspective, debug, queue):
+def _recognizer_worker(image_path, model_path, board_perspective, debug, script_path, queue):
     try:
+        rec = _load_recognizer_module(script_path)
         rec.DEBUG_MODE = bool(debug)
         rec.USE_EDGE_DETECTION = True
         rec.USE_SQUARE_DETECTION = True
@@ -82,13 +104,14 @@ def run_recognizer_once(
     board_perspective: str,
     timeout_sec: float,
     debug: bool,
+    script_path: str = str(RECOGNIZER_SCRIPT),
 ) -> Tuple[dict, float]:
     start = time.perf_counter()
     ctx = mp.get_context("spawn")
     queue = ctx.Queue(maxsize=1)
     proc = ctx.Process(
         target=_recognizer_worker,
-        args=(str(image_path), model_path, board_perspective, bool(debug), queue),
+        args=(str(image_path), model_path, board_perspective, bool(debug), str(script_path), queue),
     )
     proc.daemon = True
     proc.start()
@@ -118,6 +141,7 @@ def evaluate_hardset(
     model_path: str | None,
     board_perspective: str,
     timeout_sec: float,
+    recognizer_script: Path | str = RECOGNIZER_SCRIPT,
     compare_full_fen: bool = False,
     debug: bool = False,
     reports_dir: Path | None = None,
@@ -146,6 +170,7 @@ def evaluate_hardset(
             board_perspective=board_perspective,
             timeout_sec=timeout_sec,
             debug=debug,
+            script_path=str(recognizer_script),
         )
 
         record = {
@@ -214,7 +239,7 @@ def evaluate_hardset(
 
     summary = {
         "evaluator": "evaluate_v6_hardset",
-        "recognizer_script": str(RECOGNIZER_SCRIPT),
+        "recognizer_script": str(Path(recognizer_script)),
         "images_dir": str(images_dir),
         "truth_json": None,
         "model_path": model_path or "(script-default)",
@@ -264,6 +289,7 @@ def main() -> int:
         model_path=args.model_path,
         board_perspective=args.board_perspective,
         timeout_sec=float(args.timeout_sec),
+        recognizer_script=Path(args.script),
         compare_full_fen=bool(args.compare_full_fen),
         debug=bool(args.debug),
         reports_dir=reports_dir,

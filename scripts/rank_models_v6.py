@@ -23,6 +23,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--models-glob", default="models/*.pt", help="Glob for model/checkpoint files.")
     parser.add_argument("--images-dir", default=str(TRAIN_DIR / "images_4_test"))
     parser.add_argument("--truth-json", default=str(TRAIN_DIR / "images_4_test" / "truth_verified.json"))
+    parser.add_argument(
+        "--script",
+        default=str(TRAIN_DIR / "recognizer_v6.py"),
+        help="Recognizer script path (default: recognizer_v6.py).",
+    )
     parser.add_argument("--timeout-sec", type=float, default=45.0, help="Per-image timeout for recognizer calls.")
     parser.add_argument(
         "--board-perspective",
@@ -101,6 +106,7 @@ def main() -> int:
                 model_path=str(state_path),
                 board_perspective=args.board_perspective,
                 timeout_sec=float(args.timeout_sec),
+                recognizer_script=args.script,
                 compare_full_fen=bool(args.compare_full_fen),
                 debug=False,
                 reports_dir=None,

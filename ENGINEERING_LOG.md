@@ -527,3 +527,26 @@ Every commit must be documented with:
 - result:
   - direct v5 CLI usage from `scripts/v5/` now resolves root assets/models correctly
   - top-level v5 files can be removed as part of the move commit
+
+## Entry
+
+- commit: `pending`
+- objective: Save the current working v6 runtime and external evaluation helpers, while leaving the stale internal quick-gate script out of the commit.
+- files:
+  - `recognizer_v6.py`
+  - `scripts/benchmark_v6.py`
+  - `scripts/evaluate_v6_hardset.py`
+  - `scripts/rank_models_v6.py`
+- behavior_change:
+  - Saved the current parity-style `recognizer_v6.py` runtime path.
+  - Added `--script` override support to the external v6 helper tools so they can evaluate alternate recognizer modules without hard-wiring `recognizer_v6.py`.
+  - Left `scripts/test_after_change_v6.py` and the internal unittest suite out of this save point because those tests no longer match the current recognizer API.
+- validation:
+  - `python3 -m py_compile recognizer_v6.py scripts/benchmark_v6.py scripts/evaluate_v6_hardset.py scripts/rank_models_v6.py`
+  - `python3 scripts/evaluate_v6_hardset.py --truth-json images_4_test/truth_verified.json --model-path models/model_hybrid_v5_latest_best.pt --timeout-sec 45`
+  - `python3 scripts/rank_models_v6.py --models-glob "models/model_hybrid_v5_latest_best.pt" --truth-json images_4_test/truth_verified.json`
+  - `python3 scripts/benchmark_v6.py --model-path models/model_hybrid_v5_latest_best.pt --timeout-sec 45`
+- result:
+  - `evaluate_v6_hardset.py`: `board_pass=50/50`, `full_pass=48/50`
+  - `rank_models_v6.py`: `models/model_hybrid_v5_latest_best.pt -> 50/50 (avg_conf=0.9976)`
+  - `benchmark_v6.py`: `median=3.018s`, `p95=4.143s`, `timeouts=0`, baseline check passed
