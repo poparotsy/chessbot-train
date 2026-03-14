@@ -629,3 +629,31 @@ Every commit must be documented with:
   - `python3 -m py_compile recognizer_v6_clean.py scripts/compare_v6_parity_fast.py`
 - result:
   - temp v6 clean/parity work is preserved in git without touching the active `recognizer_v6.py` path
+
+## Entry
+
+- commit: `pending`
+- objective: Prepare a more conservative `v3` mono/logo recovery lane after the `v2` run plateaued at `46/50` with drift between miss sets.
+- files:
+  - `generate_hybrid_v6.py`
+  - `train_hybrid_v6.py`
+- behavior_change:
+  - Added two new v6 data buckets: `dark_anchor` for ordinary darker real-board anchors and `tilt_anchor` for explicit tilted-piece robustness.
+  - Switched the default generator recipe to `v6_mono_logo_recovery_v3` and the default tensor output to `tensors_v6_mono_logo_v3`.
+  - Switched the default trainer lane to `model_hybrid_v6_mono_logo_v3_*` and `checkpoints_v6_mono_logo_v3`, keeping the warm-start base model on `models/model_hybrid_v5_latest_best.pt`.
+  - New `v3` recipe mix:
+    - `clean 0.24`
+    - `dark_anchor 0.20`
+    - `mono_print_sparse_edge 0.18`
+    - `mono_scan 0.12`
+    - `edge_frame 0.12`
+    - `logo_overlay 0.07`
+    - `tilt_anchor 0.05`
+    - `hard_combo 0.02`
+- validation:
+  - `python3 -m py_compile generate_hybrid_v6.py train_hybrid_v6.py`
+  - `python3 - <<'PY' ... import generate_hybrid_v6/train_hybrid_v6 and print recipe/output/model/checkpoint defaults ... PY`
+  - `python3 scripts/generate_samples.py --version v6 --profile dark-anchor --count 3 --output-dir /tmp/v6_dark_anchor_probe`
+  - `python3 scripts/generate_samples.py --version v6 --profile tilt-anchor --count 3 --output-dir /tmp/v6_tilt_anchor_probe`
+- result:
+  - next v6 experiment is isolated to the `*_v3` lane and is anchored more heavily toward ordinary dark boards, moderate mono print, and explicit tilt robustness
