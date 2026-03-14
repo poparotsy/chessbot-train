@@ -113,6 +113,41 @@ def extract_model_state(payload):
     return payload, "state_dict"
 
 
+def load_tensor_chunk(path):
+    try:
+        payload = torch.load(path, map_location="cpu")
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to load tensor chunk '{path}': {exc}. "
+            f"Run: python3 scripts/validate_tensors_v6.py --data-dir {DATA_DIR}"
+        ) from exc
+    if not isinstance(payload, dict) or "x" not in payload or "y" not in payload:
+        raise RuntimeError(
+            f"Invalid tensor chunk '{path}': expected dict with x/y tensors. "
+            f"Run: python3 scripts/validate_tensors_v6.py --data-dir {DATA_DIR}"
+        )
+    return payload
+
+
+def preflight_dataset_chunks(train_files, val_files):
+    all_files = list(val_files) + list(train_files)
+    print(f"🧪 Preflighting {len(all_files)} tensor chunks...")
+    for path in all_files:
+        payload = load_tensor_chunk(path)
+        x = payload["x"]
+        y = payload["y"]
+        if not isinstance(x, torch.Tensor) or not isinstance(y, torch.Tensor):
+            raise RuntimeError(f"Invalid tensor chunk '{path}': x/y must both be tensors.")
+        if x.ndim != 4 or tuple(x.shape[1:]) != (3, 64, 64):
+            raise RuntimeError(f"Invalid tensor chunk '{path}': x shape must be [N,3,64,64], got {tuple(x.shape)}")
+        if y.ndim != 1 or x.shape[0] != y.shape[0]:
+            raise RuntimeError(
+                f"Invalid tensor chunk '{path}': batch mismatch x={tuple(x.shape)} y={tuple(y.shape)}"
+            )
+        del payload, x, y
+    print("✅ Tensor chunk preflight passed.")
+
+
 def save_checkpoint(epoch, model, optimizer, scheduler, accuracy, loss, path):
     save_obj = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
     checkpoint = {
@@ -131,7 +166,7 @@ def evaluate_model_accuracy(model, val_files):
     correct, total = 0, 0
     with torch.no_grad():
         for v_file in val_files:
-            v_data = torch.load(v_file, map_location="cpu")
+            v_data = load_tensor_chunk(v_file)
             vx_all = (v_data["x"].float() / 127.5) - 1.0
             vy_all = v_data["y"].long()
             v_loader = DataLoader(TensorDataset(vx_all, vy_all), batch_size=BATCH_SIZE)
@@ -171,6 +206,7 @@ def train():
         raise RuntimeError(
             f"Missing dataset chunks in {DATA_DIR}. Found train={len(train_files)}, val={len(val_files)}"
         )
+    preflight_dataset_chunks(train_files, val_files)
 
     best_acc = 0.0
     start_epoch = 0
@@ -244,7 +280,7 @@ def train():
         for file_idx, fpath in enumerate(train_files):
             if INTERRUPTED:
                 break
-            data = torch.load(fpath, map_location="cpu")
+            data = load_tensor_chunk(fpath)
             x = (data["x"].float() / 127.5) - 1.0
             y = data["y"].long()
             loader = DataLoader(TensorDataset(x, y), batch_size=BATCH_SIZE, shuffle=True)

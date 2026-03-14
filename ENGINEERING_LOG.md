@@ -567,3 +567,21 @@ Every commit must be documented with:
   - v6 generator remains runnable
   - smoke sample generated at `/tmp/v6_warn_smoke/sample_v6_001.png`
   - deprecated `mode` argument usage removed from `generate_hybrid_v6.py`
+
+## Entry
+
+- commit: `pending`
+- objective: Prevent late v6 training crashes on corrupted tensor chunks and make the failure actionable.
+- files:
+  - `generate_hybrid_v6.py`
+  - `train_hybrid_v6.py`
+- behavior_change:
+  - Added atomic chunk saving to the v6 generator via temp file + `os.replace`, so interrupted generation cannot leave a truncated final `.pt` archive behind.
+  - Added dataset preflight to the v6 trainer so every `train_*.pt` and `val_*.pt` chunk is loaded and shape-checked before training starts.
+  - Wrapped runtime chunk loads in a shared helper that raises a direct file-specific error and points to `scripts/validate_tensors_v6.py`.
+- validation:
+  - `python3 -m py_compile train_hybrid_v6.py generate_hybrid_v6.py`
+  - `python3 - <<'PY' ... import train_hybrid_v6, create corrupt temp .pt, call load_tensor_chunk(...) ... PY`
+- result:
+  - corrupted chunks now fail early with an explicit file path and validator command
+  - future v6 generation runs write chunk files atomically instead of directly to the final archive path

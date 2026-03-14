@@ -351,6 +351,16 @@ def build_profile_plan(total_boards, profile_weights):
     return plan, counts
 
 
+def atomic_torch_save(payload, path):
+    tmp_path = f"{path}.tmp"
+    try:
+        torch.save(payload, tmp_path)
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
 def add_detector_banner_overlay(img, cfg):
     """Overlay social/banner UI blocks to stress board localization."""
     if random.random() >= cfg["DETECTOR_BANNER_PROB"]:
@@ -1489,7 +1499,11 @@ if __name__ == "__main__":
             t, l = render_board(b.fen().split()[0], profile=profile)
             all_x.extend(t)
             all_y.extend(l)
-        torch.save({"x": torch.from_numpy(np.stack(all_x)), "y": torch.tensor(all_y)}, os.path.join(OUTPUT_DIR, f"{name}.pt"))
+        chunk_path = os.path.join(OUTPUT_DIR, f"{name}.pt")
+        atomic_torch_save(
+            {"x": torch.from_numpy(np.stack(all_x)), "y": torch.tensor(all_y)},
+            chunk_path,
+        )
         chunk_mix_counts[name] = profile_counts
         mix = ", ".join(f"{k}:{profile_counts.get(k, 0)}" for k, _ in DEFAULT_PROFILE_WEIGHTS)
         print(f"✅ Created {name} | mix[{mix}]")
