@@ -116,20 +116,24 @@ def main() -> int:
             passed = int(summary["full_pass"] if args.compare_full_fen else summary["board_pass"])
             total = int(summary["images"])
             avg_conf = float(summary.get("avg_confidence", 0.0))
+            failures = [row for row in summary.get("results", []) if not row.get("board_ok", False)]
+            if args.compare_full_fen:
+                failures = [row for row in summary.get("results", []) if not row.get("full_ok", False)]
+            misses = [str(row["image"]) for row in failures]
             reports.append(
                 {
                     "model": str(model_file),
                     "passed": passed,
                     "total": total,
                     "avg_confidence": avg_conf,
+                    "misses": misses,
                     "summary": summary,
                 }
             )
             print(f"{model_file} -> {passed}/{total} (avg_conf={avg_conf:.4f})")
+            if misses:
+                print(f"  misses: {', '.join(misses)}")
             if args.with_debug:
-                failures = [row for row in summary.get("results", []) if not row.get("board_ok", False)]
-                if args.compare_full_fen:
-                    failures = [row for row in summary.get("results", []) if not row.get("full_ok", False)]
                 for item in failures:
                     print(f"  - {item['image']}: pred={item.get('predicted_full', item.get('error'))}")
         finally:
@@ -150,6 +154,7 @@ def main() -> int:
                 "passed": row["passed"],
                 "total": row["total"],
                 "avg_confidence": round(row["avg_confidence"], 6),
+                "misses": row["misses"],
             }
             for row in reports
         ],

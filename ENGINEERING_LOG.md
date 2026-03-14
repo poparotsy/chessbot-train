@@ -585,3 +585,25 @@ Every commit must be documented with:
 - result:
   - corrupted chunks now fail early with an explicit file path and validator command
   - future v6 generation runs write chunk files atomically instead of directly to the final archive path
+
+## Entry
+
+- commit: `pending`
+- objective: Prepare a safer next v6 mono/logo training lane and make trainer ranking/resume behavior explicit.
+- files:
+  - `generate_hybrid_v6.py`
+  - `train_hybrid_v6.py`
+  - `scripts/rank_models_v6.py`
+- behavior_change:
+  - Added `v6_mono_logo_recovery_v2` with more anchor coverage and less destructive mono corruption, and moved the default v6 generator output to `tensors_v6_mono_logo_v2`.
+  - Moved the default v6 trainer outputs/checkpoints to the matching `*_v2` lane while keeping the warm-start base model on `models/model_hybrid_v5_latest_best.pt`.
+  - Enabled resume-by-default in the v6 trainer through `RESUME_FROM_CHECKPOINT`, added an explicit startup line showing resume mode, and added optional `RUN_RANK_AFTER_BEST` support to run `scripts/rank_models_v6.py` after a new best save.
+  - Updated `scripts/rank_models_v6.py` to print model miss lists immediately after each score line and include the misses in the final JSON summary.
+- validation:
+  - `python3 -m py_compile generate_hybrid_v6.py train_hybrid_v6.py scripts/rank_models_v6.py`
+  - `python3 - <<'PY' ... import generate_hybrid_v6/train_hybrid_v6 and print recipe/output/model/checkpoint defaults ... PY`
+  - `python3 scripts/generate_samples.py --version v6 --profile mono-print-sparse-edge --count 4 --output-dir /tmp/v6_recipe_probe`
+- result:
+  - next v6 run is isolated to `tensors_v6_mono_logo_v2` / `models/model_hybrid_v6_mono_logo_v2_*`
+  - trainer can resume from `latest.pt` by default and optionally auto-rank on each best save
+  - rank output now prints the miss list without needing to scroll through the per-image progress log

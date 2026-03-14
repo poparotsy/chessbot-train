@@ -5,6 +5,8 @@ import gc
 import glob
 import os
 import signal
+import subprocess
+import sys
 import time
 
 import torch
@@ -13,21 +15,34 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
 
-SCRIPT_REV = "v6-train-2026-03-14-r2"
+SCRIPT_REV = "v6-train-2026-03-14-r5"
+
+
+def env_bool(name, default):
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 # ============ HUMAN CONFIG (SAFE TO EDIT) ============
-DATA_DIR = "tensors_v6_mono_logo"
-MODEL_SAVE_PATH = "models/model_hybrid_v6_mono_logo_latest_best.pt"
-FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v6_mono_logo_final.pt"
-CHECKPOINT_DIR = "models/checkpoints_v6_mono_logo"
+DATA_DIR = "tensors_v6_mono_logo_v2"
+MODEL_SAVE_PATH = "models/model_hybrid_v6_mono_logo_v2_latest_best.pt"
+FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v6_mono_logo_v2_final.pt"
+CHECKPOINT_DIR = "models/checkpoints_v6_mono_logo_v2"
 CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, "latest.pt")
 BASE_MODEL_PATH = "models/model_hybrid_v5_latest_best.pt"
 EPOCHS = 120
 LEARNING_RATE = 2e-6
 BATCH_SIZE_PER_GPU = 256
-RESUME_FROM_CHECKPOINT = False
+RESUME_FROM_CHECKPOINT = env_bool("RESUME_FROM_CHECKPOINT", True)
 MIN_ACC_IMPROVEMENT = 1e-6
 BACKUP_EXISTING_BEST_MODEL = True
+RUN_RANK_AFTER_BEST = env_bool("RUN_RANK_AFTER_BEST", False)
+RANK_SCRIPT_PATH = "scripts/rank_models_v6.py"
+RANK_TRUTH_JSON = "images_4_test/truth_verified.json"
+RANK_IMAGES_DIR = "images_4_test"
+RANK_TIMEOUT_SEC = 45.0
+RANK_COMPARE_FULL_FEN = False
 
 # ============ ADVANCED / INTERNAL ============
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
@@ -182,6 +197,28 @@ def evaluate_model_accuracy(model, val_files):
     return (correct / total) if total else 0.0
 
 
+def run_rank_on_best():
+    cmd = [
+        sys.executable,
+        RANK_SCRIPT_PATH,
+        "--models-glob",
+        MODEL_SAVE_PATH,
+        "--truth-json",
+        RANK_TRUTH_JSON,
+        "--images-dir",
+        RANK_IMAGES_DIR,
+        "--timeout-sec",
+        str(RANK_TIMEOUT_SEC),
+    ]
+    if RANK_COMPARE_FULL_FEN:
+        cmd.append("--compare-full-fen")
+
+    print("   📊 Running hardset ranking on current best...")
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0:
+        print(f"   ⚠️ rank_models_v6.py exited with code {result.returncode}")
+
+
 def train():
     global INTERRUPTED
 
@@ -189,6 +226,7 @@ def train():
     print("\n🚀 STARTING BEAST MODE TRAINING")
     print(f"💻 Hardware: {DEVICE} ({GPU_COUNT} GPUs) | Batch Size: {BATCH_SIZE}")
     print(f"📚 Data Dir: {DATA_DIR} | Base Model: {BASE_MODEL_PATH}")
+    print(f"🔁 Resume from checkpoint: {'enabled' if RESUME_FROM_CHECKPOINT else 'disabled'}")
 
     model = ChessCNN()
     if GPU_COUNT > 1:
@@ -326,6 +364,8 @@ def train():
             save_obj = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
             torch.save(save_obj, MODEL_SAVE_PATH)
             print(f"   💾 Best model saved (val_acc: {accuracy:.4f})")
+            if RUN_RANK_AFTER_BEST:
+                run_rank_on_best()
 
         scheduler.step()
 
