@@ -39,7 +39,7 @@ SEED = env_int("SEED", 1337)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BOARD_THEMES_DIR = os.path.join(BASE_DIR, "board_themes")
 PIECE_SETS_DIR = os.path.join(BASE_DIR, "piece_sets")
-OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6"))
+OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6_mono_logo"))
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 BASE_CONFIG = {
@@ -195,7 +195,7 @@ PROFILE_OVERRIDES = {
         "MIN_PLIES": 0,
         "MAX_PLIES": 20,
     },
-    "mono_rook_scan": {
+    "mono_print_sparse_edge": {
         "LABELS_PROB": 0.35,
         "TRIM_CAPTURE_PROB": 0.40,
         "ARTIFACT_EMPTY_TILE_PROB": 0.16,
@@ -221,11 +221,42 @@ PROFILE_OVERRIDES = {
         "MIN_PLIES": 0,
         "MAX_PLIES": 14,
     },
+    "logo_overlay": {
+        "LABELS_PROB": 0.55,
+        "TRIM_CAPTURE_PROB": 0.16,
+        "ARTIFACT_EMPTY_TILE_PROB": 0.32,
+        "HIGHLIGHT_BOARD_PROB": 0.10,
+        "ARROW_BOARD_PROB": 0.06,
+        "TACTICAL_MARKER_PROB": 0.10,
+        "WATERMARK_BOARD_PROB": 1.00,
+        "WATERMARK_MIN_PER_BOARD": 1,
+        "WATERMARK_MAX_PER_BOARD": 4,
+        "WATERMARK_SCALE_MIN": 1.15,
+        "WATERMARK_SCALE_MAX": 1.85,
+        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.98,
+        "HARD_EDGE_ROOK_PROB": 0.22,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.18,
+        "SPARSE_BOARD_PROB": 0.40,
+        "SCREENSHOT_CLUTTER_PROB": 0.10,
+        "DETECTOR_BANNER_PROB": 0.08,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.12,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.34,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.10,
+        "PIECE_OCCLUSION_PROB": 0.05,
+        "LOCAL_PIECE_TILT_PROB": 0.20,
+        "LOCAL_PIECE_TILT_MAX_DEG": 22.0,
+        "AUG_ROTATE_PROB": 0.20,
+        "AUG_ROTATE_MAX_DEG": 2.8,
+        "AUG_PERSPECTIVE_PROB": 0.18,
+        "AUG_PERSPECTIVE_SCALE": 0.018,
+        "MIN_PLIES": 2,
+        "MAX_PLIES": 26,
+    },
 }
 
 # Deterministic data recipe (not ad-hoc random drift):
 # fixed per-chunk quotas that are auditable and repeatable.
-RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_targeted_v1")
+RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_mono_logo_recovery_v1")
 PROFILE_RECIPES = {
     "v6_targeted_v1": [
         ("clean", 0.30),
@@ -244,12 +275,20 @@ PROFILE_RECIPES = {
     "v6_00028_recovery_v2": [
         ("clean", 0.20),
         ("mono_scan", 0.20),
-        ("mono_rook_scan", 0.45),
+        ("mono_print_sparse_edge", 0.45),
         ("edge_frame", 0.10),
         ("hard_combo", 0.05),
     ],
+    "v6_mono_logo_recovery_v1": [
+        ("mono_print_sparse_edge", 0.42),
+        ("mono_scan", 0.24),
+        ("logo_overlay", 0.14),
+        ("edge_frame", 0.10),
+        ("clean", 0.07),
+        ("hard_combo", 0.03),
+    ],
 }
-DEFAULT_PROFILE_WEIGHTS = PROFILE_RECIPES.get(RECIPE_NAME, PROFILE_RECIPES["v6_targeted_v1"])
+DEFAULT_PROFILE_WEIGHTS = PROFILE_RECIPES.get(RECIPE_NAME, PROFILE_RECIPES["v6_mono_logo_recovery_v1"])
 
 
 def get_profile_config(profile):

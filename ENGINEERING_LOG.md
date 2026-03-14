@@ -415,3 +415,63 @@ Every commit must be documented with:
   - Selected family distribution:
     - `full=25`, `contour=13`, `lattice=7`, `panel_split=3`, `axis_grid=1`, `gradient_projection=1`.
   - High-leverage fragile paths are now explicit in report (not hidden): `00028`, `00031`, `00044`, `00046`, `00049`.
+
+## Entry
+
+- commit: `pending`
+- objective: Configure the next standalone `v6` training lane around the mono/print/edge-rook family, with a smaller logo bucket and isolated artifacts.
+- files:
+  - `generate_hybrid_v6.py`
+  - `train_hybrid_v6.py`
+- behavior_change:
+  - Generator defaults now target a new isolated output directory:
+    - `OUTPUT_DIR=tensors_v6_mono_logo`
+  - Added `logo_overlay` generation profile for `00024`-style square/logo interference, with a little local piece tilt.
+  - Switched default recipe to `v6_mono_logo_recovery_v1`:
+    - `mono_print_sparse_edge=0.42`
+    - `mono_scan=0.24`
+    - `logo_overlay=0.14`
+    - `edge_frame=0.10`
+    - `clean=0.07`
+    - `hard_combo=0.03`
+  - Trainer defaults now use an isolated run lane:
+    - `DATA_DIR=tensors_v6_mono_logo`
+    - `MODEL_SAVE_PATH=models/model_hybrid_v6_mono_logo_latest_best.pt`
+    - `FINAL_MODEL_SAVE_PATH=models/model_hybrid_v6_mono_logo_final.pt`
+    - `CHECKPOINT_DIR=models/checkpoints_v6_mono_logo`
+  - Trainer warm-start remains on the current reference base model:
+    - `BASE_MODEL_PATH=models/model_hybrid_v5_latest_best.pt`
+  - Trainer now starts a fresh run by default:
+    - `RESUME_FROM_CHECKPOINT=False`
+    - `EPOCHS=120`
+    - `LEARNING_RATE=2e-6`
+- validation:
+  - `python3 -m py_compile generate_hybrid_v6.py train_hybrid_v6.py`
+  - `python3 - <<'PY' ... import generate_hybrid_v6 ... print(OUTPUT_DIR, RECIPE_NAME, DEFAULT_PROFILE_WEIGHTS) ... PY`
+  - `python3 - <<'PY' ... import train_hybrid_v6 ... print(DATA_DIR, MODEL_SAVE_PATH, CHECKPOINT_DIR, BASE_MODEL_PATH, EPOCHS, LEARNING_RATE, RESUME_FROM_CHECKPOINT) ... PY`
+- result:
+  - next Kaggle run is isolated from older v6 tensors/models/checkpoints
+  - default recipe is now weighted toward the `00003/00028/00031` mono-print family while still including a smaller `00024` logo bucket
+  - trainer will warm-start from `model_hybrid_v5_latest_best.pt` unless you override it
+
+## Entry
+
+- commit: `pending`
+- objective: Rename the recovery profile so the generator config describes the actual image family instead of implying piece-class targeting.
+- files:
+  - `generate_hybrid_v6.py`
+- behavior_change:
+  - Renamed profile key:
+    - `mono_rook_scan` -> `mono_print_sparse_edge`
+  - Updated all recipe references to the new name.
+- validation:
+  - `python3 -m py_compile generate_hybrid_v6.py`
+  - `python3 - <<'PY' ... import generate_hybrid_v6 ... print(RECIPE_NAME, DEFAULT_PROFILE_WEIGHTS, profiles_ok) ... PY`
+- result:
+  - default recovery recipe now reads as:
+    - `mono_print_sparse_edge=0.42`
+    - `mono_scan=0.24`
+    - `logo_overlay=0.14`
+    - `edge_frame=0.10`
+    - `clean=0.07`
+    - `hard_combo=0.03`

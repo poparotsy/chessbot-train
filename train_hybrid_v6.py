@@ -13,19 +13,19 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
 
-SCRIPT_REV = "v6-train-2026-03-12-r1"
+SCRIPT_REV = "v6-train-2026-03-14-r2"
 
 # ============ HUMAN CONFIG (SAFE TO EDIT) ============
-DATA_DIR = "tensors_v6"
-MODEL_SAVE_PATH = "models/model_hybrid_v6_latest_best.pt"
-FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v6_final.pt"
-CHECKPOINT_DIR = "models/checkpoints_v6"
+DATA_DIR = "tensors_v6_mono_logo"
+MODEL_SAVE_PATH = "models/model_hybrid_v6_mono_logo_latest_best.pt"
+FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v6_mono_logo_final.pt"
+CHECKPOINT_DIR = "models/checkpoints_v6_mono_logo"
 CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, "latest.pt")
 BASE_MODEL_PATH = "models/model_hybrid_v5_latest_best.pt"
-EPOCHS = 200
-LEARNING_RATE = 3e-6
+EPOCHS = 120
+LEARNING_RATE = 2e-6
 BATCH_SIZE_PER_GPU = 256
-RESUME_FROM_CHECKPOINT = True
+RESUME_FROM_CHECKPOINT = False
 MIN_ACC_IMPROVEMENT = 1e-6
 BACKUP_EXISTING_BEST_MODEL = True
 
