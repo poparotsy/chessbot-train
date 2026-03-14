@@ -475,3 +475,35 @@ Every commit must be documented with:
     - `edge_frame=0.10`
     - `clean=0.07`
     - `hard_combo=0.03`
+
+## Entry
+
+- commit: `pending`
+- objective: Replace the incorrect gray-filter mono lane with a tile-safe printed-board renderer that actually matches the `00003/00028/00031` family.
+- files:
+  - `generate_hybrid_v6.py`
+  - `scripts/generate_samples.py`
+  - `scripts/build_v6_mono_assets.py`
+  - `board_themes/mono_paper_scan_light.png`
+  - `board_themes/mono_paper_scan_mid.png`
+  - `board_themes/mono_heather_print.png`
+  - `piece_sets/mono_print_scan/*`
+  - `piece_sets/mono_print_faded/*`
+- behavior_change:
+  - `mono_print_sparse_edge` and `mono_scan` no longer rely on the old scene-augmentation path for their core printed-board samples.
+  - Added a tile-safe procedural print renderer with three diagram styles:
+    - `print_hatched_book`
+    - `print_shirt_print`
+    - `print_flat_book`
+  - Printed-board styles keep the 8x8 board aligned before slicing, avoiding the label noise caused by rotating/perspective-warping/trimming the full board before tile extraction.
+  - Added dedicated mono/print board themes and piece sets for local preview and fallback asset-based use.
+  - Updated `scripts/generate_samples.py` to support `--version v5|v6` and to preview the active v6 generator path instead of being hard-wired to v5.
+- validation:
+  - `python3 -m py_compile generate_hybrid_v6.py scripts/generate_samples.py scripts/build_v6_mono_assets.py`
+  - `python3 scripts/build_v6_mono_assets.py`
+  - `python3 scripts/generate_samples.py --version v6 --profile mono-print-sparse-edge --count 12`
+  - visual inspection of generated samples against `images_4_test/puzzle-00003.jpeg`, `images_4_test/puzzle-00028.jpeg`, and `images_4_test/puzzle-00031.jpeg`
+- result:
+  - current `mono_print_sparse_edge` samples are now in the printed mono family instead of “clean synthetic board but gray”
+  - generator is ready for regenerating the next v6 mono/logo dataset
+  - existing tensors generated before this change should be treated as stale for the mono/logo lane

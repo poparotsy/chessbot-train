@@ -1,4 +1,5 @@
 import os, io, random, json
+from functools import lru_cache
 
 try:
     import chess
@@ -15,6 +16,8 @@ FEN_CHARS = "1PNBRQKpnbrqk"
 # 0:1, 1:P, 2:N, 3:B, 4:R, 5:Q, 6:K, 7:p, 8:n, 9:b, 10:r, 11:q, 12:k
 
 IMG_SIZE = 64
+PRINT_DIAGRAM_PROFILES = {"mono_scan", "mono_print_sparse_edge"}
+PRINT_DIAGRAM_BASE_SET = "cburnett"
 
 
 def env_float(name, default):
@@ -64,6 +67,8 @@ BASE_CONFIG = {
     "DETECTOR_PARTIAL_BOARD_PROB": env_float("DETECTOR_PARTIAL_BOARD_PROB", 0.10),
     "DETECTOR_MONO_LOW_CONTRAST_PROB": env_float("DETECTOR_MONO_LOW_CONTRAST_PROB", 0.10),
     "DETECTOR_HEAVY_TRIM_PROB": env_float("DETECTOR_HEAVY_TRIM_PROB", 0.08),
+    "MONO_STRUCTURAL_DAMAGE_PROB": env_float("MONO_STRUCTURAL_DAMAGE_PROB", 0.0),
+    "MONO_EDGE_PIECE_FADE_PROB": env_float("MONO_EDGE_PIECE_FADE_PROB", 0.0),
     "PIECE_OCCLUSION_PROB": env_float("PIECE_OCCLUSION_PROB", 0.20),
     "LOCAL_PIECE_TILT_PROB": env_float("LOCAL_PIECE_TILT_PROB", 0.08),
     "LOCAL_PIECE_TILT_MAX_DEG": env_float("LOCAL_PIECE_TILT_MAX_DEG", 18.0),
@@ -97,6 +102,8 @@ PROFILE_OVERRIDES = {
         "MAX_PLIES": 70,
     },
     "mono_scan": {
+        "BOARD_THEME_NAMES": ["mono_paper_scan_light.png", "mono_paper_scan_mid.png", "mono_heather_print.png"],
+        "PIECE_SET_NAMES": ["mono_print_scan", "mono_print_faded"],
         "LABELS_PROB": 0.48,
         "TRIM_CAPTURE_PROB": 0.36,
         "ARTIFACT_EMPTY_TILE_PROB": 0.22,
@@ -113,6 +120,8 @@ PROFILE_OVERRIDES = {
         "DETECTOR_PARTIAL_BOARD_PROB": 0.20,
         "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.88,
         "DETECTOR_HEAVY_TRIM_PROB": 0.25,
+        "MONO_STRUCTURAL_DAMAGE_PROB": 0.60,
+        "MONO_EDGE_PIECE_FADE_PROB": 0.35,
         "PIECE_OCCLUSION_PROB": 0.18,
         "LOCAL_PIECE_TILT_PROB": 0.12,
         "AUG_ROTATE_PROB": 0.34,
@@ -141,6 +150,8 @@ PROFILE_OVERRIDES = {
         "DETECTOR_PARTIAL_BOARD_PROB": 0.82,
         "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.52,
         "DETECTOR_HEAVY_TRIM_PROB": 0.54,
+        "MONO_STRUCTURAL_DAMAGE_PROB": 0.35,
+        "MONO_EDGE_PIECE_FADE_PROB": 0.30,
         "PIECE_OCCLUSION_PROB": 0.36,
         "LOCAL_PIECE_TILT_PROB": 0.22,
         "LOCAL_PIECE_TILT_MAX_DEG": 22.0,
@@ -196,6 +207,8 @@ PROFILE_OVERRIDES = {
         "MAX_PLIES": 20,
     },
     "mono_print_sparse_edge": {
+        "BOARD_THEME_NAMES": ["mono_paper_scan_light.png", "mono_paper_scan_mid.png", "mono_heather_print.png"],
+        "PIECE_SET_NAMES": ["mono_print_scan", "mono_print_faded"],
         "LABELS_PROB": 0.35,
         "TRIM_CAPTURE_PROB": 0.40,
         "ARTIFACT_EMPTY_TILE_PROB": 0.16,
@@ -212,8 +225,10 @@ PROFILE_OVERRIDES = {
         "DETECTOR_PARTIAL_BOARD_PROB": 0.25,
         "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.98,
         "DETECTOR_HEAVY_TRIM_PROB": 0.10,
+        "MONO_STRUCTURAL_DAMAGE_PROB": 1.00,
+        "MONO_EDGE_PIECE_FADE_PROB": 0.85,
         "PIECE_OCCLUSION_PROB": 0.05,
-        "LOCAL_PIECE_TILT_PROB": 0.02,
+        "LOCAL_PIECE_TILT_PROB": 0.08,
         "AUG_ROTATE_PROB": 0.20,
         "AUG_ROTATE_MAX_DEG": 1.8,
         "AUG_PERSPECTIVE_PROB": 0.18,
@@ -222,6 +237,7 @@ PROFILE_OVERRIDES = {
         "MAX_PLIES": 14,
     },
     "logo_overlay": {
+        "BOARD_THEME_NAMES": ["mono_paper_scan_light.png", "mono_paper_scan_mid.png", "mono_heather_print.png", "grey.jpg"],
         "LABELS_PROB": 0.55,
         "TRIM_CAPTURE_PROB": 0.16,
         "ARTIFACT_EMPTY_TILE_PROB": 0.32,
@@ -242,6 +258,8 @@ PROFILE_OVERRIDES = {
         "DETECTOR_PARTIAL_BOARD_PROB": 0.12,
         "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.34,
         "DETECTOR_HEAVY_TRIM_PROB": 0.10,
+        "MONO_STRUCTURAL_DAMAGE_PROB": 0.20,
+        "MONO_EDGE_PIECE_FADE_PROB": 0.12,
         "PIECE_OCCLUSION_PROB": 0.05,
         "LOCAL_PIECE_TILT_PROB": 0.20,
         "LOCAL_PIECE_TILT_MAX_DEG": 22.0,
@@ -402,7 +420,120 @@ def compose_partial_board_scene(img, cfg):
     return canvas
 
 
-def apply_mono_book_style(img, cfg):
+def build_soft_noise_map(width, height, low_res_side=24, low=0.78, high=1.18):
+    small_h = max(4, height // low_res_side)
+    small_w = max(4, width // low_res_side)
+    noise = np.random.uniform(low, high, (small_h, small_w)).astype(np.float32)
+    noise_img = Image.fromarray(np.clip(noise * 255.0, 0, 255).astype(np.uint8), "L")
+    noise_img = noise_img.resize((width, height), Image.BICUBIC)
+    noise_img = noise_img.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.6, 1.4)))
+    return np.asarray(noise_img, dtype=np.float32) / 255.0
+
+
+def estimate_tile_border_level(tile_arr):
+    border = np.concatenate(
+        [
+            tile_arr[0, :],
+            tile_arr[-1, :],
+            tile_arr[1:-1, 0],
+            tile_arr[1:-1, -1],
+        ]
+    )
+    return float(np.median(border))
+
+
+def build_piece_damage_map(tile_size, edge_square=False):
+    low_res = max(4, tile_size // 10)
+    noise = np.random.uniform(0.55, 1.0, (low_res, low_res)).astype(np.float32)
+    holes = random.randint(1, 4 if edge_square else 2)
+    for _ in range(holes):
+        rr = random.randrange(low_res)
+        cc = random.randrange(low_res)
+        r1 = max(0, rr - random.randint(0, 1))
+        r2 = min(low_res, rr + random.randint(1, 2))
+        c1 = max(0, cc - random.randint(0, 1))
+        c2 = min(low_res, cc + random.randint(1, 2))
+        noise[r1:r2, c1:c2] *= random.uniform(0.05, 0.45 if edge_square else 0.65)
+    noise_img = Image.fromarray(np.clip(noise * 255.0, 0, 255).astype(np.uint8), "L")
+    noise_img = noise_img.resize((tile_size, tile_size), Image.BICUBIC)
+    return np.asarray(noise_img, dtype=np.float32) / 255.0
+
+
+def build_edge_piece_fade_mask(tile_size, row_idx, col_idx):
+    xs = np.linspace(0.0, 1.0, tile_size, dtype=np.float32)
+    ys = np.linspace(0.0, 1.0, tile_size, dtype=np.float32)
+    mask = np.ones((tile_size, tile_size), dtype=np.float32)
+
+    if col_idx == 0:
+        mask *= np.tile(np.clip(xs * 1.4, 0.20, 1.0), (tile_size, 1))
+    elif col_idx == 7:
+        mask *= np.tile(np.clip(xs[::-1] * 1.4, 0.20, 1.0), (tile_size, 1))
+
+    if row_idx == 0:
+        mask *= np.tile(np.clip(ys[:, None] * 1.4, 0.25, 1.0), (1, tile_size))
+    elif row_idx == 7:
+        mask *= np.tile(np.clip(ys[::-1, None] * 1.4, 0.25, 1.0), (1, tile_size))
+
+    return mask
+
+
+def apply_mono_structural_damage(src_img, mono_img, grid, cfg):
+    src = np.asarray(src_img.convert("L"), dtype=np.float32)
+    base = np.asarray(mono_img.convert("L"), dtype=np.float32)
+    h, w = base.shape
+    tile_size = w // 8
+
+    paper = build_soft_noise_map(w, h, low_res_side=18, low=0.86, high=1.14)
+    fibers_x = build_soft_noise_map(w, h, low_res_side=64, low=0.95, high=1.05)
+    fibers_y = build_soft_noise_map(h, w, low_res_side=64, low=0.95, high=1.05).T
+
+    out = np.clip((base - 128.0) * random.uniform(0.82, 0.92) + 128.0, 0, 255)
+    out = np.clip(out * paper + (fibers_x - 1.0) * 12.0 + (fibers_y - 1.0) * 10.0, 0, 255)
+
+    for row_idx in range(8):
+        for col_idx in range(8):
+            if not grid[row_idx][col_idx]:
+                continue
+
+            y0 = row_idx * tile_size
+            y1 = y0 + tile_size
+            x0 = col_idx * tile_size
+            x1 = x0 + tile_size
+
+            src_tile = src[y0:y1, x0:x1]
+            out_tile = out[y0:y1, x0:x1]
+            bg_level = estimate_tile_border_level(src_tile)
+            delta = src_tile - bg_level
+            if float(np.max(np.abs(delta))) < 10.0:
+                continue
+
+            edge_square = row_idx in (0, 7) or col_idx in (0, 7)
+            contrast_scale = random.uniform(0.32, 0.58)
+            if edge_square:
+                contrast_scale *= random.uniform(0.55, 0.80)
+            delta = delta * contrast_scale
+
+            damage = build_piece_damage_map(tile_size, edge_square=edge_square)
+            delta *= damage
+
+            if edge_square and random.random() < cfg["MONO_EDGE_PIECE_FADE_PROB"]:
+                delta *= build_edge_piece_fade_mask(tile_size, row_idx, col_idx)
+
+            if random.random() < 0.65:
+                cutoff = random.uniform(6.0, 16.0)
+                delta = np.where(np.abs(delta) < cutoff, 0.0, delta)
+
+            out[y0:y1, x0:x1] = np.clip(out_tile + delta, 0, 255)
+
+    out_img = Image.fromarray(out.astype(np.uint8), "L")
+    if random.random() < 0.55:
+        out_img = out_img.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.25, 0.9)))
+    if random.random() < 0.40:
+        out_img = ImageEnhance.Contrast(out_img).enhance(random.uniform(0.86, 0.96))
+    return out_img.convert("RGB")
+
+
+def apply_mono_book_style(img, grid, cfg):
     """Convert to low-saturation, low-contrast style seen in scans/books."""
     if random.random() >= cfg["DETECTOR_MONO_LOW_CONTRAST_PROB"]:
         return img
@@ -411,6 +542,8 @@ def apply_mono_book_style(img, cfg):
     gray = ImageEnhance.Contrast(gray).enhance(random.uniform(0.62, 0.92))
     gray = ImageEnhance.Brightness(gray).enhance(random.uniform(0.85, 1.10))
     out = gray.convert("RGB")
+    if random.random() < cfg["MONO_STRUCTURAL_DAMAGE_PROB"]:
+        out = apply_mono_structural_damage(img, out, grid, cfg)
     if random.random() < 0.45:
         out = out.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.2, 1.0)))
     return out
@@ -933,12 +1066,203 @@ def simulate_trimmed_capture(img, cfg):
     cropped = img.crop((left, top, w - right, h - bottom))
     return cropped.resize((w, h), Image.LANCZOS)
 
+
+@lru_cache(maxsize=32)
+def load_print_piece_alpha(piece_name):
+    path = os.path.join(PIECE_SETS_DIR, PRINT_DIAGRAM_BASE_SET, piece_name)
+    img = Image.open(path).convert("RGBA").resize((64, 64), Image.LANCZOS)
+    return img.getchannel("A")
+
+
+def choose_print_diagram_style(profile):
+    if profile == "mono_print_sparse_edge":
+        styles = [("hatched_book", 0.45), ("shirt_print", 0.35), ("flat_book", 0.20)]
+    else:
+        styles = [("hatched_book", 0.35), ("flat_book", 0.40), ("shirt_print", 0.25)]
+    names = [name for name, _ in styles]
+    weights = [weight for _, weight in styles]
+    return random.choices(names, weights=weights, k=1)[0]
+
+
+def render_print_board_base(style, tile_size=64):
+    size = tile_size * 8
+    canvas = Image.new("L", (size, size), 226)
+    draw = ImageDraw.Draw(canvas)
+
+    if style == "hatched_book":
+        light_fill, dark_fill, hatch_fill = 222, 200, 150
+    elif style == "shirt_print":
+        light_fill, dark_fill, hatch_fill = 230, 206, 164
+    else:
+        light_fill, dark_fill, hatch_fill = 224, 186, 166
+
+    for row_idx in range(8):
+        for col_idx in range(8):
+            x0 = col_idx * tile_size
+            y0 = row_idx * tile_size
+            x1 = x0 + tile_size
+            y1 = y0 + tile_size
+            is_dark = (row_idx + col_idx) % 2 == 1
+            fill = dark_fill if is_dark else light_fill
+            draw.rectangle([x0, y0, x1, y1], fill=fill)
+            if is_dark and style in {"hatched_book", "shirt_print"}:
+                step = 5 if style == "hatched_book" else 6
+                for offset in range(-tile_size, tile_size * 2, step):
+                    draw.line(
+                        [(x0 + offset, y0), (x0 + offset + tile_size, y1)],
+                        fill=hatch_fill,
+                        width=1,
+                    )
+
+    arr = np.asarray(canvas, dtype=np.float32)
+    paper = build_soft_noise_map(size, size, low_res_side=18, low=0.90, high=1.08)
+    arr *= paper
+
+    if style == "shirt_print":
+        cloth = build_soft_noise_map(size, size, low_res_side=52, low=0.94, high=1.06)
+        arr = arr * cloth + (cloth - 1.0) * 24.0
+    else:
+        fibers_x = build_soft_noise_map(size, size, low_res_side=68, low=0.97, high=1.03)
+        fibers_y = build_soft_noise_map(size, size, low_res_side=68, low=0.97, high=1.03).T
+        fibers_y = fibers_y[:size, :size]
+        arr = arr + (fibers_x - 1.0) * 14.0 + (fibers_y - 1.0) * 10.0
+
+    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8), "L").convert("RGB")
+
+
+def render_print_piece(char, style, row_idx, col_idx):
+    piece_name = f"{'w' if char.isupper() else 'b'}{char.upper()}.png"
+    alpha_img = load_print_piece_alpha(piece_name).copy()
+    edge_square = row_idx in (0, 7) or col_idx in (0, 7)
+
+    if style == "shirt_print":
+        alpha_img = alpha_img.resize((58, 58), Image.BICUBIC).resize((64, 64), Image.BICUBIC)
+    elif style == "hatched_book":
+        alpha_img = alpha_img.resize((60, 60), Image.BICUBIC).resize((64, 64), Image.BICUBIC)
+
+    arr = np.asarray(alpha_img, dtype=np.float32) / 255.0
+    damage = build_piece_damage_map(64, edge_square=edge_square)
+    if style == "flat_book":
+        damage_floor = 0.74
+    elif style == "hatched_book":
+        damage_floor = 0.62
+    else:
+        damage_floor = 0.30
+    arr *= np.clip(damage_floor + damage * (1.0 - damage_floor), 0.0, 1.0)
+    if edge_square and (style == "shirt_print" or random.random() < 0.45):
+        arr *= build_edge_piece_fade_mask(64, row_idx, col_idx)
+    if random.random() < (0.20 if style != "shirt_print" else 0.60):
+        cutoff = random.uniform(0.10, 0.20 if edge_square else 0.15)
+        arr = np.where(arr >= cutoff, arr, 0.0)
+
+    alpha = Image.fromarray(np.clip(arr * 255.0, 0, 255).astype(np.uint8), "L")
+    if style == "shirt_print" and random.random() < 0.80:
+        alpha = alpha.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.35, 0.95)))
+    elif style != "shirt_print" and random.random() < 0.25:
+        alpha = alpha.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.10, 0.35)))
+
+    outline = alpha.filter(ImageFilter.MaxFilter(3))
+    inner = alpha.filter(ImageFilter.MinFilter(3))
+    outline_arr = np.clip(
+        np.asarray(outline, dtype=np.float32) / 255.0 - np.asarray(inner, dtype=np.float32) / 255.0,
+        0.0,
+        1.0,
+    )
+    inner_arr = np.asarray(inner, dtype=np.float32) / 255.0
+
+    if char.isupper():
+        fill_val = 244 if style == "flat_book" else (238 if style == "hatched_book" else 228)
+        line_val = 92 if style == "flat_book" else (104 if style == "hatched_book" else 124)
+        rgb = inner_arr * fill_val + outline_arr * line_val
+        alpha_arr = np.maximum(inner_arr * 0.96, outline_arr) * 255.0
+    else:
+        fill_val = 26 if style == "flat_book" else (34 if style == "hatched_book" else 62)
+        line_val = 72 if style == "flat_book" else (82 if style == "hatched_book" else 102)
+        rgb = inner_arr * fill_val + outline_arr * line_val * 0.35
+        alpha_arr = np.maximum(inner_arr, outline_arr * 0.8) * 255.0
+
+    canvas = np.zeros((64, 64, 4), dtype=np.uint8)
+    rgb_u8 = np.clip(rgb, 0, 255).astype(np.uint8)
+    canvas[:, :, 0] = rgb_u8
+    canvas[:, :, 1] = rgb_u8
+    canvas[:, :, 2] = rgb_u8
+    canvas[:, :, 3] = np.clip(alpha_arr, 0, 255).astype(np.uint8)
+    return Image.fromarray(canvas, "RGBA")
+
+
+def apply_print_capture_noise(img, style):
+    out = img
+    if random.random() < 0.75:
+        down = random.randint(470, 502) if style != "shirt_print" else random.randint(392, 460)
+        out = out.resize((down, down), Image.BILINEAR).resize((512, 512), Image.BILINEAR)
+    if style == "shirt_print" and random.random() < 0.75:
+        out = out.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.30, 0.90)))
+    elif style != "shirt_print" and random.random() < 0.35:
+        out = out.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.08, 0.28)))
+    if random.random() < 0.45:
+        low, high = (0.88, 0.97) if style == "shirt_print" else (0.95, 1.02)
+        out = ImageEnhance.Contrast(out).enhance(random.uniform(low, high))
+    if random.random() < 0.40:
+        arr = np.asarray(out, dtype=np.float32)
+        noise = np.random.normal(0.0, random.uniform(1.5, 5.0), arr.shape)
+        out = Image.fromarray(np.clip(arr + noise, 0, 255).astype(np.uint8))
+    return out
+
+
+def render_print_diagram_board(fen, profile, cfg):
+    style = choose_print_diagram_style(profile)
+    tile_size = 64
+    board = render_print_board_base(style, tile_size=tile_size)
+
+    grid = [[None] * 8 for _ in range(8)]
+    for row_idx, row_str in enumerate(fen.split("/")):
+        col_idx = 0
+        for ch in row_str:
+            if ch.isdigit():
+                col_idx += int(ch)
+            else:
+                grid[row_idx][col_idx] = ch
+                col_idx += 1
+
+    for row_idx in range(8):
+        for col_idx in range(8):
+            char = grid[row_idx][col_idx]
+            if not char:
+                continue
+            piece_img = render_print_piece(char, style, row_idx, col_idx)
+            board.paste(piece_img, (col_idx * tile_size, row_idx * tile_size), piece_img)
+
+    board = apply_local_piece_tilt(board, grid, cfg)
+    board = apply_print_capture_noise(board, style)
+    return board, grid, f"print_{style}", f"print_{style}", None
+
+
 def render_board(fen, return_meta=False, profile=None):
     profile = choose_profile(profile)
     cfg = get_profile_config(profile)
-    board_file = random.choice(os.listdir(BOARD_THEMES_DIR))
+    if profile in PRINT_DIAGRAM_PROFILES:
+        background, grid, board_file, p_set, label_pov = render_print_diagram_board(fen, profile, cfg)
+        ts = 64
+        tiles, labels = [], []
+        for r in range(8):
+            for c in range(8):
+                tile = background.crop((c * ts, r * ts, (c + 1) * ts, (r + 1) * ts))
+                tiles.append(np.array(tile, dtype=np.uint8).transpose(2, 0, 1))
+                labels.append(FEN_CHARS.index(grid[r][c]) if grid[r][c] else 0)
+        if return_meta:
+            return tiles, labels, {
+                "board_theme": board_file,
+                "piece_set": p_set,
+                "label_pov": label_pov,
+                "profile": profile,
+            }
+        return tiles, labels
+
+    board_choices = cfg.get("BOARD_THEME_NAMES") or os.listdir(BOARD_THEMES_DIR)
+    piece_choices = cfg.get("PIECE_SET_NAMES") or os.listdir(PIECE_SETS_DIR)
+    board_file = random.choice(board_choices)
     background = Image.open(os.path.join(BOARD_THEMES_DIR, board_file)).convert("RGB").resize((512, 512))
-    p_set = random.choice(os.listdir(PIECE_SETS_DIR))
+    p_set = random.choice(piece_choices)
     ts = 64
     
     grid = [[None]*8 for _ in range(8)]
@@ -971,7 +1295,7 @@ def render_board(fen, return_meta=False, profile=None):
     # Detector-hard scene augmentation: partial board, banners, and low-contrast scans.
     background = compose_partial_board_scene(background, cfg)
     background = add_detector_banner_overlay(background, cfg)
-    background = apply_mono_book_style(background, cfg)
+    background = apply_mono_book_style(background, grid, cfg)
     
     # Apply augmentation BEFORE compression
     background = augment_image(background, cfg)
