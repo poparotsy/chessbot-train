@@ -507,3 +507,23 @@ Every commit must be documented with:
   - current `mono_print_sparse_edge` samples are now in the printed mono family instead of “clean synthetic board but gray”
   - generator is ready for regenerating the next v6 mono/logo dataset
   - existing tensors generated before this change should be treated as stale for the mono/logo lane
+
+## Entry
+
+- commit: `pending`
+- objective: Move legacy v5 scripts under `scripts/v5/` without breaking direct execution from the new location.
+- files:
+  - `generate_hybrid_v5.py` -> `scripts/v5/generate_hybrid_v5.py`
+  - `recognizer_v5.py` -> `scripts/v5/recognizer_v5.py`
+  - `train_hybrid_v5.py` -> `scripts/v5/train_hybrid_v5.py`
+- behavior_change:
+  - Relocated legacy v5 generator, recognizer, and trainer into `scripts/v5/`.
+  - Updated the moved scripts to resolve board themes, piece sets, models, tensors, and rank/eval script paths from the project root instead of the script directory.
+  - No intended model/runtime behavior change beyond preserving the old entrypoints from the new folder.
+- validation:
+  - `python3 -m py_compile scripts/v5/generate_hybrid_v5.py scripts/v5/recognizer_v5.py scripts/v5/train_hybrid_v5.py`
+  - `python3 scripts/v5/recognizer_v5.py --help`
+  - `python3 - <<'PY' ... import moved v5 generator/trainer and print resolved root paths ... PY`
+- result:
+  - direct v5 CLI usage from `scripts/v5/` now resolves root assets/models correctly
+  - top-level v5 files can be removed as part of the move commit

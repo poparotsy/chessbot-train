@@ -17,10 +17,11 @@ FEN_CHARS = "1PNBRQKpnbrqk"
 IMG_SIZE = 64
 BOARDS_PER_CHUNK = 1000
 CHUNKS_TRAIN, CHUNKS_VAL = 10, 2
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BOARD_THEMES_DIR = os.path.join(BASE_DIR, "board_themes")
-PIECE_SETS_DIR = os.path.join(BASE_DIR, "piece_sets")
-OUTPUT_DIR = os.path.join(BASE_DIR, "tensors_v5")
+THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.abspath(os.path.join(THIS_DIR, "..", ".."))
+BOARD_THEMES_DIR = os.path.join(ROOT_DIR, "board_themes")
+PIECE_SETS_DIR = os.path.join(ROOT_DIR, "piece_sets")
+OUTPUT_DIR = os.path.join(ROOT_DIR, "tensors_v5")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 

@@ -13,16 +13,20 @@ from torch import nn
 IMG_SIZE, FEN_CHARS = 64, "1PNBRQKpnbrqk"
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.abspath(os.path.join(THIS_DIR, "..", ".."))
 MODEL_FILENAMES = [
     "model_hybrid_v4_300e_last_best.pt",
     "model_hybrid_v4_300e_best.pt",
     "model_hybrid_v4_final.pt",
 ]
 MODEL_SEARCH_DIRS = [
+    os.path.join(ROOT_DIR, "models"),
     os.path.join(THIS_DIR, "models"),
     os.path.join(THIS_DIR, "..", "models"),
+    os.path.join(ROOT_DIR, "scripts", "v5", "models"),
     THIS_DIR,
     os.path.join(THIS_DIR, ".."),
+    ROOT_DIR,
 ]
 MODEL_CANDIDATES = []
 for model_dir in MODEL_SEARCH_DIRS:

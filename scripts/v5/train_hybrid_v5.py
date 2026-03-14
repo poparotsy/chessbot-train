@@ -15,21 +15,23 @@ from torch.utils.data import DataLoader, TensorDataset
 
 # ============ SYSTEM STABILITY ============
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.abspath(os.path.join(THIS_DIR, "..", ".."))
 
 
 # ============ HUMAN CONFIG (SAFE TO EDIT) ============
-DATA_DIR = "tensors_v5"
-MODEL_SAVE_PATH = "models/model_hybrid_v5_latest_best.pt"
-FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v5_final.pt"
-CHECKPOINT_DIR = "models/checkpoints_v5"
-BASE_MODEL_PATH = "models/model_hybrid_v5_latest_best.pt"
+DATA_DIR = os.path.join(ROOT_DIR, "tensors_v5")
+MODEL_SAVE_PATH = os.path.join(ROOT_DIR, "models", "model_hybrid_v5_latest_best.pt")
+FINAL_MODEL_SAVE_PATH = os.path.join(ROOT_DIR, "models", "model_hybrid_v5_final.pt")
+CHECKPOINT_DIR = os.path.join(ROOT_DIR, "models", "checkpoints_v5")
+BASE_MODEL_PATH = os.path.join(ROOT_DIR, "models", "model_hybrid_v5_latest_best.pt")
 EPOCHS = 333
 LEARNING_RATE = 3e-6
 BATCH_SIZE_PER_GPU = 256
 RESUME_FROM_CHECKPOINT = False
 RUN_HARDSET_EVAL_ON_BEST = True
-HARDSET_EVAL_SCRIPT = "scripts/rank_models_hardset.py"
-HARDSET_TRUTH_JSON = "images_4_test/truth_verified.json"
+HARDSET_EVAL_SCRIPT = os.path.join(ROOT_DIR, "scripts", "rank_models_hardset.py")
+HARDSET_TRUTH_JSON = os.path.join(ROOT_DIR, "images_4_test", "truth_verified.json")
 HARDSET_COMPARE_FULL_FEN = False
 HARDSET_REQUIRE_NON_REGRESSION = True
 HARDSET_MAX_CONSECUTIVE_REGRESSIONS = 6
@@ -122,7 +124,7 @@ def run_rank_eval(
     label="benchmark",
 ):
     """Run ranking script and return parsed score metadata."""
-    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), HARDSET_EVAL_SCRIPT)
+    script_path = HARDSET_EVAL_SCRIPT
     if not os.path.exists(script_path):
         print(f"   ⚠️ {label} eval script not found: {script_path}")
         return None
@@ -147,7 +149,7 @@ def run_rank_eval(
     try:
         proc = subprocess.run(
             cmd,
-            cwd=os.path.dirname(os.path.abspath(__file__)),
+            cwd=ROOT_DIR,
             capture_output=True,
             text=True,
             check=False,
