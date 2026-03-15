@@ -15,7 +15,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
 
-SCRIPT_REV = "v6-train-2026-03-14-r7"
+SCRIPT_REV = "v6-train-2026-03-15-r9"
 
 
 def env_bool(name, default):
@@ -25,10 +25,10 @@ def env_bool(name, default):
     return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 # ============ HUMAN CONFIG (SAFE TO EDIT) ============
-DATA_DIR = "tensors_v6_mono_logo_v4"
-MODEL_SAVE_PATH = "models/model_hybrid_v6_mono_logo_v4_latest_best.pt"
-FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v6_mono_logo_v4_final.pt"
-CHECKPOINT_DIR = "models/checkpoints_v6_mono_logo_v4"
+DATA_DIR = "tensors_v6_mono_logo_v6"
+MODEL_SAVE_PATH = "models/model_hybrid_v6_mono_logo_v6_latest_best.pt"
+FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v6_mono_logo_v6_final.pt"
+CHECKPOINT_DIR = "models/checkpoints_v6_mono_logo_v6"
 CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, "latest.pt")
 BASE_MODEL_PATH = "models/model_hybrid_v5_latest_best.pt"
 EPOCHS = 120

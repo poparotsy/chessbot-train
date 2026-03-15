@@ -11,6 +11,11 @@ import torch
 from PIL import Image
 from torch import nn
 
+try:
+    import chess
+except ModuleNotFoundError:
+    chess = None
+
 
 IMG_SIZE = 64
 FEN_CHARS = "1PNBRQKpnbrqk"
@@ -48,7 +53,6 @@ LOW_SAT_SPARSE_SAT_MEAN_MAX = 44.0
 LOW_SAT_SPARSE_PIECE_MAX = 10
 LOW_SAT_SPARSE_EMPTY_ALT_MIN = 0.015
 LOW_SAT_SPARSE_ALT_OPTIONS = 2
-LOW_SAT_EDGE_ROOK_OBJECTIVE_BONUS = 0.40
 
 GRADIENT_PROJ_MIN_AREA_RATIO = 0.16
 GRADIENT_PROJ_MIN_SIDE_RATIO = 0.24
@@ -104,12 +108,6 @@ class StandaloneBeastClassifier(nn.Module):
         x = self.features(x)
         x = torch.flatten(x, 1)
         return self.classifier(x)
-
-
-def debug(msg):
-    if DEBUG_MODE:
-        print(f"DEBUG: {msg}", file=sys.stderr)
-
 
 def expand_fen_board(fen):
     rows = []
@@ -569,6 +567,40 @@ def infer_side_to_move_from_checks(fen_board):
         return "b", "check_inference"
     if white_in_check and black_in_check:
         return "w", "default_double_check_conflict"
+
+    if chess is not None:
+        legal_turns = []
+        for stm in ("w", "b"):
+            try:
+                board = chess.Board(f"{fen_board} {stm} - - 0 1")
+            except ValueError:
+                continue
+            if not board.is_valid():
+                continue
+            legal_turns.append((stm, board.legal_moves.count(), board.is_checkmate(), board.is_stalemate()))
+
+        if len(legal_turns) == 1:
+            return legal_turns[0][0], "legality_fallback"
+
+        if len(legal_turns) == 2:
+            white_state = next(item for item in legal_turns if item[0] == "w")
+            black_state = next(item for item in legal_turns if item[0] == "b")
+
+            if white_state[1] == 0 and black_state[1] > 0:
+                return "b", "legality_fallback"
+            if black_state[1] == 0 and white_state[1] > 0:
+                return "w", "legality_fallback"
+
+            if white_state[2] and not black_state[2]:
+                return "w", "checkmate_fallback"
+            if black_state[2] and not white_state[2]:
+                return "b", "checkmate_fallback"
+
+            if white_state[3] and not black_state[3]:
+                return "w", "stalemate_fallback"
+            if black_state[3] and not white_state[3]:
+                return "b", "stalemate_fallback"
+
     return "w", "default_no_check_signal"
 
 
@@ -699,210 +731,9 @@ def _labels_to_fen(labels):
         rows.append("".join(labels[r * 8 : (r + 1) * 8]))
     return compress_fen_board(rows)
 
-
-def _build_fen_from_tile_infos(tile_infos):
-    rows = []
-    for row_idx in range(8):
-        row = "".join(tile_infos[row_idx * 8 + col_idx]["label"] for col_idx in range(8))
-        rows.append(row)
-    return compress_fen_board(rows)
-
-
 def _king_health_from_labels(labels):
     fen = _labels_to_fen(labels)
     return int(fen.count("K") == 1) + int(fen.count("k") == 1)
-
-
-def _edge_rook_count_from_labels(labels):
-    count = 0
-    for idx, label in enumerate(labels):
-        if label not in {"R", "r"}:
-            continue
-        row = idx // 8
-        col = idx % 8
-        if row in (0, 7) or col in (0, 7):
-            count += 1
-    return count
-
-
-def enforce_king_counts_from_topk(tile_infos):
-    repaired = [dict(tile, topk=list(tile["topk"])) for tile in tile_infos]
-
-    for king_label in ("K", "k"):
-        king_tiles = [tile for tile in repaired if tile["label"] == king_label]
-        if len(king_tiles) <= 1:
-            continue
-        king_tiles.sort(key=lambda tile: tile["prob"], reverse=True)
-        for extra_tile in king_tiles[1:]:
-            replacement_label = None
-            replacement_prob = -1.0
-            empty_prob = float(extra_tile.get("empty_prob", _label_prob_from_topk(extra_tile, "1")))
-            if empty_prob > 0.0:
-                replacement_label = "1"
-                replacement_prob = empty_prob
-            for alt_label, alt_prob in extra_tile["topk"]:
-                if alt_label in {"K", "k"}:
-                    continue
-                if alt_label == "1":
-                    continue
-                # Prefer empty squares over hallucinating a replacement piece
-                # when demoting an extra king from noise/logo artifacts.
-                if replacement_label != "1" and float(alt_prob) > replacement_prob:
-                    replacement_label = alt_label
-                    replacement_prob = float(alt_prob)
-            if replacement_label is None:
-                replacement_label = "1"
-                replacement_prob = float(extra_tile.get("empty_prob", 0.0))
-            extra_tile["label"] = replacement_label
-            extra_tile["prob"] = replacement_prob
-
-    white_kings = sum(1 for tile in repaired if tile["label"] == "K")
-    black_kings = sum(1 for tile in repaired if tile["label"] == "k")
-    if white_kings != 1 or black_kings != 1:
-        return None
-
-    piece_count = sum(1 for tile in repaired if tile["label"] != "1")
-    mean_conf = float(np.mean([tile["prob"] for tile in repaired])) if repaired else 0.0
-    return _build_fen_from_tile_infos(repaired), mean_conf, piece_count
-
-
-def repair_missing_king_from_topk(tile_infos, base_fen, base_conf):
-    if not tile_infos:
-        return None
-
-    base_labels = [tile["label"] for tile in tile_infos]
-    missing = [king for king in ("K", "k") if sum(1 for label in base_labels if label == king) == 0]
-    if len(missing) != 1:
-        return None
-
-    target_king = missing[0]
-    base_piece_count = sum(1 for label in base_labels if label != "1")
-    base_kh = _king_health_from_labels(base_labels)
-    base_obj = board_plausibility_score(base_fen) + 3.0 * base_kh + 0.12 * base_piece_count
-    best = (base_obj, base_fen, base_conf, base_piece_count)
-
-    for idx, tile in enumerate(tile_infos):
-        current = tile["label"]
-        if current in {"K", "k"} and current != target_king:
-            continue
-
-        trial_labels = list(base_labels)
-        trial_labels[idx] = target_king
-        trial_fen = _labels_to_fen(trial_labels)
-        trial_kh = _king_health_from_labels(trial_labels)
-        if trial_kh < 2:
-            continue
-
-        king_prob = _label_prob_from_topk(tile, target_king)
-        if current == "1":
-            current_prob = float(tile.get("empty_prob", _label_prob_from_topk(tile, "1")))
-        else:
-            current_prob = _label_prob_from_topk(tile, current)
-
-        trial_piece_count = sum(1 for label in trial_labels if label != "1")
-        trial_plaus = board_plausibility_score(trial_fen)
-        trial_probs = np.array(
-            [_label_prob_from_topk(tile_infos[i], trial_labels[i]) for i in range(64)],
-            dtype=np.float32,
-        )
-        trial_conf = float(np.mean(trial_probs))
-        trial_obj = (
-            trial_plaus
-            + 3.0 * trial_kh
-            + 0.12 * trial_piece_count
-            + 0.35 * float(np.log(max(king_prob, 1e-12)))
-            - 0.10 * float(np.log(max(current_prob, 1e-12)))
-        )
-        if trial_obj > best[0]:
-            best = (trial_obj, trial_fen, trial_conf, trial_piece_count)
-
-    if best[0] <= base_obj + 2.0 or best[1] == base_fen:
-        return None
-    return best[1], float(best[2]), int(best[3])
-
-
-def promote_sparse_pieces_from_topk(tile_infos, base_fen, base_conf):
-    if not tile_infos:
-        return None
-
-    base_labels = [tile["label"] for tile in tile_infos]
-    base_piece_count = sum(1 for label in base_labels if label != "1")
-    if base_piece_count > 8:
-        return None
-
-    uncertain = []
-    for idx, tile in enumerate(tile_infos):
-        if tile["label"] != "1":
-            continue
-        empty_prob = float(tile.get("empty_prob", _label_prob_from_topk(tile, "1")))
-        options = []
-        for alt_label, alt_prob in tile["topk"]:
-            if alt_label == "1":
-                continue
-            prob = float(alt_prob)
-            if prob < max(0.18, empty_prob + 0.05):
-                continue
-            options.append((alt_label, prob))
-            if len(options) >= 2:
-                break
-        if not options:
-            continue
-        best_gain = max(prob - empty_prob for _, prob in options)
-        uncertain.append((best_gain, idx, options))
-
-    if not uncertain:
-        return None
-
-    uncertain.sort(reverse=True)
-    uncertain = uncertain[:8]
-    beam = [(base_labels, 0.0)]
-
-    for _gain, idx, options in uncertain:
-        next_beam = {}
-        for labels, log_bonus in beam:
-            key_keep = tuple(labels)
-            prev_keep = next_beam.get(key_keep)
-            if prev_keep is None or log_bonus > prev_keep:
-                next_beam[key_keep] = log_bonus
-
-            changes = sum(1 for left, right in zip(labels, base_labels) if left != right)
-            if changes >= 2:
-                continue
-            for alt_label, alt_prob in options:
-                new_labels = list(labels)
-                new_labels[idx] = alt_label
-                key_new = tuple(new_labels)
-                new_bonus = log_bonus + float(np.log(max(alt_prob, 1e-12)))
-                prev_new = next_beam.get(key_new)
-                if prev_new is None or new_bonus > prev_new:
-                    next_beam[key_new] = new_bonus
-
-        scored = []
-        for labels_tuple, log_bonus in next_beam.items():
-            labels = list(labels_tuple)
-            fen = _labels_to_fen(labels)
-            plaus = board_plausibility_score(fen)
-            k_health = _king_health_from_labels(labels)
-            piece_count = sum(1 for label in labels if label != "1")
-            objective = plaus + 1.5 * k_health + 0.30 * piece_count + 0.35 * (log_bonus / 8.0)
-            scored.append((objective, labels, log_bonus))
-        scored.sort(key=lambda row: row[0], reverse=True)
-        beam = [(labels, log_bonus) for _objective, labels, log_bonus in scored[:24]]
-
-    base_obj = board_plausibility_score(base_fen) + 1.5 * _king_health_from_labels(base_labels) + 0.30 * base_piece_count
-    best = (base_obj, base_fen, base_conf, base_piece_count)
-    for labels, log_bonus in beam:
-        fen = _labels_to_fen(labels)
-        piece_count = sum(1 for label in labels if label != "1")
-        probs = np.array([_label_prob_from_topk(tile_infos[i], labels[i]) for i in range(64)], dtype=np.float32)
-        conf = float(np.mean(probs))
-        obj = board_plausibility_score(fen) + 1.5 * _king_health_from_labels(labels) + 0.30 * piece_count + 0.35 * (log_bonus / 8.0)
-        if obj > best[0]:
-            best = (obj, fen, conf, piece_count)
-
-    if best[0] <= base_obj + 0.12 or best[1] == base_fen:
-        return None
-    return best[1], float(best[2]), int(best[3])
 
 
 def rescore_low_saturation_sparse_from_topk(tile_infos, base_fen, base_conf):
@@ -963,74 +794,25 @@ def rescore_low_saturation_sparse_from_topk(tile_infos, base_fen, base_conf):
             fen = _labels_to_fen(labels)
             plaus = board_plausibility_score(fen)
             k_health = _king_health_from_labels(labels)
-            piece_count = sum(1 for x in labels if x != "1")
-            edge_rook_count = _edge_rook_count_from_labels(labels)
             objective = (
                 plaus
                 + 1.5 * k_health
-                + LOW_SAT_EDGE_ROOK_OBJECTIVE_BONUS * edge_rook_count
                 + 0.5 * (log_bonus / 8.0)
             )
             scored.append((objective, labels, changes, log_bonus))
         scored.sort(key=lambda row: row[0], reverse=True)
         beam = [(labels, changes, log_bonus) for _obj, labels, changes, log_bonus in scored[:24]]
 
-    def promote_missing_edge_rook(labels):
-        out = list(labels)
-
-        def score_current_label(tile, current_label):
-            if current_label == "1":
-                return float(tile.get("empty_prob", _label_prob_from_topk(tile, "1")))
-            return _label_prob_from_topk(tile, current_label)
-
-        def try_color(target_rook, opposite_rook, same_color_check):
-            if sum(1 for x in out if x == target_rook) > 0:
-                return
-            if sum(1 for x in out if x == opposite_rook) == 0:
-                return
-
-            best_idx = None
-            best_score = 0.0
-            for idx, current in enumerate(out):
-                if current in {"K", "k"}:
-                    continue
-                if current != "1" and not same_color_check(current):
-                    continue
-                row = idx // 8
-                col = idx % 8
-                if row not in (0, 7) and col not in (0, 7):
-                    continue
-                rook_prob = _label_prob_from_topk(tile_infos[idx], target_rook)
-                if rook_prob < 0.03:
-                    continue
-                cur_prob = score_current_label(tile_infos[idx], current)
-                edge_bonus = 0.03 if row in (0, 7) else 0.0
-                empty_bonus = 0.02 if current == "1" else 0.0
-                score = rook_prob - 0.10 * cur_prob + edge_bonus + empty_bonus
-                if score > best_score:
-                    best_score = score
-                    best_idx = idx
-
-            if best_idx is not None and best_score > 0.0:
-                out[best_idx] = target_rook
-
-        try_color("r", "R", lambda ch: ch.islower())
-        try_color("R", "r", lambda ch: ch.isupper())
-        return out
-
     def eval_labels(labels, log_bonus):
-        labels = promote_missing_edge_rook(labels)
         fen = _labels_to_fen(labels)
         plaus = board_plausibility_score(fen)
         k_health = _king_health_from_labels(labels)
         piece_count = sum(1 for x in labels if x != "1")
-        edge_rook_count = _edge_rook_count_from_labels(labels)
         probs = np.array([_label_prob_from_topk(tile_infos[i], labels[i]) for i in range(64)], dtype=np.float32)
         conf = float(np.mean(probs))
         objective = (
             plaus
             + 1.5 * k_health
-            + LOW_SAT_EDGE_ROOK_OBJECTIVE_BONUS * edge_rook_count
             + 0.5 * (log_bonus / 8.0)
         )
         return objective, fen, conf, piece_count, k_health
@@ -1048,87 +830,6 @@ def rescore_low_saturation_sparse_from_topk(tile_infos, base_fen, base_conf):
 
     improved = best[0] > (base_obj + 0.15)
     if not improved or best[1] == base_fen:
-        return None
-    return best[1], float(best[2]), int(best[3])
-
-
-def suppress_sparse_false_positives(tile_infos, base_fen, base_conf):
-    if not tile_infos:
-        return None
-
-    base_labels = [tile["label"] for tile in tile_infos]
-    base_piece_count = sum(1 for label in base_labels if label != "1")
-    if base_piece_count > 12:
-        return None
-
-    uncertain = []
-    for idx, tile in enumerate(tile_infos):
-        current = tile["label"]
-        if current in {"1", "K", "k"}:
-            continue
-        current_prob = _label_prob_from_topk(tile, current)
-        empty_prob = float(tile.get("empty_prob", _label_prob_from_topk(tile, "1")))
-        if empty_prob < 0.04:
-            continue
-        closeness = empty_prob - 0.75 * current_prob
-        uncertain.append((closeness, idx, current_prob, empty_prob))
-
-    if not uncertain:
-        return None
-
-    uncertain.sort(reverse=True)
-    uncertain = uncertain[:16]
-    beam = [(base_labels, 0, 0.0)]
-
-    for _gain, idx, current_prob, empty_prob in uncertain:
-        next_beam = {}
-        for labels, changes, log_bonus in beam:
-            key_keep = tuple(labels)
-            prev_keep = next_beam.get(key_keep)
-            if prev_keep is None or log_bonus > prev_keep[2]:
-                next_beam[key_keep] = (labels, changes, log_bonus)
-
-            if changes >= 3:
-                continue
-            new_labels = list(labels)
-            new_labels[idx] = "1"
-            new_log_bonus = log_bonus + float(np.log(max(empty_prob, 1e-12))) - float(np.log(max(current_prob, 1e-12)))
-            key_new = tuple(new_labels)
-            prev_new = next_beam.get(key_new)
-            if prev_new is None or new_log_bonus > prev_new[2]:
-                next_beam[key_new] = (new_labels, changes + 1, new_log_bonus)
-
-        scored = []
-        for labels, changes, log_bonus in next_beam.values():
-            fen = _labels_to_fen(labels)
-            plaus = board_plausibility_score(fen)
-            k_health = _king_health_from_labels(labels)
-            piece_count = sum(1 for x in labels if x != "1")
-            objective = plaus + 1.5 * k_health - 0.10 * piece_count + 0.5 * log_bonus
-            scored.append((objective, labels, changes, log_bonus))
-        scored.sort(key=lambda row: row[0], reverse=True)
-        beam = [(labels, changes, log_bonus) for _obj, labels, changes, log_bonus in scored[:24]]
-
-    def eval_labels(labels, log_bonus):
-        fen = _labels_to_fen(labels)
-        plaus = board_plausibility_score(fen)
-        k_health = _king_health_from_labels(labels)
-        piece_count = sum(1 for x in labels if x != "1")
-        probs = np.array([_label_prob_from_topk(tile_infos[i], labels[i]) for i in range(64)], dtype=np.float32)
-        conf = float(np.mean(probs))
-        objective = plaus + 1.5 * k_health - 0.10 * piece_count + 0.5 * log_bonus
-        return objective, fen, conf, piece_count, k_health
-
-    base_obj, _, _, _, base_kh = eval_labels(base_labels, 0.0)
-    best = (base_obj, base_fen, base_conf, base_piece_count, base_kh)
-    for labels, _changes, log_bonus in beam:
-        obj, fen, conf, piece_count, k_health = eval_labels(labels, log_bonus)
-        if k_health < base_kh:
-            continue
-        if obj > best[0]:
-            best = (obj, fen, conf, piece_count, k_health)
-
-    if best[0] <= base_obj + 0.08 or best[1] == base_fen:
         return None
     return best[1], float(best[2]), int(best[3])
 
@@ -1227,14 +928,6 @@ def infer_fen_on_image_clean(
     final_fen = fen
     final_conf = float(np.mean(confs))
     final_piece_count = piece_count
-
-    repaired_kings = enforce_king_counts_from_topk(tile_infos)
-    if repaired_kings is not None and repaired_kings[0] != final_fen:
-        final_fen, final_conf, final_piece_count = repaired_kings
-
-    sparse_cleanup = suppress_sparse_false_positives(tile_infos, base_fen=final_fen, base_conf=final_conf)
-    if sparse_cleanup is not None and sparse_cleanup[0] != final_fen:
-        final_fen, final_conf, final_piece_count = sparse_cleanup
 
     details = {"base_fen": fen, "final_fen": final_fen, "tile_infos": tile_infos}
 
@@ -2102,14 +1795,6 @@ def decode_candidate(candidate, model, device, board_perspective, orientation_co
             if rescored is not None:
                 fen, conf, piece_count = rescored
 
-        missing_king = repair_missing_king_from_topk(details.get("tile_infos", []), base_fen=fen, base_conf=conf)
-        if missing_king is not None:
-            fen, conf, piece_count = missing_king
-
-        sparse_piece_repair = promote_sparse_pieces_from_topk(details.get("tile_infos", []), base_fen=fen, base_conf=conf)
-        if sparse_piece_repair is not None:
-            fen, conf, piece_count = sparse_piece_repair
-
         return variant_img, fen, conf, piece_count
 
     decoded_variants = [decode_variant(candidate_img)]
@@ -2161,17 +1846,14 @@ def select_best_candidate(scored):
         conf_adj = float(item[3])
         stats = image_saturation_stats(item[1])
         low_sat_sparse = stats["sat_mean"] <= LOW_SAT_SPARSE_SAT_MEAN_MAX and piece_count <= LOW_SAT_SPARSE_PIECE_MAX
-        edge_rook_bonus = _edge_rook_count_from_labels(list("".join(expand_fen_board(fen_board)))) if low_sat_sparse else 0
         if "gradient_projection" in str(item[0]):
             conf_adj -= 0.010
         if "panel_split" in str(item[0]):
             conf_adj -= 0.030
-        sparse_bonus_enabled = low_sat_sparse and float(item[3]) >= (best_raw_conf - 0.025)
-        edge_rook_bonus = edge_rook_bonus if sparse_bonus_enabled else 0
-        sparse_piece_bonus = piece_count if sparse_bonus_enabled else 0
-        enriched.append((item, plausibility, k_health, edge_rook_bonus, sparse_piece_bonus, has_double_check_conflict, geom_q, conf_adj))
+        sparse_piece_bonus = piece_count if low_sat_sparse and float(item[3]) >= (best_raw_conf - 0.025) else 0
+        enriched.append((item, plausibility, k_health, sparse_piece_bonus, has_double_check_conflict, geom_q, conf_adj))
 
-    return max(enriched, key=lambda pair: (pair[1], pair[2], pair[3], pair[4], -int(pair[5]), pair[7], pair[6]))[0]
+    return max(enriched, key=lambda pair: (pair[1], pair[2], pair[3], -int(pair[4]), pair[6], pair[5]))[0]
 
 
 def predict_board(image_path, model_path=None, board_perspective="auto"):

@@ -16,7 +16,15 @@ FEN_CHARS = "1PNBRQKpnbrqk"
 # 0:1, 1:P, 2:N, 3:B, 4:R, 5:Q, 6:K, 7:p, 8:n, 9:b, 10:r, 11:q, 12:k
 
 IMG_SIZE = 64
-PRINT_DIAGRAM_PROFILES = {"mono_scan", "mono_print_sparse_edge"}
+PRINT_DIAGRAM_PROFILES = {
+    "mono_scan",
+    "mono_print_sparse_edge",
+    "mono_print_sparse_light",
+    "mono_print_edge_rook",
+    "book_page_sparse",
+    "shirt_print_sparse",
+    "edge_rook_page",
+}
 PRINT_DIAGRAM_BASE_SET = "cburnett"
 
 
@@ -42,7 +50,7 @@ SEED = env_int("SEED", 1337)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BOARD_THEMES_DIR = os.path.join(BASE_DIR, "board_themes")
 PIECE_SETS_DIR = os.path.join(BASE_DIR, "piece_sets")
-OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6_mono_logo_v4"))
+OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6_mono_logo_v6"))
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 BASE_CONFIG = {
@@ -218,6 +226,34 @@ PROFILE_OVERRIDES = {
         "MIN_PLIES": 8,
         "MAX_PLIES": 60,
     },
+    "dark_anchor_rook": {
+        "BOARD_THEME_NAMES": ["grey.jpg", "olive.jpg", "wood4.jpg", "metal.jpg", "blue3.jpg"],
+        "PIECE_SET_NAMES": ["cburnett", "merida", "maestro", "governor"],
+        "LABELS_PROB": 0.72,
+        "TRIM_CAPTURE_PROB": 0.06,
+        "ARTIFACT_EMPTY_TILE_PROB": 0.04,
+        "HIGHLIGHT_BOARD_PROB": 0.12,
+        "ARROW_BOARD_PROB": 0.08,
+        "TACTICAL_MARKER_PROB": 0.10,
+        "WATERMARK_BOARD_PROB": 0.02,
+        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.02,
+        "HARD_EDGE_ROOK_PROB": 0.42,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.14,
+        "SPARSE_BOARD_PROB": 0.14,
+        "SCREENSHOT_CLUTTER_PROB": 0.06,
+        "DETECTOR_BANNER_PROB": 0.01,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.02,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.04,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.01,
+        "PIECE_OCCLUSION_PROB": 0.05,
+        "LOCAL_PIECE_TILT_PROB": 0.02,
+        "AUG_ROTATE_PROB": 0.08,
+        "AUG_ROTATE_MAX_DEG": 1.5,
+        "AUG_PERSPECTIVE_PROB": 0.06,
+        "AUG_PERSPECTIVE_SCALE": 0.010,
+        "MIN_PLIES": 6,
+        "MAX_PLIES": 55,
+    },
     "clutter": {
         "LABELS_PROB": 1.0,
         "TRIM_CAPTURE_PROB": 0.10,
@@ -295,6 +331,7 @@ PROFILE_OVERRIDES = {
     "mono_print_sparse_light": {
         "BOARD_THEME_NAMES": ["mono_paper_scan_light.png", "mono_paper_scan_mid.png", "mono_heather_print.png"],
         "PIECE_SET_NAMES": ["mono_print_scan", "mono_print_faded"],
+        "PRINT_STYLE_CHOICES": [("book_photo", 0.52), ("flat_book", 0.20), ("hatched_book", 0.18), ("shirt_photo", 0.10)],
         "LABELS_PROB": 0.42,
         "TRIM_CAPTURE_PROB": 0.10,
         "ARTIFACT_EMPTY_TILE_PROB": 0.10,
@@ -325,6 +362,7 @@ PROFILE_OVERRIDES = {
     "mono_print_edge_rook": {
         "BOARD_THEME_NAMES": ["mono_paper_scan_light.png", "mono_paper_scan_mid.png", "mono_heather_print.png"],
         "PIECE_SET_NAMES": ["mono_print_scan", "mono_print_faded"],
+        "PRINT_STYLE_CHOICES": [("book_photo", 0.50), ("shirt_photo", 0.25), ("flat_book", 0.15), ("hatched_book", 0.10)],
         "LABELS_PROB": 0.38,
         "TRIM_CAPTURE_PROB": 0.10,
         "ARTIFACT_EMPTY_TILE_PROB": 0.10,
@@ -349,6 +387,99 @@ PROFILE_OVERRIDES = {
         "AUG_ROTATE_MAX_DEG": 0.8,
         "AUG_PERSPECTIVE_PROB": 0.04,
         "AUG_PERSPECTIVE_SCALE": 0.008,
+        "MIN_PLIES": 0,
+        "MAX_PLIES": 12,
+    },
+    "book_page_sparse": {
+        "BOARD_THEME_NAMES": ["mono_paper_scan_light.png", "mono_paper_scan_mid.png"],
+        "PIECE_SET_NAMES": ["mono_print_scan", "mono_print_faded"],
+        "PRINT_STYLE_CHOICES": [("book_photo", 1.0)],
+        "LABELS_PROB": 0.48,
+        "TRIM_CAPTURE_PROB": 0.06,
+        "ARTIFACT_EMPTY_TILE_PROB": 0.06,
+        "HIGHLIGHT_BOARD_PROB": 0.03,
+        "ARROW_BOARD_PROB": 0.01,
+        "TACTICAL_MARKER_PROB": 0.03,
+        "WATERMARK_BOARD_PROB": 0.01,
+        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.01,
+        "HARD_EDGE_ROOK_PROB": 0.34,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.22,
+        "SPARSE_BOARD_PROB": 0.72,
+        "SCREENSHOT_CLUTTER_PROB": 0.02,
+        "DETECTOR_BANNER_PROB": 0.00,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.01,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.98,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.00,
+        "MONO_STRUCTURAL_DAMAGE_PROB": 0.16,
+        "MONO_EDGE_PIECE_FADE_PROB": 0.08,
+        "PIECE_OCCLUSION_PROB": 0.01,
+        "LOCAL_PIECE_TILT_PROB": 0.02,
+        "AUG_ROTATE_PROB": 0.04,
+        "AUG_ROTATE_MAX_DEG": 0.5,
+        "AUG_PERSPECTIVE_PROB": 0.02,
+        "AUG_PERSPECTIVE_SCALE": 0.005,
+        "MIN_PLIES": 0,
+        "MAX_PLIES": 14,
+    },
+    "shirt_print_sparse": {
+        "BOARD_THEME_NAMES": ["mono_heather_print.png"],
+        "PIECE_SET_NAMES": ["mono_print_scan", "mono_print_faded"],
+        "PRINT_STYLE_CHOICES": [("shirt_photo", 1.0)],
+        "LABELS_PROB": 0.44,
+        "TRIM_CAPTURE_PROB": 0.06,
+        "ARTIFACT_EMPTY_TILE_PROB": 0.06,
+        "HIGHLIGHT_BOARD_PROB": 0.03,
+        "ARROW_BOARD_PROB": 0.01,
+        "TACTICAL_MARKER_PROB": 0.03,
+        "WATERMARK_BOARD_PROB": 0.01,
+        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.01,
+        "HARD_EDGE_ROOK_PROB": 0.30,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.18,
+        "SPARSE_BOARD_PROB": 0.68,
+        "SCREENSHOT_CLUTTER_PROB": 0.02,
+        "DETECTOR_BANNER_PROB": 0.00,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.01,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.98,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.00,
+        "MONO_STRUCTURAL_DAMAGE_PROB": 0.18,
+        "MONO_EDGE_PIECE_FADE_PROB": 0.10,
+        "PIECE_OCCLUSION_PROB": 0.01,
+        "LOCAL_PIECE_TILT_PROB": 0.03,
+        "AUG_ROTATE_PROB": 0.04,
+        "AUG_ROTATE_MAX_DEG": 0.6,
+        "AUG_PERSPECTIVE_PROB": 0.02,
+        "AUG_PERSPECTIVE_SCALE": 0.005,
+        "MIN_PLIES": 0,
+        "MAX_PLIES": 14,
+    },
+    "edge_rook_page": {
+        "BOARD_THEME_NAMES": ["mono_paper_scan_light.png", "mono_paper_scan_mid.png"],
+        "PIECE_SET_NAMES": ["mono_print_scan", "mono_print_faded"],
+        "PRINT_STYLE_CHOICES": [("book_photo", 0.72), ("flat_book", 0.28)],
+        "LABELS_PROB": 0.44,
+        "TRIM_CAPTURE_PROB": 0.06,
+        "ARTIFACT_EMPTY_TILE_PROB": 0.06,
+        "HIGHLIGHT_BOARD_PROB": 0.02,
+        "ARROW_BOARD_PROB": 0.01,
+        "TACTICAL_MARKER_PROB": 0.03,
+        "WATERMARK_BOARD_PROB": 0.01,
+        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.01,
+        "HARD_EDGE_ROOK_PROB": 0.94,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.84,
+        "SPARSE_BOARD_PROB": 0.78,
+        "SCREENSHOT_CLUTTER_PROB": 0.01,
+        "DETECTOR_BANNER_PROB": 0.00,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.01,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.98,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.00,
+        "MONO_STRUCTURAL_DAMAGE_PROB": 0.14,
+        "MONO_EDGE_PIECE_FADE_PROB": 0.10,
+        "PIECE_OCCLUSION_PROB": 0.01,
+        "LOCAL_PIECE_TILT_PROB": 0.02,
+        "AUG_ROTATE_PROB": 0.04,
+        "AUG_ROTATE_MAX_DEG": 0.5,
+        "AUG_PERSPECTIVE_PROB": 0.02,
+        "AUG_PERSPECTIVE_SCALE": 0.005,
         "MIN_PLIES": 0,
         "MAX_PLIES": 12,
     },
@@ -386,6 +517,40 @@ PROFILE_OVERRIDES = {
         "MIN_PLIES": 2,
         "MAX_PLIES": 26,
     },
+    "logo_overlay_light": {
+        "BOARD_THEME_NAMES": ["grey.jpg", "mono_paper_scan_light.png"],
+        "LABELS_PROB": 0.70,
+        "TRIM_CAPTURE_PROB": 0.05,
+        "ARTIFACT_EMPTY_TILE_PROB": 0.10,
+        "HIGHLIGHT_BOARD_PROB": 0.04,
+        "ARROW_BOARD_PROB": 0.03,
+        "TACTICAL_MARKER_PROB": 0.04,
+        "WATERMARK_BOARD_PROB": 0.55,
+        "WATERMARK_MIN_PER_BOARD": 1,
+        "WATERMARK_MAX_PER_BOARD": 1,
+        "WATERMARK_SCALE_MIN": 0.82,
+        "WATERMARK_SCALE_MAX": 1.22,
+        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.96,
+        "HARD_EDGE_ROOK_PROB": 0.10,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.08,
+        "SPARSE_BOARD_PROB": 0.34,
+        "SCREENSHOT_CLUTTER_PROB": 0.04,
+        "DETECTOR_BANNER_PROB": 0.02,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.02,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.18,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.02,
+        "MONO_STRUCTURAL_DAMAGE_PROB": 0.06,
+        "MONO_EDGE_PIECE_FADE_PROB": 0.02,
+        "PIECE_OCCLUSION_PROB": 0.02,
+        "LOCAL_PIECE_TILT_PROB": 0.06,
+        "LOCAL_PIECE_TILT_MAX_DEG": 14.0,
+        "AUG_ROTATE_PROB": 0.08,
+        "AUG_ROTATE_MAX_DEG": 1.2,
+        "AUG_PERSPECTIVE_PROB": 0.04,
+        "AUG_PERSPECTIVE_SCALE": 0.008,
+        "MIN_PLIES": 4,
+        "MAX_PLIES": 30,
+    },
     "tilt_anchor": {
         "BOARD_THEME_NAMES": ["grey.jpg", "olive.jpg", "wood3.jpg", "blue2.jpg"],
         "PIECE_SET_NAMES": ["cburnett", "merida", "maestro"],
@@ -419,7 +584,7 @@ PROFILE_OVERRIDES = {
 
 # Deterministic data recipe (not ad-hoc random drift):
 # fixed per-chunk quotas that are auditable and repeatable.
-RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_mono_logo_recovery_v4")
+RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_mono_logo_recovery_v6")
 PROFILE_RECIPES = {
     "v6_targeted_v1": [
         ("clean", 0.30),
@@ -477,8 +642,27 @@ PROFILE_RECIPES = {
         ("tilt_anchor", 0.03),
         ("logo_overlay", 0.01),
     ],
+    "v6_mono_logo_recovery_v5": [
+        ("clean", 0.24),
+        ("dark_anchor_clean", 0.22),
+        ("dark_anchor_rook", 0.14),
+        ("mono_print_sparse_light", 0.20),
+        ("mono_print_edge_rook", 0.16),
+        ("mono_scan", 0.03),
+        ("tilt_anchor", 0.01),
+    ],
+    "v6_mono_logo_recovery_v6": [
+        ("clean", 0.30),
+        ("dark_anchor_clean", 0.24),
+        ("book_page_sparse", 0.16),
+        ("shirt_print_sparse", 0.10),
+        ("edge_rook_page", 0.08),
+        ("tilt_anchor", 0.06),
+        ("logo_overlay_light", 0.04),
+        ("dark_anchor_rook", 0.02),
+    ],
 }
-DEFAULT_PROFILE_WEIGHTS = PROFILE_RECIPES.get(RECIPE_NAME, PROFILE_RECIPES["v6_mono_logo_recovery_v4"])
+DEFAULT_PROFILE_WEIGHTS = PROFILE_RECIPES.get(RECIPE_NAME, PROFILE_RECIPES["v6_mono_logo_recovery_v6"])
 
 
 def get_profile_config(profile):
@@ -1256,14 +1440,39 @@ def load_print_piece_alpha(piece_name):
     return img.getchannel("A")
 
 
-def choose_print_diagram_style(profile):
+def choose_print_diagram_style(profile, cfg):
+    forced_styles = cfg.get("PRINT_STYLE_CHOICES")
+    if forced_styles:
+        names = [name for name, _ in forced_styles]
+        weights = [weight for _, weight in forced_styles]
+        return random.choices(names, weights=weights, k=1)[0]
+
     if profile == "mono_print_sparse_edge":
         styles = [("hatched_book", 0.45), ("shirt_print", 0.35), ("flat_book", 0.20)]
+    elif profile == "mono_print_edge_rook":
+        styles = [("flat_book", 0.55), ("hatched_book", 0.35), ("shirt_print", 0.10)]
+    elif profile in {"mono_print_sparse_light", "mono_scan"}:
+        styles = [("flat_book", 0.58), ("hatched_book", 0.37), ("shirt_print", 0.05)]
     else:
         styles = [("hatched_book", 0.35), ("flat_book", 0.40), ("shirt_print", 0.25)]
     names = [name for name, _ in styles]
     weights = [weight for _, weight in styles]
     return random.choices(names, weights=weights, k=1)[0]
+
+
+def build_print_grid_edges(size, tile_size, max_jitter):
+    if max_jitter <= 0:
+        return [i * tile_size for i in range(9)]
+
+    edges = [0]
+    min_width = tile_size - max_jitter
+    for idx in range(1, 8):
+        base = idx * tile_size + random.randint(-max_jitter, max_jitter)
+        min_edge = edges[-1] + min_width
+        max_edge = size - (8 - idx) * min_width
+        edges.append(int(max(min_edge, min(base, max_edge))))
+    edges.append(size)
+    return edges
 
 
 def render_print_board_base(style, tile_size=64):
@@ -1273,17 +1482,31 @@ def render_print_board_base(style, tile_size=64):
 
     if style == "hatched_book":
         light_fill, dark_fill, hatch_fill = 222, 200, 150
+        x_edges = build_print_grid_edges(size, tile_size, 0)
+        y_edges = build_print_grid_edges(size, tile_size, 0)
     elif style == "shirt_print":
         light_fill, dark_fill, hatch_fill = 230, 206, 164
+        x_edges = build_print_grid_edges(size, tile_size, 0)
+        y_edges = build_print_grid_edges(size, tile_size, 0)
+    elif style == "book_photo":
+        light_fill, dark_fill, hatch_fill = 235, 190, 150
+        x_edges = build_print_grid_edges(size, tile_size, 4)
+        y_edges = build_print_grid_edges(size, tile_size, 4)
+    elif style == "shirt_photo":
+        light_fill, dark_fill, hatch_fill = 218, 180, 148
+        x_edges = build_print_grid_edges(size, tile_size, 5)
+        y_edges = build_print_grid_edges(size, tile_size, 5)
     else:
         light_fill, dark_fill, hatch_fill = 224, 186, 166
+        x_edges = build_print_grid_edges(size, tile_size, 0)
+        y_edges = build_print_grid_edges(size, tile_size, 0)
 
     for row_idx in range(8):
         for col_idx in range(8):
-            x0 = col_idx * tile_size
-            y0 = row_idx * tile_size
-            x1 = x0 + tile_size
-            y1 = y0 + tile_size
+            x0 = x_edges[col_idx]
+            y0 = y_edges[row_idx]
+            x1 = x_edges[col_idx + 1]
+            y1 = y_edges[row_idx + 1]
             is_dark = (row_idx + col_idx) % 2 == 1
             fill = dark_fill if is_dark else light_fill
             draw.rectangle([x0, y0, x1, y1], fill=fill)
@@ -1291,25 +1514,45 @@ def render_print_board_base(style, tile_size=64):
                 step = 5 if style == "hatched_book" else 6
                 for offset in range(-tile_size, tile_size * 2, step):
                     draw.line(
-                        [(x0 + offset, y0), (x0 + offset + tile_size, y1)],
+                        [(x0 + offset, y0), (x0 + offset + (x1 - x0), y1)],
                         fill=hatch_fill,
                         width=1,
                     )
+
+    if style in {"book_photo", "shirt_photo"}:
+        line_fill = 132 if style == "book_photo" else 138
+        for edge in x_edges[1:-1]:
+            draw.line([edge, 0, edge, size], fill=line_fill, width=random.randint(1, 2))
+        for edge in y_edges[1:-1]:
+            draw.line([0, edge, size, edge], fill=line_fill, width=random.randint(1, 2))
 
     arr = np.asarray(canvas, dtype=np.float32)
     paper = build_soft_noise_map(size, size, low_res_side=18, low=0.90, high=1.08)
     arr *= paper
 
-    if style == "shirt_print":
+    if style in {"shirt_print", "shirt_photo"}:
         cloth = build_soft_noise_map(size, size, low_res_side=52, low=0.94, high=1.06)
         arr = arr * cloth + (cloth - 1.0) * 24.0
+        if style == "shirt_photo":
+            weave_x = build_soft_noise_map(size, size, low_res_side=96, low=0.985, high=1.015)
+            weave_y = build_soft_noise_map(size, size, low_res_side=96, low=0.985, high=1.015).T
+            weave_y = weave_y[:size, :size]
+            arr = arr * weave_x * weave_y
+    elif style == "book_photo":
+        page_slope = np.linspace(1.03, 0.97, size, dtype=np.float32)
+        arr *= np.tile(page_slope, (size, 1))
+        spine_shadow = np.linspace(0.92, 1.02, size, dtype=np.float32)
+        arr *= np.tile(spine_shadow[:, None], (1, size))
+        margin_shadow = np.linspace(0.97, 1.03, size, dtype=np.float32)
+        arr *= np.tile(margin_shadow, (size, 1))
     else:
         fibers_x = build_soft_noise_map(size, size, low_res_side=68, low=0.97, high=1.03)
         fibers_y = build_soft_noise_map(size, size, low_res_side=68, low=0.97, high=1.03).T
         fibers_y = fibers_y[:size, :size]
         arr = arr + (fibers_x - 1.0) * 14.0 + (fibers_y - 1.0) * 10.0
 
-    return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("L").convert("RGB")
+    board = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("L").convert("RGB")
+    return board, x_edges, y_edges
 
 
 def render_print_piece(char, style, row_idx, col_idx):
@@ -1317,9 +1560,9 @@ def render_print_piece(char, style, row_idx, col_idx):
     alpha_img = load_print_piece_alpha(piece_name).copy()
     edge_square = row_idx in (0, 7) or col_idx in (0, 7)
 
-    if style == "shirt_print":
+    if style in {"shirt_print", "shirt_photo"}:
         alpha_img = alpha_img.resize((58, 58), Image.BICUBIC).resize((64, 64), Image.BICUBIC)
-    elif style == "hatched_book":
+    elif style in {"hatched_book", "book_photo"}:
         alpha_img = alpha_img.resize((60, 60), Image.BICUBIC).resize((64, 64), Image.BICUBIC)
 
     arr = np.asarray(alpha_img, dtype=np.float32) / 255.0
@@ -1328,18 +1571,25 @@ def render_print_piece(char, style, row_idx, col_idx):
         damage_floor = 0.74
     elif style == "hatched_book":
         damage_floor = 0.62
+    elif style == "book_photo":
+        damage_floor = 0.88
+    elif style == "shirt_photo":
+        damage_floor = 0.76
     else:
         damage_floor = 0.30
     arr *= np.clip(damage_floor + damage * (1.0 - damage_floor), 0.0, 1.0)
-    if edge_square and (style == "shirt_print" or random.random() < 0.45):
+    if edge_square and (style in {"shirt_print", "shirt_photo"} or random.random() < 0.45):
         arr *= build_edge_piece_fade_mask(64, row_idx, col_idx)
-    if random.random() < (0.20 if style != "shirt_print" else 0.60):
+    if random.random() < (0.20 if style not in {"shirt_print", "shirt_photo"} else 0.60):
         cutoff = random.uniform(0.10, 0.20 if edge_square else 0.15)
         arr = np.where(arr >= cutoff, arr, 0.0)
 
     alpha = Image.fromarray(np.clip(arr * 255.0, 0, 255).astype(np.uint8)).convert("L")
-    if style == "shirt_print" and random.random() < 0.80:
-        alpha = alpha.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.35, 0.95)))
+    if style in {"shirt_print", "shirt_photo"} and random.random() < 0.80:
+        radius = random.uniform(0.35, 0.95)
+        if style == "shirt_photo":
+            radius = random.uniform(0.18, 0.55)
+        alpha = alpha.filter(ImageFilter.GaussianBlur(radius=radius))
     elif style != "shirt_print" and random.random() < 0.25:
         alpha = alpha.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.10, 0.35)))
 
@@ -1353,13 +1603,13 @@ def render_print_piece(char, style, row_idx, col_idx):
     inner_arr = np.asarray(inner, dtype=np.float32) / 255.0
 
     if char.isupper():
-        fill_val = 244 if style == "flat_book" else (238 if style == "hatched_book" else 228)
-        line_val = 92 if style == "flat_book" else (104 if style == "hatched_book" else 124)
+        fill_val = 244 if style == "flat_book" else (236 if style in {"hatched_book", "book_photo"} else 226)
+        line_val = 92 if style == "flat_book" else (110 if style in {"hatched_book", "book_photo"} else 132)
         rgb = inner_arr * fill_val + outline_arr * line_val
         alpha_arr = np.maximum(inner_arr * 0.96, outline_arr) * 255.0
     else:
-        fill_val = 26 if style == "flat_book" else (34 if style == "hatched_book" else 62)
-        line_val = 72 if style == "flat_book" else (82 if style == "hatched_book" else 102)
+        fill_val = 26 if style == "flat_book" else (42 if style in {"hatched_book", "book_photo"} else 72)
+        line_val = 72 if style == "flat_book" else (88 if style in {"hatched_book", "book_photo"} else 114)
         rgb = inner_arr * fill_val + outline_arr * line_val * 0.35
         alpha_arr = np.maximum(inner_arr, outline_arr * 0.8) * 255.0
 
@@ -1375,14 +1625,24 @@ def render_print_piece(char, style, row_idx, col_idx):
 def apply_print_capture_noise(img, style):
     out = img
     if random.random() < 0.75:
-        down = random.randint(470, 502) if style != "shirt_print" else random.randint(392, 460)
+        if style in {"shirt_print", "shirt_photo"}:
+            down = random.randint(392, 460)
+        elif style == "book_photo":
+            down = random.randint(460, 498)
+        else:
+            down = random.randint(470, 502)
         out = out.resize((down, down), Image.BILINEAR).resize((512, 512), Image.BILINEAR)
-    if style == "shirt_print" and random.random() < 0.75:
-        out = out.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.30, 0.90)))
+    if style in {"shirt_print", "shirt_photo"} and random.random() < 0.75:
+        radius = random.uniform(0.30, 0.90)
+        if style == "shirt_photo":
+            radius = random.uniform(0.16, 0.45)
+        out = out.filter(ImageFilter.GaussianBlur(radius=radius))
+    elif style == "book_photo" and random.random() < 0.55:
+        out = out.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.12, 0.40)))
     elif style != "shirt_print" and random.random() < 0.35:
         out = out.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.08, 0.28)))
     if random.random() < 0.45:
-        low, high = (0.88, 0.97) if style == "shirt_print" else (0.95, 1.02)
+        low, high = (0.88, 0.97) if style in {"shirt_print", "shirt_photo"} else (0.95, 1.02)
         out = ImageEnhance.Contrast(out).enhance(random.uniform(low, high))
     if random.random() < 0.40:
         arr = np.asarray(out, dtype=np.float32)
@@ -1392,9 +1652,9 @@ def apply_print_capture_noise(img, style):
 
 
 def render_print_diagram_board(fen, profile, cfg):
-    style = choose_print_diagram_style(profile)
+    style = choose_print_diagram_style(profile, cfg)
     tile_size = 64
-    board = render_print_board_base(style, tile_size=tile_size)
+    board, x_edges, y_edges = render_print_board_base(style, tile_size=tile_size)
 
     grid = [[None] * 8 for _ in range(8)]
     for row_idx, row_str in enumerate(fen.split("/")):
@@ -1412,7 +1672,23 @@ def render_print_diagram_board(fen, profile, cfg):
             if not char:
                 continue
             piece_img = render_print_piece(char, style, row_idx, col_idx)
-            board.paste(piece_img, (col_idx * tile_size, row_idx * tile_size), piece_img)
+            square_w = x_edges[col_idx + 1] - x_edges[col_idx]
+            square_h = y_edges[row_idx + 1] - y_edges[row_idx]
+            if style == "shirt_photo":
+                piece_scale = 0.76
+            elif style == "book_photo":
+                piece_scale = 0.80
+            else:
+                piece_scale = 0.84
+            if row_idx in (0, 7) or col_idx in (0, 7):
+                piece_scale *= 0.96
+            piece_size = max(42, int(min(square_w, square_h) * piece_scale))
+            placed = piece_img.resize((piece_size, piece_size), Image.BICUBIC)
+            jitter_x = random.randint(-2, 2) if style in {"book_photo", "shirt_photo"} else 0
+            jitter_y = random.randint(-2, 2) if style in {"book_photo", "shirt_photo"} else 0
+            paste_x = x_edges[col_idx] + (square_w - piece_size) // 2 + jitter_x
+            paste_y = y_edges[row_idx] + (square_h - piece_size) // 2 + jitter_y
+            board.paste(placed, (paste_x, paste_y), placed)
 
     board = apply_local_piece_tilt(board, grid, cfg)
     board = apply_print_capture_noise(board, style)
