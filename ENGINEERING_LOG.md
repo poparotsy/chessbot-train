@@ -657,3 +657,35 @@ Every commit must be documented with:
   - `python3 scripts/generate_samples.py --version v6 --profile tilt-anchor --count 3 --output-dir /tmp/v6_tilt_anchor_probe`
 - result:
   - next v6 experiment is isolated to the `*_v3` lane and is anchored more heavily toward ordinary dark boards, moderate mono print, and explicit tilt robustness
+
+## Entry
+
+- commit: `pending`
+- objective: Prepare a narrower `v4` recovery lane after direct checkpoint analysis showed `00005/00017` were anti-regressions and `00028/00031` were still dropping sparse edge pieces as empty.
+- files:
+  - `generate_hybrid_v6.py`
+  - `train_hybrid_v6.py`
+- behavior_change:
+  - Added `dark_anchor_clean` as a true ordinary-board anchor bucket with near-zero watermark, trim, sparse bias, mono degradation, and tilt so dark real boards stop being “unlearned”.
+  - Split the mono target into two lighter buckets:
+    - `mono_print_sparse_light` for the general `00003/00028/00031` family with much lower structural damage and edge fade
+    - `mono_print_edge_rook` for narrower `00028`-style faint edge-rook boards without the heavy board-emptying damage from earlier lanes
+  - Switched the default generator recipe to `v6_mono_logo_recovery_v4` and the default tensor output to `tensors_v6_mono_logo_v4`.
+  - Switched the default trainer lane to `model_hybrid_v6_mono_logo_v4_*` and `checkpoints_v6_mono_logo_v4`, keeping the warm-start base model on `models/model_hybrid_v5_latest_best.pt`.
+  - New `v4` recipe mix:
+    - `clean 0.30`
+    - `dark_anchor_clean 0.30`
+    - `mono_print_sparse_light 0.18`
+    - `mono_print_edge_rook 0.12`
+    - `mono_scan 0.06`
+    - `tilt_anchor 0.03`
+    - `logo_overlay 0.01`
+- validation:
+  - `python3 -m py_compile generate_hybrid_v6.py train_hybrid_v6.py`
+  - `python3 - <<'PY' ... import generate_hybrid_v6/train_hybrid_v6 and print recipe/output/model/checkpoint defaults ... PY`
+  - `python3 scripts/generate_samples.py --version v6 --profile dark-anchor-clean --count 3 --output-dir /tmp/v6_dark_anchor_clean_probe`
+  - `python3 scripts/generate_samples.py --version v6 --profile mono-print-sparse-light --count 3 --output-dir /tmp/v6_mono_sparse_light_probe`
+  - `python3 scripts/generate_samples.py --version v6 --profile mono-print-edge-rook --count 3 --output-dir /tmp/v6_mono_edge_rook_probe`
+- result:
+  - next v6 experiment is isolated to the `*_v4` lane
+  - the next run heavily favors true dark anchors and lighter mono-print targets instead of mixing ordinary boards with synthetic damage-heavy “anchors”

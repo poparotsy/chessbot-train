@@ -42,7 +42,7 @@ SEED = env_int("SEED", 1337)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BOARD_THEMES_DIR = os.path.join(BASE_DIR, "board_themes")
 PIECE_SETS_DIR = os.path.join(BASE_DIR, "piece_sets")
-OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6_mono_logo_v3"))
+OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6_mono_logo_v4"))
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 BASE_CONFIG = {
@@ -190,6 +190,34 @@ PROFILE_OVERRIDES = {
         "MIN_PLIES": 6,
         "MAX_PLIES": 55,
     },
+    "dark_anchor_clean": {
+        "BOARD_THEME_NAMES": ["grey.jpg", "olive.jpg", "wood4.jpg", "metal.jpg", "blue3.jpg"],
+        "PIECE_SET_NAMES": ["cburnett", "merida", "maestro", "governor"],
+        "LABELS_PROB": 0.74,
+        "TRIM_CAPTURE_PROB": 0.06,
+        "ARTIFACT_EMPTY_TILE_PROB": 0.04,
+        "HIGHLIGHT_BOARD_PROB": 0.12,
+        "ARROW_BOARD_PROB": 0.08,
+        "TACTICAL_MARKER_PROB": 0.10,
+        "WATERMARK_BOARD_PROB": 0.02,
+        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.02,
+        "HARD_EDGE_ROOK_PROB": 0.08,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.06,
+        "SPARSE_BOARD_PROB": 0.10,
+        "SCREENSHOT_CLUTTER_PROB": 0.06,
+        "DETECTOR_BANNER_PROB": 0.01,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.02,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.04,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.01,
+        "PIECE_OCCLUSION_PROB": 0.05,
+        "LOCAL_PIECE_TILT_PROB": 0.02,
+        "AUG_ROTATE_PROB": 0.08,
+        "AUG_ROTATE_MAX_DEG": 1.5,
+        "AUG_PERSPECTIVE_PROB": 0.06,
+        "AUG_PERSPECTIVE_SCALE": 0.010,
+        "MIN_PLIES": 8,
+        "MAX_PLIES": 60,
+    },
     "clutter": {
         "LABELS_PROB": 1.0,
         "TRIM_CAPTURE_PROB": 0.10,
@@ -264,6 +292,66 @@ PROFILE_OVERRIDES = {
         "MIN_PLIES": 0,
         "MAX_PLIES": 14,
     },
+    "mono_print_sparse_light": {
+        "BOARD_THEME_NAMES": ["mono_paper_scan_light.png", "mono_paper_scan_mid.png", "mono_heather_print.png"],
+        "PIECE_SET_NAMES": ["mono_print_scan", "mono_print_faded"],
+        "LABELS_PROB": 0.42,
+        "TRIM_CAPTURE_PROB": 0.10,
+        "ARTIFACT_EMPTY_TILE_PROB": 0.10,
+        "HIGHLIGHT_BOARD_PROB": 0.05,
+        "ARROW_BOARD_PROB": 0.02,
+        "TACTICAL_MARKER_PROB": 0.05,
+        "WATERMARK_BOARD_PROB": 0.03,
+        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.02,
+        "HARD_EDGE_ROOK_PROB": 0.55,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.42,
+        "SPARSE_BOARD_PROB": 0.62,
+        "SCREENSHOT_CLUTTER_PROB": 0.08,
+        "DETECTOR_BANNER_PROB": 0.01,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.03,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.92,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.01,
+        "MONO_STRUCTURAL_DAMAGE_PROB": 0.32,
+        "MONO_EDGE_PIECE_FADE_PROB": 0.18,
+        "PIECE_OCCLUSION_PROB": 0.03,
+        "LOCAL_PIECE_TILT_PROB": 0.04,
+        "AUG_ROTATE_PROB": 0.08,
+        "AUG_ROTATE_MAX_DEG": 0.8,
+        "AUG_PERSPECTIVE_PROB": 0.05,
+        "AUG_PERSPECTIVE_SCALE": 0.008,
+        "MIN_PLIES": 0,
+        "MAX_PLIES": 14,
+    },
+    "mono_print_edge_rook": {
+        "BOARD_THEME_NAMES": ["mono_paper_scan_light.png", "mono_paper_scan_mid.png", "mono_heather_print.png"],
+        "PIECE_SET_NAMES": ["mono_print_scan", "mono_print_faded"],
+        "LABELS_PROB": 0.38,
+        "TRIM_CAPTURE_PROB": 0.10,
+        "ARTIFACT_EMPTY_TILE_PROB": 0.10,
+        "HIGHLIGHT_BOARD_PROB": 0.04,
+        "ARROW_BOARD_PROB": 0.02,
+        "TACTICAL_MARKER_PROB": 0.04,
+        "WATERMARK_BOARD_PROB": 0.02,
+        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.01,
+        "HARD_EDGE_ROOK_PROB": 0.92,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.84,
+        "SPARSE_BOARD_PROB": 0.70,
+        "SCREENSHOT_CLUTTER_PROB": 0.06,
+        "DETECTOR_BANNER_PROB": 0.00,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.02,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.95,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.01,
+        "MONO_STRUCTURAL_DAMAGE_PROB": 0.38,
+        "MONO_EDGE_PIECE_FADE_PROB": 0.24,
+        "PIECE_OCCLUSION_PROB": 0.02,
+        "LOCAL_PIECE_TILT_PROB": 0.03,
+        "AUG_ROTATE_PROB": 0.07,
+        "AUG_ROTATE_MAX_DEG": 0.8,
+        "AUG_PERSPECTIVE_PROB": 0.04,
+        "AUG_PERSPECTIVE_SCALE": 0.008,
+        "MIN_PLIES": 0,
+        "MAX_PLIES": 12,
+    },
     "logo_overlay": {
         "BOARD_THEME_NAMES": ["mono_paper_scan_light.png", "mono_paper_scan_mid.png", "mono_heather_print.png", "grey.jpg"],
         "LABELS_PROB": 0.55,
@@ -331,7 +419,7 @@ PROFILE_OVERRIDES = {
 
 # Deterministic data recipe (not ad-hoc random drift):
 # fixed per-chunk quotas that are auditable and repeatable.
-RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_mono_logo_recovery_v3")
+RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_mono_logo_recovery_v4")
 PROFILE_RECIPES = {
     "v6_targeted_v1": [
         ("clean", 0.30),
@@ -380,8 +468,17 @@ PROFILE_RECIPES = {
         ("tilt_anchor", 0.05),
         ("hard_combo", 0.02),
     ],
+    "v6_mono_logo_recovery_v4": [
+        ("clean", 0.30),
+        ("dark_anchor_clean", 0.30),
+        ("mono_print_sparse_light", 0.18),
+        ("mono_print_edge_rook", 0.12),
+        ("mono_scan", 0.06),
+        ("tilt_anchor", 0.03),
+        ("logo_overlay", 0.01),
+    ],
 }
-DEFAULT_PROFILE_WEIGHTS = PROFILE_RECIPES.get(RECIPE_NAME, PROFILE_RECIPES["v6_mono_logo_recovery_v3"])
+DEFAULT_PROFILE_WEIGHTS = PROFILE_RECIPES.get(RECIPE_NAME, PROFILE_RECIPES["v6_mono_logo_recovery_v4"])
 
 
 def get_profile_config(profile):
