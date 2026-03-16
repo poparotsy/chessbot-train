@@ -4,6 +4,7 @@
 import argparse
 import importlib
 import random
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -48,7 +49,11 @@ def parse_args():
         type=Path,
         default=None,
         help="Directory to save sample images.")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible sampling.")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed for reproducible sampling. Defaults to a fresh random seed each run.")
     parser.add_argument(
         "--profile",
         default="default",
@@ -116,7 +121,9 @@ def apply_preview_overrides(gen, args, profile):
 
 def main():
     args = parse_args()
-    random.seed(args.seed)
+    seed = args.seed if args.seed is not None else random.SystemRandom().randrange(0, 2**32)
+    random.seed(seed)
+    np.random.seed(seed % (2**32))
     gen = load_generator(args.version)
     profile = normalize_profile(args.profile)
     validate_profile(gen, profile)
@@ -128,6 +135,7 @@ def main():
 
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest = []
+    sampled_counts = Counter()
     recipe_name = getattr(gen, "RECIPE_NAME", "(none)")
     default_weights = getattr(gen, "DEFAULT_PROFILE_WEIGHTS", [])
 
@@ -137,6 +145,7 @@ def main():
         f"{args.profile} "
         f"(mode={'mixed-default' if profile is None else profile})"
     )
+    print(f"Seed={seed}")
     if profile is None and default_weights:
         print(f"Recipe={recipe_name}")
         print(f"Weights={default_weights}")
@@ -148,10 +157,12 @@ def main():
             f"tilt_max_deg={args.tilt_max_deg if args.tilt_max_deg is not None else 'profile-default'}"
         )
     for i in range(args.count):
-        fen_board = gen.random_training_board(profile=profile).board_fen()
-        image, board_theme, piece_set, label_pov = render_board_image(gen, fen_board, profile=profile)
+        sampled_profile = gen.choose_profile(profile)
+        fen_board = gen.random_training_board(profile=sampled_profile).board_fen()
+        image, board_theme, piece_set, label_pov = render_board_image(gen, fen_board, profile=sampled_profile)
         out_path = output_dir / f"sample_{args.version}_{i + 1:03d}.png"
         image.save(out_path)
+        sampled_counts[sampled_profile] += 1
         manifest.append(
             {
                 "file": out_path.name,
@@ -159,11 +170,13 @@ def main():
                 "board_theme": board_theme,
                 "piece_set": piece_set,
                 "version": args.version,
-                "profile": args.profile,
+                "requested_profile": args.profile,
+                "sampled_profile": sampled_profile,
                 "label_pov": label_pov,
             })
         print(
-            f"  ✅ {out_path.name} | theme={board_theme} | pieces={piece_set} | "
+            f"  ✅ {out_path.name} | sampled_profile={sampled_profile} | "
+            f"theme={board_theme} | pieces={piece_set} | "
             f"labels={label_pov or 'none'}"
         )
 
@@ -173,7 +186,15 @@ def main():
             handle.write(
                 f"{item['file']} | fen={item['fen_board']} | theme={item['board_theme']} | "
                 f"pieces={item['piece_set']} | version={item['version']} | "
-                f"profile={item['profile']} | labels={item['label_pov']}\n")
+                f"requested_profile={item['requested_profile']} | "
+                f"sampled_profile={item['sampled_profile']} | "
+                f"labels={item['label_pov']}\n")
+
+    if sampled_counts:
+        ordered = ", ".join(
+            f"{name}:{sampled_counts[name]}" for name in sorted(sampled_counts)
+        )
+        print(f"\nSampled profile counts: {ordered}")
 
     print(f"\nSaved manifest: {manifest_path}")
 
