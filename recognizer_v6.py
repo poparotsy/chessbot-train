@@ -47,6 +47,11 @@ WARP_RELAXED_MAX_ANGLE_DEG = 145.0
 TILE_CONTEXT_PAD = 2
 ORIENTATION_STRONG_PIECE_MARGIN = 2.0
 ORIENTATION_WEAK_LABEL_MIN_CONF = 0.70
+ORIENTATION_BEST_EFFORT_MIN_MARGIN = 0.15
+ORIENTATION_BEST_EFFORT_MIN_PIECE_MARGIN = 1.80
+ORIENTATION_BEST_EFFORT_LABEL_SIDE_WEIGHT = 0.95
+ORIENTATION_BEST_EFFORT_PIECE_WEIGHT = 0.38
+ORIENTATION_BEST_EFFORT_STM_WEIGHT = 0.12
 PIECE_LOG_PRIOR = -0.20
 
 LOW_SAT_SPARSE_SAT_MEAN_MAX = 44.0
@@ -1704,6 +1709,7 @@ def collect_orientation_context(candidates, board_perspective):
         "label_details": {"left": None, "right": None},
         "labels_absent": True,
         "labels_same": False,
+        "partial_label_scores": {"white": 0.0, "black": 0.0},
     }
     if board_perspective != "auto":
         return context
@@ -1729,8 +1735,62 @@ def collect_orientation_context(candidates, board_perspective):
         "label_details": label_details,
         "labels_absent": labels_absent,
         "labels_same": labels_same,
+        "partial_label_scores": orientation_partial_label_scores(label_details),
     })
     return context
+
+
+def orientation_partial_label_scores(label_details):
+    scores = {"white": 0.0, "black": 0.0}
+    left_label = label_details.get("left")
+    right_label = label_details.get("right")
+
+    if left_label is not None:
+        left_char = str(left_label.get("label", "")).lower()
+        left_conf = float(left_label.get("confidence", 0.0))
+        if left_char == "a":
+            scores["white"] += left_conf * ORIENTATION_BEST_EFFORT_LABEL_SIDE_WEIGHT
+        elif left_char == "h":
+            scores["black"] += left_conf * ORIENTATION_BEST_EFFORT_LABEL_SIDE_WEIGHT
+
+    if right_label is not None:
+        right_char = str(right_label.get("label", "")).lower()
+        right_conf = float(right_label.get("confidence", 0.0))
+        if right_char == "h":
+            scores["white"] += right_conf * ORIENTATION_BEST_EFFORT_LABEL_SIDE_WEIGHT
+        elif right_char == "a":
+            scores["black"] += right_conf * ORIENTATION_BEST_EFFORT_LABEL_SIDE_WEIGHT
+
+    return scores
+
+
+def score_orientation_best_effort(fen, orientation_context):
+    scores = dict(orientation_context.get("partial_label_scores") or {"white": 0.0, "black": 0.0})
+    piece_margin = orientation_piece_margin(fen)
+    piece_guess = infer_board_perspective_from_piece_distribution(fen, threshold=0.0)
+    if piece_guess in {"white", "black"}:
+        boost = min(1.35, piece_margin * ORIENTATION_BEST_EFFORT_PIECE_WEIGHT)
+        scores[piece_guess] += boost
+
+    white_stm, white_stm_source = infer_side_to_move_from_checks(fen)
+    black_stm, black_stm_source = infer_side_to_move_from_checks(rotate_fen_180(fen))
+    if white_stm_source not in {"default_no_check_signal", "default_double_check_conflict", "default_invalid_board", "default_missing_king"}:
+        scores["white"] += ORIENTATION_BEST_EFFORT_STM_WEIGHT
+    if black_stm_source not in {"default_no_check_signal", "default_double_check_conflict", "default_invalid_board", "default_missing_king"}:
+        scores["black"] += ORIENTATION_BEST_EFFORT_STM_WEIGHT
+
+    return {
+        "scores": {
+            "white": float(scores["white"]),
+            "black": float(scores["black"]),
+        },
+        "piece_guess": piece_guess,
+        "piece_margin": float(piece_margin),
+        "stm_sources": {
+            "white": white_stm_source,
+            "black": black_stm_source,
+        },
+    }
 
 
 def resolve_candidate_orientation(fen, board_perspective, orientation_context):
@@ -1766,6 +1826,31 @@ def resolve_candidate_orientation(fen, board_perspective, orientation_context):
         if fallback == "black":
             return "black", "piece_distribution_fallback"
         return "white", "piece_distribution_fallback"
+
+    has_partial_labels = (left_label is not None or right_label is not None) and not (left_label is not None and right_label is not None)
+    partial_scores = orientation_context.get("partial_label_scores") or {"white": 0.0, "black": 0.0}
+    partial_label_guess = None
+    if float(partial_scores.get("white", 0.0)) > float(partial_scores.get("black", 0.0)):
+        partial_label_guess = "white"
+    elif float(partial_scores.get("black", 0.0)) > float(partial_scores.get("white", 0.0)):
+        partial_label_guess = "black"
+    piece_guess = infer_board_perspective_from_piece_distribution(fen, threshold=0.0)
+
+    if (
+        has_partial_labels
+        and piece_margin >= ORIENTATION_BEST_EFFORT_MIN_PIECE_MARGIN
+        and partial_label_guess in {"white", "black"}
+        and piece_guess in {"white", "black"}
+        and partial_label_guess != piece_guess
+    ):
+        best_effort = score_orientation_best_effort(fen, orientation_context)
+        white_score = float(best_effort["scores"]["white"])
+        black_score = float(best_effort["scores"]["black"])
+        margin = abs(white_score - black_score)
+        if margin >= ORIENTATION_BEST_EFFORT_MIN_MARGIN:
+            if black_score > white_score:
+                return "black", "best_effort_orientation"
+            return "white", "best_effort_orientation"
 
     return "white", "default"
 
@@ -1887,6 +1972,47 @@ def predict_board(image_path, model_path=None, board_perspective="auto"):
     return best[2], best[3]
 
 
+def predict_position(image_path, model_path=None, board_perspective="auto"):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    resolved_model_path = model_path or MODEL_PATH
+    if not resolved_model_path or not os.path.exists(resolved_model_path):
+        raise FileNotFoundError(
+            "Model checkpoint not found. "
+            f"Tried: {resolved_model_path}. "
+            "Set CHESSBOT_MODEL_PATH or pass --model-path explicitly."
+        )
+
+    model = StandaloneBeastClassifier(num_classes=13).to(device)
+    model.load_state_dict(torch.load(resolved_model_path, map_location=device))
+    model.eval()
+
+    img = Image.open(image_path).convert("RGB")
+    candidates = build_detector_candidates(img)
+    orientation_context = collect_orientation_context(candidates, board_perspective=board_perspective)
+    scored = [
+        decode_candidate(
+            candidate,
+            model=model,
+            device=device,
+            board_perspective=board_perspective,
+            orientation_context=orientation_context,
+        )
+        for candidate in candidates
+    ]
+    best = select_best_candidate(scored)
+    side_to_move, side_source = infer_side_to_move_from_checks(best[2])
+    return {
+        "board_fen": best[2],
+        "fen": f"{best[2]} {side_to_move} - - 0 1",
+        "confidence": float(best[3]),
+        "side_to_move": side_to_move,
+        "side_to_move_source": side_source,
+        "detected_perspective": best[5],
+        "perspective_source": best[6],
+        "best_tag": best[0],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="Recognize chess position from image (v6 clean)")
     parser.add_argument("image", help="Path to chess board image")
@@ -1913,9 +2039,10 @@ def main():
     DEBUG_MODE = args.debug
 
     try:
-        fen, conf = predict_board(args.image, model_path=args.model_path, board_perspective=args.board_perspective)
+        result = predict_position(args.image, model_path=args.model_path, board_perspective=args.board_perspective)
         if args.side_to_move is None:
-            side_to_move, side_source = infer_side_to_move_from_checks(fen)
+            side_to_move = result["side_to_move"]
+            side_source = result["side_to_move_source"]
         else:
             side_to_move = parse_side_to_move_override(args.side_to_move)
             side_source = "override_cli"
@@ -1923,10 +2050,12 @@ def main():
             json.dumps(
                 {
                     "success": True,
-                    "fen": f"{fen} {side_to_move} - - 0 1",
-                    "confidence": round(conf, 4),
+                    "fen": f"{result['board_fen']} {side_to_move} - - 0 1",
+                    "confidence": round(result["confidence"], 4),
                     "side_to_move": side_to_move,
                     "side_to_move_source": side_source,
+                    "detected_perspective": result["detected_perspective"],
+                    "perspective_source": result["perspective_source"],
                 }
             )
         )
