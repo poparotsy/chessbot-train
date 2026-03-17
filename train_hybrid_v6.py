@@ -24,16 +24,26 @@ def env_bool(name, default):
         return default
     return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
+
+def env_int(name, default):
+    raw = os.getenv(name)
+    return int(raw) if raw is not None else default
+
+
+def env_float(name, default):
+    raw = os.getenv(name)
+    return float(raw) if raw is not None else default
+
 # ============ HUMAN CONFIG (SAFE TO EDIT) ============
-DATA_DIR = "tensors_v6_mono_logo_v6"
-MODEL_SAVE_PATH = "models/model_hybrid_v6_mono_logo_v6_latest_best.pt"
-FINAL_MODEL_SAVE_PATH = "models/model_hybrid_v6_mono_logo_v6_final.pt"
-CHECKPOINT_DIR = "models/checkpoints_v6_mono_logo_v6"
+DATA_DIR = os.getenv("DATA_DIR", "tensors_v6_mono_logo_v7")
+MODEL_SAVE_PATH = os.getenv("MODEL_SAVE_PATH", "models/model_hybrid_v6_mono_logo_v7_latest_best.pt")
+FINAL_MODEL_SAVE_PATH = os.getenv("FINAL_MODEL_SAVE_PATH", "models/model_hybrid_v6_mono_logo_v7_final.pt")
+CHECKPOINT_DIR = os.getenv("CHECKPOINT_DIR", "models/checkpoints_v6_mono_logo_v7")
 CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, "latest.pt")
-BASE_MODEL_PATH = "models/model_hybrid_v5_latest_best.pt"
-EPOCHS = 120
-LEARNING_RATE = 2e-6
-BATCH_SIZE_PER_GPU = 256
+BASE_MODEL_PATH = os.getenv("BASE_MODEL_PATH", "models/model_hybrid_v5_latest_best.pt")
+EPOCHS = env_int("EPOCHS", 120)
+LEARNING_RATE = env_float("LEARNING_RATE", 2e-6)
+BATCH_SIZE_PER_GPU = env_int("BATCH_SIZE_PER_GPU", 256)
 RESUME_FROM_CHECKPOINT = env_bool("RESUME_FROM_CHECKPOINT", True)
 MIN_ACC_IMPROVEMENT = 1e-6
 BACKUP_EXISTING_BEST_MODEL = True
