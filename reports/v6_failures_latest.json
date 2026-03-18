@@ -7,7 +7,7 @@
   "failures": [
     {
       "image": "puzzle-00028.jpeg",
-      "elapsed_sec": 3.1961,
+      "elapsed_sec": 2.4104,
       "success": true,
       "confidence": 0.5998,
       "predicted_board": "4n3/3PkP2/4p3/8/8/4K3/8/3R4",
@@ -20,7 +20,7 @@
     },
     {
       "image": "puzzle-00031.jpeg",
-      "elapsed_sec": 3.6271,
+      "elapsed_sec": 2.6147,
       "success": true,
       "confidence": 0.5059,
       "predicted_board": "2K5/pp6/8/8/8/8/8/R7",
@@ -33,7 +33,7 @@
     },
     {
       "image": "puzzle-00049.jpeg",
-      "elapsed_sec": 4.3564,
+      "elapsed_sec": 3.0958,
       "success": true,
       "confidence": 0.8117,
       "predicted_board": "5b2/5B2/5KP1/pk6/8/8/8/8",

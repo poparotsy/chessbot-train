@@ -11,13 +11,13 @@
   "board_pass": 47,
   "full_pass": 45,
   "primary_pass": 47,
-  "avg_confidence": 0.9167605428816751,
+  "avg_confidence": 0.9167605423321947,
   "timeouts": 0,
   "errors": 0,
   "results": [
     {
       "image": "puzzle-00001.jpeg",
-      "elapsed_sec": 5.374,
+      "elapsed_sec": 3.1053,
       "success": true,
       "confidence": 0.9526,
       "predicted_board": "Rr4k1/RQ5N/8/8/3B2N1/2P5/PKB4q/8",
@@ -30,7 +30,7 @@
     },
     {
       "image": "puzzle-00002.png",
-      "elapsed_sec": 2.9656,
+      "elapsed_sec": 2.222,
       "success": true,
       "confidence": 0.8917,
       "predicted_board": "k7/8/K7/3p4/3P4/3R4/7B/8",
@@ -43,7 +43,7 @@
     },
     {
       "image": "puzzle-00003.jpeg",
-      "elapsed_sec": 6.3289,
+      "elapsed_sec": 4.6407,
       "success": true,
       "confidence": 0.9404,
       "predicted_board": "7R/8/8/8/6pq/7k/4Np1r/5KbQ",
@@ -56,7 +56,7 @@
     },
     {
       "image": "puzzle-00004.png",
-      "elapsed_sec": 3.2442,
+      "elapsed_sec": 2.3927,
       "success": true,
       "confidence": 0.9559,
       "predicted_board": "7k/6R1/6K1/8/8/8/8/8",
@@ -69,7 +69,7 @@
     },
     {
       "image": "puzzle-00005.jpeg",
-      "elapsed_sec": 3.7547,
+      "elapsed_sec": 2.6605,
       "success": true,
       "confidence": 0.805,
       "predicted_board": "r3k2r/pp3pp1/2p5/8/3Q3b/1B6/PPPP1PPq/R1B2RK1",
@@ -82,7 +82,7 @@
     },
     {
       "image": "puzzle-00006.jpeg",
-      "elapsed_sec": 3.6123,
+      "elapsed_sec": 2.5912,
       "success": true,
       "confidence": 0.9833,
       "predicted_board": "2q1rb2/1R3pkr/3p2pN/2nPp1Q1/4P3/2B4P/6P1/5RK1",
@@ -95,7 +95,7 @@
     },
     {
       "image": "puzzle-00007.jpeg",
-      "elapsed_sec": 3.3239,
+      "elapsed_sec": 2.5008,
       "success": true,
       "confidence": 0.9515,
       "predicted_board": "kr6/pp6/8/8/8/8/1R4Q1/6K1",
@@ -108,7 +108,7 @@
     },
     {
       "image": "puzzle-00008.jpeg",
-      "elapsed_sec": 4.3574,
+      "elapsed_sec": 3.0817,
       "success": true,
       "confidence": 0.9348,
       "predicted_board": "k1b5/pppN4/1R6/8/Q6K/8/8/8",
@@ -121,7 +121,7 @@
     },
     {
       "image": "puzzle-00009.jpeg",
-      "elapsed_sec": 4.2327,
+      "elapsed_sec": 2.9686,
       "success": true,
       "confidence": 0.9311,
       "predicted_board": "6k1/6pp/2rBq3/8/3pn3/1Q6/6PP/5RK1",
@@ -134,7 +134,7 @@
     },
     {
       "image": "puzzle-00010.jpeg",
-      "elapsed_sec": 3.0885,
+      "elapsed_sec": 2.3233,
       "success": true,
       "confidence": 0.9623,
       "predicted_board": "k7/p2N2p1/5p1b/6r1/8/pP3B2/2P3r1/1RK5",
@@ -147,7 +147,7 @@
     },
     {
       "image": "puzzle-00011.jpeg",
-      "elapsed_sec": 3.7165,
+      "elapsed_sec": 2.6567,
       "success": true,
       "confidence": 0.9454,
       "predicted_board": "5rk1/1p1qbpp1/5n2/2Pp1b1p/rP1Bp3/P5P1/3NBP1P/R2QR1K1",
@@ -160,7 +160,7 @@
     },
     {
       "image": "puzzle-00012.jpeg",
-      "elapsed_sec": 4.4812,
+      "elapsed_sec": 3.1952,
       "success": true,
       "confidence": 0.958,
       "predicted_board": "7k/4pK1p/3pP3/2pP4/1p4P1/p6P/7Q/8",
@@ -173,7 +173,7 @@
     },
     {
       "image": "puzzle-00013.jpeg",
-      "elapsed_sec": 3.0572,
+      "elapsed_sec": 2.264,
       "success": true,
       "confidence": 0.894,
       "predicted_board": "k7/2Q1K3/8/8/8/8/4P1PR/2R4q",
@@ -186,7 +186,7 @@
     },
     {
       "image": "puzzle-00014.jpeg",
-      "elapsed_sec": 3.3388,
+      "elapsed_sec": 2.3753,
       "success": true,
       "confidence": 0.9351,
       "predicted_board": "1K1Rr3/PPP2pPP/2N3N1/8/8/1pp2n2/p1p4p/1k6",
@@ -199,7 +199,7 @@
     },
     {
       "image": "puzzle-00015.jpeg",
-      "elapsed_sec": 3.8182,
+      "elapsed_sec": 2.7466,
       "success": true,
       "confidence": 0.9484,
       "predicted_board": "rk6/NPR1K3/8/8/1Q6/8/8/8",
@@ -212,7 +212,7 @@
     },
     {
       "image": "puzzle-00016.jpeg",
-      "elapsed_sec": 4.2854,
+      "elapsed_sec": 2.9973,
       "success": true,
       "confidence": 0.9311,
       "predicted_board": "6k1/6pp/2rBq3/8/3pn3/1Q6/6PP/5RK1",
@@ -225,7 +225,7 @@
     },
     {
       "image": "puzzle-00017.jpeg",
-      "elapsed_sec": 4.1684,
+      "elapsed_sec": 2.8768,
       "success": true,
       "confidence": 0.7321,
       "predicted_board": "k4r2/p7/P6p/2p3p1/5q2/4pB2/1R6/1R2K3",
@@ -238,7 +238,7 @@
     },
     {
       "image": "puzzle-00018.jpeg",
-      "elapsed_sec": 3.6113,
+      "elapsed_sec": 2.6249,
       "success": true,
       "confidence": 0.949,
       "predicted_board": "1r5k/5Rpp/4R2N/3R4/2R5/5bq1/Q5r1/7K",
@@ -251,7 +251,7 @@
     },
     {
       "image": "puzzle-00019.jpeg",
-      "elapsed_sec": 2.789,
+      "elapsed_sec": 2.0442,
       "success": true,
       "confidence": 0.9716,
       "predicted_board": "K4BB1/1Q6/5p2/8/2R2r1r/N2N2q1/kp1p1p1p/b7",
@@ -264,7 +264,7 @@
     },
     {
       "image": "puzzle-00020.jpeg",
-      "elapsed_sec": 4.9767,
+      "elapsed_sec": 3.535,
       "success": true,
       "confidence": 0.9425,
       "predicted_board": "8/1r2kp2/1P3Rb1/2K5/1P5P/8/8/8",
@@ -277,7 +277,7 @@
     },
     {
       "image": "puzzle-00021.jpeg",
-      "elapsed_sec": 4.0514,
+      "elapsed_sec": 2.9347,
       "success": true,
       "confidence": 0.9897,
       "predicted_board": "8/8/8/8/K7/8/pp1Q4/k7",
@@ -290,7 +290,7 @@
     },
     {
       "image": "puzzle-00022.png",
-      "elapsed_sec": 3.2646,
+      "elapsed_sec": 2.4654,
       "success": true,
       "confidence": 0.9874,
       "predicted_board": "rn1qkbnr/p1pp3p/6P1/1B2p2Q/8/2N5/PPPP1P1P/R1B1K1Nb",
@@ -303,7 +303,7 @@
     },
     {
       "image": "puzzle-00023.jpeg",
-      "elapsed_sec": 4.0286,
+      "elapsed_sec": 2.8142,
       "success": true,
       "confidence": 0.9049,
       "predicted_board": "6k1/p2rN1p1/1p4P1/2n5/8/4P3/PPq5/K4R1R",
@@ -316,7 +316,7 @@
     },
     {
       "image": "puzzle-00024.jpeg",
-      "elapsed_sec": 3.6593,
+      "elapsed_sec": 2.5397,
       "success": true,
       "confidence": 0.9473,
       "predicted_board": "4Rnk1/pr3ppp/1p3q1N/6Q1/2p5/8/P4PPP/6K1",
@@ -329,7 +329,7 @@
     },
     {
       "image": "puzzle-00025.jpeg",
-      "elapsed_sec": 5.3046,
+      "elapsed_sec": 3.9828,
       "success": true,
       "confidence": 0.9345,
       "predicted_board": "2r1n1Qk/p1p3pr/1p3p2/8/P1N5/5PP1/B1P1q2P/7K",
@@ -342,7 +342,7 @@
     },
     {
       "image": "puzzle-00026.jpeg",
-      "elapsed_sec": 3.3501,
+      "elapsed_sec": 2.4454,
       "success": true,
       "confidence": 0.9104,
       "predicted_board": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8",
@@ -355,7 +355,7 @@
     },
     {
       "image": "puzzle-00027.jpeg",
-      "elapsed_sec": 3.3868,
+      "elapsed_sec": 2.4869,
       "success": true,
       "confidence": 0.9236,
       "predicted_board": "8/8/8/3p4/3R4/K1p5/1pN4R/1kb4Q",
@@ -368,7 +368,7 @@
     },
     {
       "image": "puzzle-00028.jpeg",
-      "elapsed_sec": 3.1961,
+      "elapsed_sec": 2.4104,
       "success": true,
       "confidence": 0.5998,
       "predicted_board": "4n3/3PkP2/4p3/8/8/4K3/8/3R4",
@@ -381,7 +381,7 @@
     },
     {
       "image": "puzzle-00029.jpeg",
-      "elapsed_sec": 3.543,
+      "elapsed_sec": 2.6675,
       "success": true,
       "confidence": 0.8519,
       "predicted_board": "krN5/1n6/2Q5/qN6/PpK5/1P6/8/R7",
@@ -394,7 +394,7 @@
     },
     {
       "image": "puzzle-00030.jpeg",
-      "elapsed_sec": 4.2057,
+      "elapsed_sec": 3.0552,
       "success": true,
       "confidence": 0.9548,
       "predicted_board": "r2q2rk/bpp2p1p/p4PbQ/6N1/8/3P4/PP4PP/4RR1K",
@@ -407,7 +407,7 @@
     },
     {
       "image": "puzzle-00031.jpeg",
-      "elapsed_sec": 3.6271,
+      "elapsed_sec": 2.6147,
       "success": true,
       "confidence": 0.5059,
       "predicted_board": "2K5/pp6/8/8/8/8/8/R7",
@@ -420,7 +420,7 @@
     },
     {
       "image": "puzzle-00032.jpeg",
-      "elapsed_sec": 3.5661,
+      "elapsed_sec": 2.4972,
       "success": true,
       "confidence": 0.9849,
       "predicted_board": "4r1k1/p1p2pp1/3b3p/8/2Bn1q2/2NQ2PP/Pr3P2/1R3RK1",
@@ -433,7 +433,7 @@
     },
     {
       "image": "puzzle-00033.jpeg",
-      "elapsed_sec": 4.424,
+      "elapsed_sec": 3.697,
       "success": true,
       "confidence": 0.7785,
       "predicted_board": "r2q1rk1/ppp3pp/3b1p2/3p1n2/1nPP4/1P3N1P/PB3PP1/RN1Q1RK1",
@@ -446,7 +446,7 @@
     },
     {
       "image": "puzzle-00034.jpeg",
-      "elapsed_sec": 3.3642,
+      "elapsed_sec": 2.4604,
       "success": true,
       "confidence": 0.9332,
       "predicted_board": "6r1/K1P1B3/PP6/3p2p1/4q3/p1p5/kp1Q4/8",
@@ -459,7 +459,7 @@
     },
     {
       "image": "puzzle-00035.jpeg",
-      "elapsed_sec": 3.5643,
+      "elapsed_sec": 2.5773,
       "success": true,
       "confidence": 0.9445,
       "predicted_board": "8/6r1/1K3k2/1R6/5b1P/6P1/7p/8",
@@ -472,7 +472,7 @@
     },
     {
       "image": "puzzle-00036.jpeg",
-      "elapsed_sec": 5.2131,
+      "elapsed_sec": 3.682,
       "success": true,
       "confidence": 0.9536,
       "predicted_board": "3r1r2/pR3p2/1p2pN1k/2b5/2n2N1P/6R1/P2p2P1/3K4",
@@ -485,7 +485,7 @@
     },
     {
       "image": "puzzle-00037.jpeg",
-      "elapsed_sec": 4.5352,
+      "elapsed_sec": 3.1963,
       "success": true,
       "confidence": 0.9543,
       "predicted_board": "5rk1/pp4pp/4p3/2R3Q1/3n4/2q4r/P1P2PPP/5RK1",
@@ -498,7 +498,7 @@
     },
     {
       "image": "puzzle-00038.jpeg",
-      "elapsed_sec": 5.6659,
+      "elapsed_sec": 4.323,
       "success": true,
       "confidence": 0.9845,
       "predicted_board": "6Q1/p5p1/5rkp/2b1qp2/P7/5BPK/7P/5R2",
@@ -511,7 +511,7 @@
     },
     {
       "image": "puzzle-00039.jpeg",
-      "elapsed_sec": 3.159,
+      "elapsed_sec": 2.5091,
       "success": true,
       "confidence": 0.9941,
       "predicted_board": "2q1rb2/pR3pkr/3p2pN/2nPp1QP/1nB1P1b1/6N1/PBP3P1/5RK1",
@@ -524,7 +524,7 @@
     },
     {
       "image": "puzzle-00040.jpeg",
-      "elapsed_sec": 3.6094,
+      "elapsed_sec": 2.5719,
       "success": true,
       "confidence": 0.8858,
       "predicted_board": "2r1b3/p1q1br2/1p2pNRk/4p3/4P3/2P5/P4PPP/1B4K1",
@@ -537,7 +537,7 @@
     },
     {
       "image": "puzzle-00041.jpeg",
-      "elapsed_sec": 4.3374,
+      "elapsed_sec": 3.0308,
       "success": true,
       "confidence": 0.9442,
       "predicted_board": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R",
@@ -550,7 +550,7 @@
     },
     {
       "image": "puzzle-00042.jpeg",
-      "elapsed_sec": 4.9046,
+      "elapsed_sec": 3.6082,
       "success": true,
       "confidence": 0.9428,
       "predicted_board": "8/p7/1b2k1p1/1P3p2/P1R3P1/8/r1B3K1/8",
@@ -563,7 +563,7 @@
     },
     {
       "image": "puzzle-00043.jpeg",
-      "elapsed_sec": 4.125,
+      "elapsed_sec": 2.7322,
       "success": true,
       "confidence": 0.9393,
       "predicted_board": "k2q3r/2Q1b1p1/p1RrB3/1p2p3/5p2/8/PPP2P2/2K3R1",
@@ -576,7 +576,7 @@
     },
     {
       "image": "puzzle-00044.jpeg",
-      "elapsed_sec": 3.4749,
+      "elapsed_sec": 2.4736,
       "success": true,
       "confidence": 0.9897,
       "predicted_board": "r3r1k1/pp1n2Bp/5P2/2Q5/3pb3/3q2P1/P5BP/R4R1K",
@@ -589,7 +589,7 @@
     },
     {
       "image": "puzzle-00045.jpeg",
-      "elapsed_sec": 3.5166,
+      "elapsed_sec": 2.4837,
       "success": true,
       "confidence": 0.9749,
       "predicted_board": "r1bqkb1r/5ppp/p1nppn2/1p2P3/8/2N1BN2/PPPQ1PPP/2KR1B1R",
@@ -602,7 +602,7 @@
     },
     {
       "image": "puzzle-00046.jpeg",
-      "elapsed_sec": 3.8567,
+      "elapsed_sec": 2.9038,
       "success": true,
       "confidence": 0.9627,
       "predicted_board": "6k1/1b3pp1/2p3Np/1pq5/8/2N3nP/5PP1/Q4BK1",
@@ -615,7 +615,7 @@
     },
     {
       "image": "puzzle-00047.jpeg",
-      "elapsed_sec": 3.1495,
+      "elapsed_sec": 2.3303,
       "success": true,
       "confidence": 0.9855,
       "predicted_board": "1R1K4/k1n5/Np6/1P1n4/8/8/8/8",
@@ -628,7 +628,7 @@
     },
     {
       "image": "puzzle-00048.jpeg",
-      "elapsed_sec": 3.6006,
+      "elapsed_sec": 2.6132,
       "success": true,
       "confidence": 0.9637,
       "predicted_board": "2rq1rk1/4npbp/p1bpp1p1/1p6/4PP1Q/P1PP4/B2BN1PP/R4R1K",
@@ -641,7 +641,7 @@
     },
     {
       "image": "puzzle-00049.jpeg",
-      "elapsed_sec": 4.3564,
+      "elapsed_sec": 3.0958,
       "success": true,
       "confidence": 0.8117,
       "predicted_board": "5b2/5B2/5KP1/pk6/8/8/8/8",
@@ -654,7 +654,7 @@
     },
     {
       "image": "puzzle-00050.jpeg",
-      "elapsed_sec": 3.4938,
+      "elapsed_sec": 2.6042,
       "success": true,
       "confidence": 0.8844,
       "predicted_board": "3r4/3kn2p/1p4pP/1p1B1pP1/1P1K1P2/P1P5/8/4R3",
