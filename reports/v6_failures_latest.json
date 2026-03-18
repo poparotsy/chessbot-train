@@ -1,8 +1,48 @@
 {
   "images": 50,
-  "primary_pass": 50,
-  "board_pass": 50,
-  "full_pass": 48,
+  "primary_pass": 47,
+  "board_pass": 47,
+  "full_pass": 45,
   "compare_full_fen": false,
-  "failures": []
+  "failures": [
+    {
+      "image": "puzzle-00028.jpeg",
+      "elapsed_sec": 3.1961,
+      "success": true,
+      "confidence": 0.5998,
+      "predicted_board": "4n3/3PkP2/4p3/8/8/4K3/8/3R4",
+      "predicted_full": "4n3/3PkP2/4p3/8/8/4K3/8/3R4 w - - 0 1",
+      "expected_board": "3Nnr2/R2PkP2/4p3/8/8/4K3/8/3R4",
+      "expected_full": "3Nnr2/R2PkP2/4p3/8/8/4K3/8/3R4 w - - 0 1",
+      "board_ok": false,
+      "full_ok": false,
+      "side_to_move_source": "no_check_signal"
+    },
+    {
+      "image": "puzzle-00031.jpeg",
+      "elapsed_sec": 3.6271,
+      "success": true,
+      "confidence": 0.5059,
+      "predicted_board": "2K5/pp6/8/8/8/8/8/R7",
+      "predicted_full": "2K5/pp6/8/8/8/8/8/R7 w - - 0 1",
+      "expected_board": "kbK5/pp6/1P6/8/8/8/8/R7",
+      "expected_full": "kbK5/pp6/1P6/8/8/8/8/R7 w - - 0 1",
+      "board_ok": false,
+      "full_ok": false,
+      "side_to_move_source": "missing_king"
+    },
+    {
+      "image": "puzzle-00049.jpeg",
+      "elapsed_sec": 4.3564,
+      "success": true,
+      "confidence": 0.8117,
+      "predicted_board": "5b2/5B2/5KP1/pk6/8/8/8/8",
+      "predicted_full": "5b2/5B2/5KP1/pk6/8/8/8/8 w - - 0 1",
+      "expected_board": "4b3/4B3/4KP2/pk5p/7P/8/8/8",
+      "expected_full": "4b3/4B3/4KP2/pk5p/7P/8/8/8 w - - 0 1",
+      "board_ok": false,
+      "full_ok": false,
+      "side_to_move_source": "no_check_signal"
+    }
+  ]
 }

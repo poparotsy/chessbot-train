@@ -103,6 +103,7 @@ class TestOrientationHelpers(unittest.TestCase):
         self.assertIsNone(context["label_perspective_result"])
         self.assertTrue(context["labels_absent"])
         self.assertFalse(context["labels_same"])
+        self.assertEqual(context["partial_label_scores"], {"white": 0.0, "black": 0.0})
 
     def test_resolve_candidate_orientation_override(self):
         context = {
@@ -110,6 +111,7 @@ class TestOrientationHelpers(unittest.TestCase):
             "label_details": {"left": None, "right": None},
             "labels_absent": True,
             "labels_same": False,
+            "partial_label_scores": {"white": 0.0, "black": 0.0},
         }
         perspective, source = v6.resolve_candidate_orientation(
             "8/8/8/8/8/8/8/8",
@@ -118,6 +120,49 @@ class TestOrientationHelpers(unittest.TestCase):
         )
         self.assertEqual(perspective, "black")
         self.assertEqual(source, "override")
+
+    def test_resolve_candidate_orientation_best_effort_flips_black_poster_case(self):
+        raw_fen = "K1B5/P1P3P1/2P1r2P/2n5/1qpp2p1/p7/kp5p/2R2Q2"
+        context = {
+            "label_perspective_result": None,
+            "label_details": {
+                "left": None,
+                "right": {"label": "h", "confidence": 0.6296536796536797},
+            },
+            "labels_absent": False,
+            "labels_same": False,
+            "partial_label_scores": {"white": 0.5981709956709956, "black": 0.0},
+        }
+        perspective, source = v6.resolve_candidate_orientation(
+            raw_fen,
+            board_perspective="auto",
+            orientation_context=context,
+        )
+        self.assertEqual(perspective, "black")
+        self.assertEqual(source, "best_effort_orientation")
+
+    def test_resolve_candidate_orientation_best_effort_keeps_white_when_labels_support_it(self):
+        """Test that default is returned when labels are below confidence threshold."""
+        raw_fen = "K4BB1/1Q6/5p2/8/2R2r1r/N2N2q1/kp1p1p1p/b7"
+        context = {
+            "label_perspective_result": None,
+            "label_details": {
+                "left": {"label": "a", "confidence": 0.7618785578747628},
+                "right": {"label": "h", "confidence": 0.6657495256166983},
+            },
+            "labels_absent": False,
+            "labels_same": False,
+            "partial_label_scores": {"white": 1.356246679316888, "black": 0.0},
+        }
+        perspective, source = v6.resolve_candidate_orientation(
+            raw_fen,
+            board_perspective="auto",
+            orientation_context=context,
+        )
+        # Right label confidence (0.665) < threshold (0.70), so no weak_label_fallback
+        # Returns default since no other fallback path triggers
+        self.assertEqual(perspective, "white")
+        self.assertEqual(source, "default")
 
 
 class TestDecodeHelpers(unittest.TestCase):
@@ -129,6 +174,7 @@ class TestDecodeHelpers(unittest.TestCase):
             "label_details": {"left": None, "right": None},
             "labels_absent": True,
             "labels_same": False,
+            "partial_label_scores": {"white": 0.0, "black": 0.0},
         }
         with (
             patch.object(

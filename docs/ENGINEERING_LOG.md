@@ -689,3 +689,44 @@ Every commit must be documented with:
 - result:
   - next v6 experiment is isolated to the `*_v4` lane
   - the next run heavily favors true dark anchors and lighter mono-print targets instead of mixing ordinary boards with synthetic damage-heavy “anchors”
+
+## Entry
+
+- commit: `pending`
+- objective: Tidy the generator/trainer back down to one canonical targeted recovery lane, wire the new book/t-shirt board themes into the print path, and start the next training run from the current v7 checkpoint.
+- files:
+  - `generate_hybrid_v6.py`
+  - `train_hybrid_v6.py`
+  - `docs/ENGINEERING_LOG.md`
+- behavior_change:
+  - Removed the extra temporary targeted recipe/docs/scripts that had accumulated around the miss-recovery experiments and set one canonical generator default: `v6_targeted_recovery_v8`.
+  - Kept `diagtransfer_hatched` as the book/t-shirt style bucket name, but treated it as a normal profile name only; no special architecture or separate toolchain was introduced.
+  - Wired print-diagram rendering to use the new cropped board textures under `board_themes/` for the book/t-shirt class instead of relying only on the older procedural mono boards.
+  - Adjusted the active targeted mix to focus on the remaining misses:
+    - `diagtransfer_hatched 0.24`
+    - `book_page_reference 0.18`
+    - `shirt_print_reference 0.18`
+    - `broadcast_dark_sparse 0.16`
+    - `dark_anchor_clean 0.08`
+    - `clean 0.08`
+    - `digital_overlay_clean 0.04`
+    - `edge_rook_page 0.02`
+    - `tilt_anchor 0.02`
+  - Hardened non-print board-theme discovery so reference folders like `board_themes/new/` are ignored during random theme selection.
+  - Switched the trainer defaults to the new `targeted_recovery_v8` lane and changed the warm-start base checkpoint from `model_hybrid_v5_latest_best.pt` to `model_hybrid_v6_mono_logo_v7_latest_best.pt`.
+- validation:
+  - `python3 -m py_compile generate_hybrid_v6.py train_hybrid_v6.py`
+  - `python3 -m unittest -q scripts.tests_v6.test_internal_v6`
+  - `python3 scripts/generate_samples.py --version v6 --count 3 --profile diagtransfer_hatched --output-dir /tmp/chessbot_targeted_smoke/diagtransfer`
+  - `python3 scripts/generate_samples.py --version v6 --count 3 --profile book_page_reference --output-dir /tmp/chessbot_targeted_smoke/book`
+  - `python3 scripts/generate_samples.py --version v6 --count 3 --profile shirt_print_reference --output-dir /tmp/chessbot_targeted_smoke/shirt`
+  - `python3 scripts/generate_samples.py --version v6 --count 3 --profile broadcast_dark_sparse --output-dir /tmp/chessbot_targeted_smoke/broadcast`
+  - `BOARDS_PER_CHUNK=32 CHUNKS_TRAIN=1 CHUNKS_VAL=1 OUTPUT_DIR=tensors_v6_targeted_recovery_v8_smoke python3 generate_hybrid_v6.py`
+  - `python3 scripts/validate_tensors_v6.py --data-dir tensors_v6_targeted_recovery_v8_smoke`
+  - `python3 generate_hybrid_v6.py`
+  - `python3 scripts/validate_tensors_v6.py --data-dir tensors_v6_targeted_recovery_v8`
+  - `python3 train_hybrid_v6.py`
+- result:
+  - the repo now has one clean targeted recovery lane instead of several overlapping experimental defaults
+  - the full targeted dataset was generated successfully into `tensors_v6_targeted_recovery_v8`
+  - training was started in the `models/model_hybrid_v6_targeted_recovery_v8_*` lane from the current `v7` checkpoint

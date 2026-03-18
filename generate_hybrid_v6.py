@@ -26,6 +26,7 @@ PRINT_DIAGRAM_PROFILES = {
     "edge_rook_page",
     "book_page_reference",
     "shirt_print_reference",
+    "diagtransfer_hatched",
 }
 PRINT_DIAGRAM_BASE_SET = "cburnett"
 
@@ -52,7 +53,7 @@ SEED = env_int("SEED", 1337)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BOARD_THEMES_DIR = os.path.join(BASE_DIR, "board_themes")
 PIECE_SETS_DIR = os.path.join(BASE_DIR, "piece_sets")
-OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6_mono_logo_v7"))
+OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6_targeted_recovery_v8"))
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 BASE_CONFIG = {
@@ -487,10 +488,15 @@ PROFILE_OVERRIDES = {
         "MAX_PLIES": 12,
     },
     "book_page_reference": {
-        "BOARD_THEME_NAMES": ["mono_paper_scan_light.png"],
+        "BOARD_THEME_NAMES": [
+            "rag_paper_clean.png",
+            "without_texture_clean.png",
+            "watercolor_paper_clean.png",
+            "chalk_old.png",
+        ],
         "PIECE_SET_NAMES": ["mono_print_scan"],
-        "PRINT_STYLE_CHOICES": [("book_reference", 1.0)],
-        "LABELS_PROB": 0.12,
+        "PRINT_STYLE_CHOICES": [("book_reference", 0.70), ("book_photo", 0.30)],
+        "LABELS_PROB": 0.00,
         "TRIM_CAPTURE_PROB": 0.00,
         "ARTIFACT_EMPTY_TILE_PROB": 0.02,
         "HIGHLIGHT_BOARD_PROB": 0.00,
@@ -498,9 +504,9 @@ PROFILE_OVERRIDES = {
         "TACTICAL_MARKER_PROB": 0.00,
         "WATERMARK_BOARD_PROB": 0.00,
         "WATERMARK_FULL_KING_WORDMARK_PROB": 0.00,
-        "HARD_EDGE_ROOK_PROB": 0.48,
-        "HARD_FILE_EDGE_ROOK_PROB": 0.36,
-        "SPARSE_BOARD_PROB": 0.84,
+        "HARD_EDGE_ROOK_PROB": 0.62,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.52,
+        "SPARSE_BOARD_PROB": 0.88,
         "SCREENSHOT_CLUTTER_PROB": 0.00,
         "DETECTOR_BANNER_PROB": 0.00,
         "DETECTOR_PARTIAL_BOARD_PROB": 0.00,
@@ -509,7 +515,7 @@ PROFILE_OVERRIDES = {
         "MONO_STRUCTURAL_DAMAGE_PROB": 0.00,
         "MONO_EDGE_PIECE_FADE_PROB": 0.03,
         "PIECE_OCCLUSION_PROB": 0.00,
-        "LOCAL_PIECE_TILT_PROB": 0.01,
+        "LOCAL_PIECE_TILT_PROB": 0.02,
         "AUG_ROTATE_PROB": 0.03,
         "AUG_ROTATE_MAX_DEG": 0.4,
         "AUG_PERSPECTIVE_PROB": 0.01,
@@ -518,10 +524,14 @@ PROFILE_OVERRIDES = {
         "MAX_PLIES": 14,
     },
     "shirt_print_reference": {
-        "BOARD_THEME_NAMES": ["mono_heather_print.png"],
+        "BOARD_THEME_NAMES": [
+            "without_texture_clean.png",
+            "watercolor_paper_clean.png",
+            "watercolor_paper_clean_0.png",
+        ],
         "PIECE_SET_NAMES": ["mono_print_scan"],
-        "PRINT_STYLE_CHOICES": [("shirt_reference", 1.0)],
-        "LABELS_PROB": 0.08,
+        "PRINT_STYLE_CHOICES": [("shirt_reference", 0.78), ("shirt_photo", 0.22)],
+        "LABELS_PROB": 0.00,
         "TRIM_CAPTURE_PROB": 0.00,
         "ARTIFACT_EMPTY_TILE_PROB": 0.02,
         "HIGHLIGHT_BOARD_PROB": 0.00,
@@ -529,9 +539,9 @@ PROFILE_OVERRIDES = {
         "TACTICAL_MARKER_PROB": 0.00,
         "WATERMARK_BOARD_PROB": 0.00,
         "WATERMARK_FULL_KING_WORDMARK_PROB": 0.00,
-        "HARD_EDGE_ROOK_PROB": 0.36,
-        "HARD_FILE_EDGE_ROOK_PROB": 0.24,
-        "SPARSE_BOARD_PROB": 0.82,
+        "HARD_EDGE_ROOK_PROB": 0.44,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.34,
+        "SPARSE_BOARD_PROB": 0.86,
         "SCREENSHOT_CLUTTER_PROB": 0.00,
         "DETECTOR_BANNER_PROB": 0.00,
         "DETECTOR_PARTIAL_BOARD_PROB": 0.00,
@@ -540,8 +550,8 @@ PROFILE_OVERRIDES = {
         "MONO_STRUCTURAL_DAMAGE_PROB": 0.00,
         "MONO_EDGE_PIECE_FADE_PROB": 0.04,
         "PIECE_OCCLUSION_PROB": 0.00,
-        "LOCAL_PIECE_TILT_PROB": 0.04,
-        "LOCAL_PIECE_TILT_MAX_DEG": 8.0,
+        "LOCAL_PIECE_TILT_PROB": 0.06,
+        "LOCAL_PIECE_TILT_MAX_DEG": 9.0,
         "AUG_ROTATE_PROB": 0.03,
         "AUG_ROTATE_MAX_DEG": 0.5,
         "AUG_PERSPECTIVE_PROB": 0.01,
@@ -681,28 +691,28 @@ PROFILE_OVERRIDES = {
     "broadcast_dark_sparse": {
         "BOARD_THEME_NAMES": ["grey.jpg", "metal.jpg", "blue3.jpg", "olive.jpg"],
         "PIECE_SET_NAMES": ["cburnett", "maestro", "merida"],
-        "LABELS_PROB": 0.10,
+        "LABELS_PROB": 0.00,
         "TRIM_CAPTURE_PROB": 0.00,
         "ARTIFACT_EMPTY_TILE_PROB": 0.00,
-        "HIGHLIGHT_BOARD_PROB": 0.00,
+        "HIGHLIGHT_BOARD_PROB": 0.42,
         "ARROW_BOARD_PROB": 0.00,
         "TACTICAL_MARKER_PROB": 0.00,
         "WATERMARK_BOARD_PROB": 0.00,
         "WATERMARK_FULL_KING_WORDMARK_PROB": 0.00,
-        "HARD_EDGE_ROOK_PROB": 0.18,
-        "HARD_FILE_EDGE_ROOK_PROB": 0.08,
+        "HARD_EDGE_ROOK_PROB": 0.22,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.14,
         "SPARSE_BOARD_PROB": 0.92,
-        "SCREENSHOT_CLUTTER_PROB": 0.00,
-        "DETECTOR_BANNER_PROB": 0.00,
+        "SCREENSHOT_CLUTTER_PROB": 0.22,
+        "DETECTOR_BANNER_PROB": 0.16,
         "DETECTOR_PARTIAL_BOARD_PROB": 0.00,
         "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.00,
         "DETECTOR_HEAVY_TRIM_PROB": 0.00,
         "MONO_STRUCTURAL_DAMAGE_PROB": 0.00,
         "MONO_EDGE_PIECE_FADE_PROB": 0.02,
         "PIECE_OCCLUSION_PROB": 0.00,
-        "LOCAL_PIECE_TILT_PROB": 0.42,
+        "LOCAL_PIECE_TILT_PROB": 0.58,
         "LOCAL_PIECE_TILT_MAX_DEG": 20.0,
-        "KING_TILT_PRIORITY_PROB": 0.90,
+        "KING_TILT_PRIORITY_PROB": 0.96,
         "AUG_ROTATE_PROB": 0.06,
         "AUG_ROTATE_MAX_DEG": 0.8,
         "AUG_PERSPECTIVE_PROB": 0.02,
@@ -710,11 +720,48 @@ PROFILE_OVERRIDES = {
         "MIN_PLIES": 0,
         "MAX_PLIES": 12,
     },
+    "diagtransfer_hatched": {
+        "BOARD_THEME_NAMES": [
+            "rag_paper_clean.png",
+            "without_texture_clean.png",
+            "watercolor_paper_clean.png",
+            "chalk_old.png",
+        ],
+        "PIECE_SET_NAMES": ["mono_print_scan", "mono_print_faded"],
+        "PRINT_STYLE_CHOICES": [("hatched_book", 0.76), ("book_photo", 0.18), ("flat_book", 0.06)],
+        "PRINT_PIECE_SCALE": 0.78,
+        "LABELS_PROB": 0.00,
+        "TRIM_CAPTURE_PROB": 0.18,
+        "ARTIFACT_EMPTY_TILE_PROB": 0.12,
+        "HIGHLIGHT_BOARD_PROB": 0.12,
+        "ARROW_BOARD_PROB": 0.08,
+        "TACTICAL_MARKER_PROB": 0.15,
+        "WATERMARK_BOARD_PROB": 0.12,
+        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.18,
+        "HARD_EDGE_ROOK_PROB": 0.50,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.40,
+        "SPARSE_BOARD_PROB": 0.40,
+        "SCREENSHOT_CLUTTER_PROB": 0.06,
+        "DETECTOR_BANNER_PROB": 0.04,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.05,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.88,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.06,
+        "MONO_STRUCTURAL_DAMAGE_PROB": 0.12,
+        "MONO_EDGE_PIECE_FADE_PROB": 0.18,
+        "PIECE_OCCLUSION_PROB": 0.10,
+        "LOCAL_PIECE_TILT_PROB": 0.06,
+        "AUG_ROTATE_PROB": 0.10,
+        "AUG_ROTATE_MAX_DEG": 1.2,
+        "AUG_PERSPECTIVE_PROB": 0.06,
+        "AUG_PERSPECTIVE_SCALE": 0.008,
+        "MIN_PLIES": 0,
+        "MAX_PLIES": 22,
+    },
 }
 
 # Deterministic data recipe (not ad-hoc random drift):
 # fixed per-chunk quotas that are auditable and repeatable.
-RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_mono_logo_recovery_v7")
+RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_targeted_recovery_v8")
 PROFILE_RECIPES = {
     "v6_targeted_v1": [
         ("clean", 0.30),
@@ -800,6 +847,17 @@ PROFILE_RECIPES = {
         ("broadcast_dark_sparse", 0.12),
         ("edge_rook_page", 0.05),
         ("tilt_anchor", 0.03),
+    ],
+    "v6_targeted_recovery_v8": [
+        ("diagtransfer_hatched", 0.24),
+        ("book_page_reference", 0.18),
+        ("shirt_print_reference", 0.18),
+        ("broadcast_dark_sparse", 0.16),
+        ("dark_anchor_clean", 0.08),
+        ("clean", 0.08),
+        ("digital_overlay_clean", 0.04),
+        ("edge_rook_page", 0.02),
+        ("tilt_anchor", 0.02),
     ],
 }
 DEFAULT_PROFILE_WEIGHTS = PROFILE_RECIPES.get(RECIPE_NAME, PROFILE_RECIPES["v6_mono_logo_recovery_v6"])
@@ -1642,6 +1700,34 @@ def load_print_piece_alpha(piece_name):
     return img.getchannel("A")
 
 
+@lru_cache(maxsize=64)
+def load_board_theme_base(board_theme_name, size):
+    path = os.path.join(BOARD_THEMES_DIR, board_theme_name)
+    return Image.open(path).convert("RGB").resize((size, size), Image.LANCZOS)
+
+
+@lru_cache(maxsize=1)
+def available_board_theme_names():
+    return tuple(
+        sorted(
+            name
+            for name in os.listdir(BOARD_THEMES_DIR)
+            if os.path.isfile(os.path.join(BOARD_THEMES_DIR, name))
+        )
+    )
+
+
+@lru_cache(maxsize=1)
+def available_piece_set_names():
+    return tuple(
+        sorted(
+            name
+            for name in os.listdir(PIECE_SETS_DIR)
+            if os.path.isdir(os.path.join(PIECE_SETS_DIR, name))
+        )
+    )
+
+
 def choose_print_diagram_style(profile, cfg):
     forced_styles = cfg.get("PRINT_STYLE_CHOICES")
     if forced_styles:
@@ -1681,10 +1767,28 @@ def build_print_grid_edges(size, tile_size, max_jitter):
     return edges
 
 
-def render_print_board_base(style, tile_size=64):
+def render_print_board_base(style, tile_size=64, board_theme_name=None):
     size = tile_size * 8
+    if board_theme_name:
+        board = load_board_theme_base(board_theme_name, size).copy()
+        arr = np.asarray(board, dtype=np.float32)
+        if style in {"book_reference", "hatched_book", "flat_book", "book_photo"}:
+            paper = build_soft_noise_map(size, size, low_res_side=22, low=0.97, high=1.03)[:, :, None]
+            arr *= paper
+            if style == "book_photo":
+                page_x = np.linspace(1.03, 0.98, size, dtype=np.float32)[None, :, None]
+                page_y = np.linspace(0.99, 1.02, size, dtype=np.float32)[:, None, None]
+                arr *= page_x * page_y
+        elif style in {"shirt_reference", "shirt_print", "shirt_photo"}:
+            cloth_x = build_soft_noise_map(size, size, low_res_side=54, low=0.985, high=1.015)[:, :, None]
+            cloth_y = build_soft_noise_map(size, size, low_res_side=70, low=0.99, high=1.01)[:, :, None]
+            arr *= cloth_x * cloth_y
+            if style == "shirt_photo":
+                arr *= np.linspace(0.99, 1.03, size, dtype=np.float32)[:, None, None]
+        return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGB"), [i * tile_size for i in range(9)], [i * tile_size for i in range(9)], board_theme_name
     if style in {"book_reference", "shirt_reference"}:
-        return render_reference_board_base(style, tile_size=tile_size)
+        board, x_edges, y_edges = render_reference_board_base(style, tile_size=tile_size)
+        return board, x_edges, y_edges, None
 
     canvas = Image.new("L", (size, size), 226)
     draw = ImageDraw.Draw(canvas)
@@ -1761,7 +1865,7 @@ def render_print_board_base(style, tile_size=64):
         arr = arr + (fibers_x - 1.0) * 14.0 + (fibers_y - 1.0) * 10.0
 
     board = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("L").convert("RGB")
-    return board, x_edges, y_edges
+    return board, x_edges, y_edges, None
 
 
 def render_reference_board_base(style, tile_size=64):
@@ -1989,7 +2093,16 @@ def apply_print_capture_noise(img, style):
 def render_print_diagram_board(fen, profile, cfg):
     style = choose_print_diagram_style(profile, cfg)
     tile_size = 64
-    board, x_edges, y_edges = render_print_board_base(style, tile_size=tile_size)
+    board_theme_choices = cfg.get("BOARD_THEME_NAMES") or []
+    board_theme_name = random.choice(board_theme_choices) if board_theme_choices else None
+    board, x_edges, y_edges, board_theme_used = render_print_board_base(
+        style,
+        tile_size=tile_size,
+        board_theme_name=board_theme_name,
+    )
+
+    # Profile-specific piece scale override (default per-style scales below)
+    profile_piece_scale = cfg.get("PRINT_PIECE_SCALE")
 
     grid = [[None] * 8 for _ in range(8)]
     for row_idx, row_str in enumerate(fen.split("/")):
@@ -2009,7 +2122,10 @@ def render_print_diagram_board(fen, profile, cfg):
             piece_img = render_print_piece(char, style, row_idx, col_idx)
             square_w = x_edges[col_idx + 1] - x_edges[col_idx]
             square_h = y_edges[row_idx + 1] - y_edges[row_idx]
-            if style == "shirt_photo":
+            # Use profile override if set, otherwise use style-specific default
+            if profile_piece_scale is not None:
+                piece_scale = profile_piece_scale
+            elif style == "shirt_photo":
                 piece_scale = 0.76
             elif style == "book_photo":
                 piece_scale = 0.80
@@ -2031,7 +2147,7 @@ def render_print_diagram_board(fen, profile, cfg):
 
     board = apply_local_piece_tilt(board, grid, cfg)
     board = apply_print_capture_noise(board, style)
-    return board, grid, f"print_{style}", f"print_{style}", None
+    return board, grid, board_theme_used or f"print_{style}", f"print_{style}", None
 
 
 def render_board(fen, return_meta=False, profile=None):
@@ -2055,8 +2171,8 @@ def render_board(fen, return_meta=False, profile=None):
             }
         return tiles, labels
 
-    board_choices = cfg.get("BOARD_THEME_NAMES") or os.listdir(BOARD_THEMES_DIR)
-    piece_choices = cfg.get("PIECE_SET_NAMES") or os.listdir(PIECE_SETS_DIR)
+    board_choices = cfg.get("BOARD_THEME_NAMES") or available_board_theme_names()
+    piece_choices = cfg.get("PIECE_SET_NAMES") or available_piece_set_names()
     board_file = random.choice(board_choices)
     background = Image.open(os.path.join(BOARD_THEMES_DIR, board_file)).convert("RGB").resize((512, 512))
     p_set = random.choice(piece_choices)

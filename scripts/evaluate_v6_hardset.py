@@ -79,12 +79,27 @@ def _recognizer_worker(image_path, model_path, board_perspective, debug, script_
         rec.DEBUG_MODE = bool(debug)
         rec.USE_EDGE_DETECTION = True
         rec.USE_SQUARE_DETECTION = True
-        board_fen, conf = rec.predict_board(
-            str(image_path),
-            model_path=model_path,
-            board_perspective=board_perspective,
-        )
-        side_to_move, side_source = rec.infer_side_to_move_from_checks(board_fen)
+        if hasattr(rec, "predict_position"):
+            result = rec.predict_position(
+                str(image_path),
+                model_path=model_path,
+                board_perspective=board_perspective,
+            )
+            board_fen = result["board_fen"]
+            conf = float(result["confidence"])
+            side_to_move = result["side_to_move"]
+            side_source = result["side_to_move_source"]
+            detected_perspective = result.get("detected_perspective")
+            perspective_source = result.get("perspective_source")
+        else:
+            board_fen, conf = rec.predict_board(
+                str(image_path),
+                model_path=model_path,
+                board_perspective=board_perspective,
+            )
+            side_to_move, side_source = rec.infer_side_to_move_from_checks(board_fen)
+            detected_perspective = None
+            perspective_source = None
         queue.put(
             {
                 "success": True,
@@ -92,6 +107,8 @@ def _recognizer_worker(image_path, model_path, board_perspective, debug, script_
                 "confidence": float(conf),
                 "side_to_move": side_to_move,
                 "side_to_move_source": side_source,
+                "detected_perspective": detected_perspective,
+                "perspective_source": perspective_source,
             }
         )
     except Exception as exc:
