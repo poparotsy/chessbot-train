@@ -1,6 +1,49 @@
-import os, urllib.request, cairosvg
+import argparse
+import os
+import subprocess
+import urllib.request
+from pathlib import Path
+
+try:
+    import cairosvg
+except ImportError:
+    cairosvg = None
+
+
+PIECE_CODES = ["wP", "wN", "wB", "wR", "wQ", "wK", "bP", "bN", "bB", "bR", "bQ", "bK"]
+
+
+def _svg_to_png(svg_path: Path, dest_png: Path, size: int = 128) -> None:
+    dest_png.parent.mkdir(parents=True, exist_ok=True)
+    if cairosvg is not None:
+        try:
+            cairosvg.svg2png(
+                url=svg_path.resolve().as_uri(),
+                write_to=str(dest_png),
+                output_width=size,
+                output_height=size,
+            )
+            return
+        except Exception:
+            pass
+
+    subprocess.run(
+        [
+            "rsvg-convert",
+            "-w",
+            str(size),
+            "-h",
+            str(size),
+            str(svg_path),
+            "-o",
+            str(dest_png),
+        ],
+        check=True,
+    )
 
 def setup_lichess_assets():
+    if cairosvg is None:
+        raise RuntimeError("setup_lichess_assets requires cairosvg. Use --local-only to convert local SVG assets.")
     # 1. PIECE SETTINGS
     piece_base_url = "https://raw.githubusercontent.com/lichess-org/lila/master/public/piece/"
     #piece_base_url = "https://raw.githubusercontent.com/pychess/pychess/master/pieces/"
@@ -10,7 +53,7 @@ def setup_lichess_assets():
         'chess7', 'firi', 'icpieces', 'pirouetti', 'rhosgfx', 'riohacha', 'spatial', 'xkcd',
         'chessicons', 'chessmonk', 'libra', 'magnetic', 'regular'
     ]
-    pieces = ['wP','wN','wB','wR','wQ','wK','bP','bN','bB','bR','bQ','bK']
+    pieces = PIECE_CODES
     #pieces = ['wp','wn','wb','wr','wq','wk','bp','bn','bb','br','bq','bk']
     
     # 2. BOARD SETTINGS (Exact filenames from Lichess Repo)
@@ -51,5 +94,43 @@ def setup_lichess_assets():
             print(f"  ❌ Failed Board: {b}")
 
 if __name__ == "__main__":
-    setup_lichess_assets()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--local-only",
+        action="store_true",
+        help="Build piece_sets from local ./pieces SVG directories instead of downloading assets.",
+    )
+    parser.add_argument(
+        "--sets",
+        default="",
+        help="Comma-separated local set names to convert from ./pieces into ./piece_sets.",
+    )
+    parser.add_argument(
+        "--size",
+        type=int,
+        default=128,
+        help="Output PNG size for local set conversion.",
+    )
+    args = parser.parse_args()
 
+    if args.local_only:
+        root = Path(__file__).resolve().parents[1]
+        source_root = root / "pieces"
+        dest_root = root / "piece_sets"
+        requested_sets = [s.strip() for s in args.sets.split(",") if s.strip()]
+        converted = []
+        for set_dir in sorted(source_root.iterdir()):
+            if not set_dir.is_dir():
+                continue
+            if requested_sets and set_dir.name not in requested_sets:
+                continue
+            if not all((set_dir / f"{piece}.svg").exists() for piece in PIECE_CODES):
+                continue
+            for piece in PIECE_CODES:
+                _svg_to_png(set_dir / f"{piece}.svg", dest_root / set_dir.name / f"{piece}.png", size=args.size)
+            converted.append(set_dir.name)
+        print("Converted local piece sets:")
+        for name in converted:
+            print(f"  piece_sets/{name}/")
+    else:
+        setup_lichess_assets()

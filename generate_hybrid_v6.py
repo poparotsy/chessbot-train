@@ -56,6 +56,22 @@ PIECE_SETS_DIR = os.path.join(BASE_DIR, "piece_sets")
 OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6_targeted_recovery_v10"))
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+# Keep broad/default profiles on the established, general-purpose piece pool.
+# New imported sets should only affect training when a profile names them explicitly.
+DEFAULT_GENERAL_PIECE_SET_NAMES = [
+    "alpha",
+    "cardinal",
+    "cburnett",
+    "celtic",
+    "chessmonk",
+    "chessnut",
+    "governor",
+    "icpieces",
+    "maestro",
+    "merida",
+    "staunty",
+]
+
 BASE_CONFIG = {
     "ENABLE_WATERMARK_AUG": os.getenv("ENABLE_WATERMARK_AUG", "1") != "0",
     "WATERMARK_BOARD_PROB": env_float("WATERMARK_BOARD_PROB", 0.3),
@@ -231,8 +247,23 @@ PROFILE_OVERRIDES = {
         "MAX_PLIES": 60,
     },
     "wood_3d_arrow_clean": {
-        "BOARD_THEME_NAMES": ["wood.jpg", "wood2.jpg", "wood3.jpg", "wood4.jpg", "maple.jpg", "maple2.jpg"],
-        "PIECE_SET_NAMES": ["maestro", "governor", "merida"],
+        "BOARD_THEME_NAMES": [
+            "burled_wood.png",
+            "walnut.png",
+            "dark_wood.png",
+            "wood3.jpg",
+            "wood4.jpg",
+            "maple2.jpg",
+        ],
+        "PIECE_SET_NAMES": [
+            "vintage",
+            "tournament",
+            "bases",
+            "club",
+            "maestro",
+            "governor",
+            "merida",
+        ],
         "LABELS_PROB": 0.78,
         "TRIM_CAPTURE_PROB": 0.05,
         "ARTIFACT_EMPTY_TILE_PROB": 0.02,
@@ -2226,7 +2257,9 @@ def render_board(fen, return_meta=False, profile=None):
         return tiles, labels
 
     board_choices = cfg.get("BOARD_THEME_NAMES") or available_board_theme_names()
-    piece_choices = cfg.get("PIECE_SET_NAMES") or available_piece_set_names()
+    piece_choices = cfg.get("PIECE_SET_NAMES") or [
+        name for name in DEFAULT_GENERAL_PIECE_SET_NAMES if os.path.isdir(os.path.join(PIECE_SETS_DIR, name))
+    ]
     board_file = random.choice(board_choices)
     background = Image.open(os.path.join(BOARD_THEMES_DIR, board_file)).convert("RGB").resize((512, 512))
     p_set = random.choice(piece_choices)
