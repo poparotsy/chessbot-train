@@ -587,9 +587,15 @@ PROFILE_OVERRIDES = {
     },
     "shirt_print_reference": {
         "BOARD_THEME_NAMES": [
-            "without_texture_clean.png",
+            "rag_paper_framed.png",
+            "watercolor_paper_framed.png",
+            "watercolor_paper_framed_0.png",
+            "rag_paper_framed.png",
+            "watercolor_paper_framed.png",
+            "watercolor_paper_framed_0.png",
             "watercolor_paper_clean.png",
             "watercolor_paper_clean_0.png",
+            "without_texture_clean.png",
         ],
         "PIECE_SET_NAMES": ["mono_print_scan"],
         "PRINT_STYLE_CHOICES": [("shirt_reference", 0.78), ("shirt_photo", 0.22)],
@@ -752,7 +758,7 @@ PROFILE_OVERRIDES = {
         "MAX_PLIES": 42,
     },
     "broadcast_dark_sparse": {
-        "BOARD_THEME_NAMES": ["grey.jpg", "metal.jpg", "blue3.jpg", "olive.jpg"],
+        "BOARD_THEME_NAMES": ["dash.png", "glass.png", "marble2.png", "stone.png", "walnut.png", "wood4.jpg"],
         "PIECE_SET_NAMES": ["cburnett", "maestro", "merida"],
         "LABELS_PROB": 0.00,
         "TRIM_CAPTURE_PROB": 0.00,
