@@ -53,7 +53,7 @@ SEED = env_int("SEED", 1337)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BOARD_THEMES_DIR = os.path.join(BASE_DIR, "board_themes")
 PIECE_SETS_DIR = os.path.join(BASE_DIR, "piece_sets")
-OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6_targeted_recovery_v8"))
+OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6_targeted_recovery_v10"))
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 BASE_CONFIG = {
@@ -229,6 +229,37 @@ PROFILE_OVERRIDES = {
         "AUG_PERSPECTIVE_SCALE": 0.010,
         "MIN_PLIES": 8,
         "MAX_PLIES": 60,
+    },
+    "wood_3d_arrow_clean": {
+        "BOARD_THEME_NAMES": ["wood.jpg", "wood2.jpg", "wood3.jpg", "wood4.jpg", "maple.jpg", "maple2.jpg"],
+        "PIECE_SET_NAMES": ["maestro", "governor", "merida"],
+        "LABELS_PROB": 0.78,
+        "TRIM_CAPTURE_PROB": 0.05,
+        "ARTIFACT_EMPTY_TILE_PROB": 0.02,
+        "HIGHLIGHT_BOARD_PROB": 0.28,
+        "ARROW_BOARD_PROB": 0.72,
+        "TACTICAL_MARKER_PROB": 0.20,
+        "WATERMARK_BOARD_PROB": 0.02,
+        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.01,
+        "HARD_EDGE_ROOK_PROB": 0.08,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.06,
+        "SPARSE_BOARD_PROB": 0.18,
+        "SCREENSHOT_CLUTTER_PROB": 0.02,
+        "DETECTOR_BANNER_PROB": 0.00,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.01,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.00,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.00,
+        "MONO_STRUCTURAL_DAMAGE_PROB": 0.00,
+        "MONO_EDGE_PIECE_FADE_PROB": 0.00,
+        "PIECE_OCCLUSION_PROB": 0.00,
+        "LOCAL_PIECE_TILT_PROB": 0.05,
+        "LOCAL_PIECE_TILT_MAX_DEG": 8.0,
+        "AUG_ROTATE_PROB": 0.04,
+        "AUG_ROTATE_MAX_DEG": 0.8,
+        "AUG_PERSPECTIVE_PROB": 0.02,
+        "AUG_PERSPECTIVE_SCALE": 0.006,
+        "MIN_PLIES": 6,
+        "MAX_PLIES": 50,
     },
     "dark_anchor_rook": {
         "BOARD_THEME_NAMES": ["grey.jpg", "olive.jpg", "wood4.jpg", "metal.jpg", "blue3.jpg"],
@@ -539,19 +570,19 @@ PROFILE_OVERRIDES = {
         "TACTICAL_MARKER_PROB": 0.00,
         "WATERMARK_BOARD_PROB": 0.00,
         "WATERMARK_FULL_KING_WORDMARK_PROB": 0.00,
-        "HARD_EDGE_ROOK_PROB": 0.44,
-        "HARD_FILE_EDGE_ROOK_PROB": 0.34,
-        "SPARSE_BOARD_PROB": 0.86,
+        "HARD_EDGE_ROOK_PROB": 0.50,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.40,
+        "SPARSE_BOARD_PROB": 0.90,
         "SCREENSHOT_CLUTTER_PROB": 0.00,
         "DETECTOR_BANNER_PROB": 0.00,
         "DETECTOR_PARTIAL_BOARD_PROB": 0.00,
         "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.00,
         "DETECTOR_HEAVY_TRIM_PROB": 0.00,
         "MONO_STRUCTURAL_DAMAGE_PROB": 0.00,
-        "MONO_EDGE_PIECE_FADE_PROB": 0.04,
+        "MONO_EDGE_PIECE_FADE_PROB": 0.06,
         "PIECE_OCCLUSION_PROB": 0.00,
-        "LOCAL_PIECE_TILT_PROB": 0.06,
-        "LOCAL_PIECE_TILT_MAX_DEG": 9.0,
+        "LOCAL_PIECE_TILT_PROB": 0.08,
+        "LOCAL_PIECE_TILT_MAX_DEG": 10.0,
         "AUG_ROTATE_PROB": 0.03,
         "AUG_ROTATE_MAX_DEG": 0.5,
         "AUG_PERSPECTIVE_PROB": 0.01,
@@ -679,8 +710,9 @@ PROFILE_OVERRIDES = {
         "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.08,
         "DETECTOR_HEAVY_TRIM_PROB": 0.03,
         "PIECE_OCCLUSION_PROB": 0.06,
-        "LOCAL_PIECE_TILT_PROB": 0.42,
-        "LOCAL_PIECE_TILT_MAX_DEG": 24.0,
+        "LOCAL_PIECE_TILT_PROB": 0.48,
+        "LOCAL_PIECE_TILT_MAX_DEG": 26.0,
+        "KING_TILT_PRIORITY_PROB": 0.72,
         "AUG_ROTATE_PROB": 0.18,
         "AUG_ROTATE_MAX_DEG": 2.8,
         "AUG_PERSPECTIVE_PROB": 0.12,
@@ -699,8 +731,8 @@ PROFILE_OVERRIDES = {
         "TACTICAL_MARKER_PROB": 0.00,
         "WATERMARK_BOARD_PROB": 0.00,
         "WATERMARK_FULL_KING_WORDMARK_PROB": 0.00,
-        "HARD_EDGE_ROOK_PROB": 0.22,
-        "HARD_FILE_EDGE_ROOK_PROB": 0.14,
+        "HARD_EDGE_ROOK_PROB": 0.28,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.20,
         "SPARSE_BOARD_PROB": 0.92,
         "SCREENSHOT_CLUTTER_PROB": 0.22,
         "DETECTOR_BANNER_PROB": 0.16,
@@ -710,9 +742,9 @@ PROFILE_OVERRIDES = {
         "MONO_STRUCTURAL_DAMAGE_PROB": 0.00,
         "MONO_EDGE_PIECE_FADE_PROB": 0.02,
         "PIECE_OCCLUSION_PROB": 0.00,
-        "LOCAL_PIECE_TILT_PROB": 0.58,
-        "LOCAL_PIECE_TILT_MAX_DEG": 20.0,
-        "KING_TILT_PRIORITY_PROB": 0.96,
+        "LOCAL_PIECE_TILT_PROB": 0.72,
+        "LOCAL_PIECE_TILT_MAX_DEG": 24.0,
+        "KING_TILT_PRIORITY_PROB": 1.00,
         "AUG_ROTATE_PROB": 0.06,
         "AUG_ROTATE_MAX_DEG": 0.8,
         "AUG_PERSPECTIVE_PROB": 0.02,
@@ -761,7 +793,7 @@ PROFILE_OVERRIDES = {
 
 # Deterministic data recipe (not ad-hoc random drift):
 # fixed per-chunk quotas that are auditable and repeatable.
-RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_targeted_recovery_v9")
+RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_targeted_recovery_v10")
 PROFILE_RECIPES = {
     "v6_targeted_v1": [
         ("clean", 0.30),
@@ -869,6 +901,17 @@ PROFILE_RECIPES = {
         ("digital_overlay_clean", 0.06),
         ("edge_rook_page", 0.02),
         ("tilt_anchor", 0.02),
+    ],
+    "v6_targeted_recovery_v10": [
+        ("wood_3d_arrow_clean", 0.18),
+        ("shirt_print_reference", 0.20),
+        ("broadcast_dark_sparse", 0.18),
+        ("clean", 0.14),
+        ("dark_anchor_clean", 0.12),
+        ("diagtransfer_hatched", 0.08),
+        ("book_page_reference", 0.04),
+        ("digital_overlay_clean", 0.02),
+        ("tilt_anchor", 0.04),
     ],
 }
 DEFAULT_PROFILE_WEIGHTS = PROFILE_RECIPES.get(RECIPE_NAME, PROFILE_RECIPES["v6_mono_logo_recovery_v6"])

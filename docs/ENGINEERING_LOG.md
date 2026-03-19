@@ -730,3 +730,32 @@ Every commit must be documented with:
   - the repo now has one clean targeted recovery lane instead of several overlapping experimental defaults
   - the full targeted dataset was generated successfully into `tensors_v6_targeted_recovery_v8`
   - training was started in the `models/model_hybrid_v6_targeted_recovery_v8_*` lane from the current `v7` checkpoint
+
+## Entry
+
+- commit: `pending`
+- objective: Record the `v8` and `v9` targeted recovery outcomes, fix the `v9` output-dir mismatch, and prepare a narrower `v10` lane for the last three hardset misses.
+- files:
+  - `.gitignore`
+  - `docs/ENGINEERING_LOG.md`
+  - `generate_hybrid_v6.py`
+  - `train_hybrid_v6.py`
+- behavior_change:
+  - Confirmed `model_hybrid_v6_targeted_recovery_v8_latest_best.pt` as the active targeted recovery winner at `47/50`, with only `00026`, `00031`, and `00049` remaining.
+  - Confirmed `v9` tied `v8` at `47/50` with the same remaining misses, so the frontier is now domain coverage for the final three cases rather than longer optimization on the same recipe.
+  - Fixed the generator default output-dir mismatch that was producing `v9` recipe tensors under `tensors_v6_targeted_recovery_v8`.
+  - Added `wood_3d_arrow_clean` to restore the clean wood-board + slightly 3D piece + arrow lane needed for `00026`.
+  - Increased shirt-print pressure in `shirt_print_reference` for `00031`.
+  - Increased king-biased tilt pressure in `broadcast_dark_sparse` and `tilt_anchor` for `00049`.
+  - Reduced book-weight now that `00028` is stably solved and shifted the active generator default to `v6_targeted_recovery_v10`.
+  - Switched the trainer defaults to the `targeted_recovery_v10` lane and set the warm-start base checkpoint to `models/model_hybrid_v6_targeted_recovery_v9_latest_best.pt`.
+  - Ignored root-level `tensors_v*` outputs so generated datasets stop showing up as untracked noise in the main repo.
+- validation:
+  - `models/model_hybrid_v6_targeted_recovery_v8_latest_best.pt -> 47/50`
+  - `models/model_hybrid_v6_targeted_recovery_v9_latest_best.pt -> 47/50`
+  - `python3 -m py_compile generate_hybrid_v6.py train_hybrid_v6.py`
+  - `python3 - <<'PY' ... import generate_hybrid_v6/train_hybrid_v6 and print recipe/output/model/base defaults ... PY`
+- result:
+  - `v8` remains the practical targeted-recovery reference point
+  - `v9` confirmed the same hardset frontier instead of extending it
+  - the next run is isolated to a narrower `v10` recipe focused on `00026`, `00031`, and `00049`

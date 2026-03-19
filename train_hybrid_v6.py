@@ -35,12 +35,12 @@ def env_float(name, default):
     return float(raw) if raw is not None else default
 
 # ============ HUMAN CONFIG (SAFE TO EDIT) ============
-DATA_DIR = os.getenv("DATA_DIR", "tensors_v6_targeted_recovery_v9")
-MODEL_SAVE_PATH = os.getenv("MODEL_SAVE_PATH", "models/model_hybrid_v6_targeted_recovery_v9_latest_best.pt")
-FINAL_MODEL_SAVE_PATH = os.getenv("FINAL_MODEL_SAVE_PATH", "models/model_hybrid_v6_targeted_recovery_v9_final.pt")
-CHECKPOINT_DIR = os.getenv("CHECKPOINT_DIR", "models/checkpoints_v6_targeted_recovery_v9")
+DATA_DIR = os.getenv("DATA_DIR", "tensors_v6_targeted_recovery_v10")
+MODEL_SAVE_PATH = os.getenv("MODEL_SAVE_PATH", "models/model_hybrid_v6_targeted_recovery_v10_latest_best.pt")
+FINAL_MODEL_SAVE_PATH = os.getenv("FINAL_MODEL_SAVE_PATH", "models/model_hybrid_v6_targeted_recovery_v10_final.pt")
+CHECKPOINT_DIR = os.getenv("CHECKPOINT_DIR", "models/checkpoints_v6_targeted_recovery_v10")
 CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, "latest.pt")
-BASE_MODEL_PATH = os.getenv("BASE_MODEL_PATH", "models/model_hybrid_v6_targeted_recovery_v8_latest_best.pt")
+BASE_MODEL_PATH = os.getenv("BASE_MODEL_PATH", "models/model_hybrid_v6_targeted_recovery_v9_latest_best.pt")
 EPOCHS = env_int("EPOCHS", 120)
 LEARNING_RATE = env_float("LEARNING_RATE", 2e-6)
 BATCH_SIZE_PER_GPU = env_int("BATCH_SIZE_PER_GPU", 256)

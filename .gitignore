@@ -14,6 +14,8 @@ sample_*/*
 sample_boards_*/*
 train/sample_boards_*/*
 train/tensors_v*/
+tensors_v*/
+tensors_v6_targeted_recovery_*/
 train/images_4_test/debug/
 tmp/
 temp/
