@@ -759,3 +759,26 @@ Every commit must be documented with:
   - `v8` remains the practical targeted-recovery reference point
   - `v9` confirmed the same hardset frontier instead of extending it
   - the next run is isolated to a narrower `v10` recipe focused on `00026`, `00031`, and `00049`
+
+## Entry
+
+- commit: `pending`
+- objective: Reject the broad dark-board / imported-piece `v10` retry after hardset regression and narrow the next recovery pass to protect dark-board stability while still targeting `00026` and `00031`.
+- files:
+  - `docs/ENGINEERING_LOG.md`
+  - `generate_hybrid_v6.py`
+  - `train_hybrid_v6.py`
+- behavior_change:
+  - Confirmed the broad imported-asset retry regressed to `46/50`, re-opening `00005` and `00049` while still missing `00026` and `00031`.
+  - Reduced `wood_3d_arrow_clean` weight sharply for the next pass so the `00026` search stays targeted instead of dominating the data mix.
+  - Raised `clean` and `dark_anchor_clean` to restore ordinary-board and dark-board stability.
+  - Kept moderate `shirt_print_reference`, `broadcast_dark_sparse`, and `tilt_anchor` pressure so `00031` remains targeted and the `00049` fix is protected.
+  - Switched the default generator recipe to `v6_targeted_recovery_v11`.
+  - Switched the trainer outputs/checkpoints to the matching `targeted_recovery_v11` lane while keeping the warm-start base on `models/model_hybrid_v6_champion_48of50_base.pt`.
+- validation:
+  - rejected run snapshot: `models/model_hybrid_v6_targeted_recovery_v10_latest_best.pt -> 46/50`
+  - rejected misses: `00005`, `00026`, `00031`, `00049`
+  - `python3 -m py_compile generate_hybrid_v6.py train_hybrid_v6.py`
+- result:
+  - the failed broad retry is documented as a reject
+  - the next run is isolated to a narrower `v11` recipe intended to preserve the `48/50` champion behavior while probing only the remaining final-two gap
