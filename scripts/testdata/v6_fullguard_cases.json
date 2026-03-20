@@ -1,0 +1,23 @@
+{
+  "full_should_win": [
+    "puzzle-00005.jpeg",
+    "puzzle-00017.jpeg"
+  ],
+  "full_should_not_win": [
+    "puzzle-00003.jpeg",
+    "puzzle-00021.jpeg",
+    "puzzle-00028.jpeg",
+    "puzzle-00041.jpeg",
+    "puzzle-00046.jpeg",
+    "puzzle-00048.jpeg"
+  ],
+  "full_neutral_ok": [
+    "puzzle-00011.jpeg",
+    "puzzle-00024.jpeg",
+    "puzzle-00030.jpeg",
+    "puzzle-00050.jpeg"
+  ],
+  "full_localization_cases": [
+    "puzzle-00049.jpeg"
+  ]
+}

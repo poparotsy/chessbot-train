@@ -14,6 +14,90 @@ Every commit must be documented with:
 
 ## Entry
 
+- commit: `pending`
+- objective: Finish the recognizer-first edge/localization pass with a rollback-safe guarded recognizer and mandatory miss autopsy workflow.
+- files:
+  - `recognizer_v6_fullguard.py`
+  - `scripts/deep_diagnostic_v6.py`
+  - `scripts/compare_deep_diagnostic_reports_v6.py`
+  - `scripts/evaluate_fullguard_stress_v6.py`
+  - `scripts/testdata/v6_fullguard_cases.json`
+  - `scripts/tests_v6/test_internal_v6.py`
+  - `docs/ENGINEERING_LOG.md`
+- behavior_change:
+  - Added `recognizer_v6_fullguard.py` as a rollback-safe recognizer variant while keeping `recognizer_v6.py` untouched.
+  - Added a strict miss protocol:
+    1. run deep diagnostic first,
+    2. classify the miss as recognizer selection vs full-path localization vs model/tile,
+    3. only then change recognizer or data.
+  - Kept only the minimal guarded recognizer changes that survived the matrix:
+    - same-FEN near-tie preference for `full`,
+    - edge-drop penalty against partial candidates,
+    - gated `full` refinement limited to left/top adjustments for strong dark-edge trim cases.
+  - Removed broader refinement branches that did not survive clean validation.
+- validation:
+  - `python3 -m py_compile recognizer_v6_fullguard.py scripts/deep_diagnostic_v6.py scripts/evaluate_fullguard_stress_v6.py scripts/tests_v6/test_internal_v6.py`
+  - `python3 -m unittest -q scripts.tests_v6.test_internal_v6`
+  - hardset:
+    - `vChamp + recognizer_v6.py = 48/50`
+    - `vChamp + recognizer_v6_fullguard.py = 48/50`
+    - `v11 + recognizer_v6.py = 48/50`
+    - `v11 + recognizer_v6_fullguard.py = 49/50`
+    - `v13 + recognizer_v6.py = 46/50`
+    - `v13 + recognizer_v6_fullguard.py = 49/50`
+  - stress gate:
+    - `vChamp = 13/13`
+    - `v11 = 13/13`
+    - `v13 = 13/13`
+  - deep diagnostic:
+    - `00005` fixed
+    - `00017` fixed
+    - `00049` fixed via guarded `full` refinement
+- result:
+  - guarded recognizer is now a concrete candidate deployment path:
+    - `vChamp` misses `00026`, `00031`
+    - `v11 + fullguard` misses only `00031`
+    - `v13 + fullguard` misses only `00031`
+  - future misses must be root-caused exactly before any new recognizer or dataset churn.
+
+## Entry
+
+- commit: `pending`
+- objective: Lock recognizer-first miss debugging workflow and add fullguard edge/localization tooling.
+- files:
+  - `recognizer_v6_fullguard.py`
+  - `scripts/deep_diagnostic_v6.py`
+  - `scripts/evaluate_fullguard_stress_v6.py`
+  - `scripts/testdata/v6_fullguard_cases.json`
+  - `scripts/tests_v6/test_internal_v6.py`
+  - `ENGINEERING_LOG.md`
+- behavior_change:
+  - Added mandatory miss workflow:
+    1. deep diagnostic first,
+    2. classify miss as selection vs full-path localization vs model/tile,
+    3. only then change recognizer or data.
+  - Added `fullguard` full-path localization refinement for `full` candidates:
+    - asymmetric inward trim bank,
+    - inspectable dark-edge trim box,
+    - inspectable chosen refinement box,
+    - edge-preservation tie-break under near-equal variants.
+  - Added recognizer stress suite buckets:
+    - `full_should_win`
+    - `full_should_not_win`
+    - `full_neutral_ok`
+    - `full_localization_cases`
+  - Data/training defaults are intentionally unchanged during this pass.
+- validation:
+  - `python3 -m py_compile recognizer_v6_fullguard.py scripts/deep_diagnostic_v6.py scripts/evaluate_fullguard_stress_v6.py scripts/tests_v6/test_internal_v6.py`
+  - `python3 -m unittest -q scripts.tests_v6.test_internal_v6`
+  - full hardset + stress matrix on `vChamp`, `v11`, `v13`
+- result:
+  - Recognizer pass is isolated from recipe/model churn.
+  - `00005` / `00017` stay in the recognizer-selection bucket.
+  - `00049` is tracked as a `full`-path localization case until proven otherwise.
+
+## Entry
+
 - commit: `this commit`
 - objective: Record persistent guardrail that v7 remains experimental/failing unless it beats locked hardset baseline.
 - files:
@@ -835,3 +919,83 @@ Every commit must be documented with:
 - result:
   - the next run is explicitly designed to stop `broadcast_dark_sparse` from standing in for "all dark boards"
   - ordinary dark-board anchors should dominate again, with `00049` pressure isolated as a smaller stress lane
+
+## Entry
+
+- commit: `pending`
+- objective: Record the correct debugging method for future recognizer-vs-model regressions on hardset images.
+- files:
+  - `docs/ENGINEERING_LOG.md`
+- behavior_change:
+  - Added a standing debugging rule for similar failures:
+    - do not stop at "model prefers empty" or "dark recipe regressed"
+    - compare the failing checkpoint and the stable checkpoint on the **same image** and on the **same candidate crop** (`full`, `contour_*`, `panel_*`, etc.)
+    - inspect per-square tile top-k outputs on the exact failing squares before attributing the issue to the tile model
+    - only after that, compare which candidate the recognizer ultimately selected
+  - Recorded the concrete `v13` lesson:
+    - on `puzzle-00017.jpeg`, `v13` on the `full` crop was actually stronger than the champion on the key dark pieces
+    - the hard failure came from recognizer candidate selection (`panel_split_left`) rather than the tile model forgetting those pieces
+    - on `puzzle-00005.jpeg`, `v13` on the `full` crop was only slightly weaker on edge confidence, but the catastrophic miss came from the alternate candidate path (`contour_robust`)
+- result:
+  - this is the standard method for future similar regressions:
+    1. same image
+    2. same candidate crop
+    3. same squares
+    4. compare tile top-k
+    5. then compare recognizer candidate choice
+
+## Entry
+
+- commit: `pending`
+- objective: Add a go-to deep miss diagnostic so hardset failures are analyzed precisely before changing datasets or recipes.
+- files:
+  - `docs/ENGINEERING_LOG.md`
+  - `scripts/deep_diagnostic_v6.py`
+  - `scripts/tests_v6/test_internal_v6.py`
+- behavior_change:
+  - Added `scripts/deep_diagnostic_v6.py` as the default miss-autopsy tool for v6.
+  - The tool analyzes the same image across:
+    - the recognizer-selected candidate
+    - the same model on the `full` candidate
+    - an optional stable baseline model
+  - It reports:
+    - chosen-vs-full verdict (`recognizer_selection_failure` vs `model_or_full_crop_failure`)
+    - top candidate ranking with plausibility/confidence
+    - square-level top-k evidence only on relevant differing squares
+    - optional candidate crop exports for visual inspection
+  - This turns the debugging protocol into an executable tool instead of an ad hoc notebook workflow.
+- validation:
+  - `python3 -m py_compile scripts/deep_diagnostic_v6.py scripts/tests_v6/test_internal_v6.py`
+  - `python3 -m unittest -q scripts.tests_v6.test_internal_v6`
+- result:
+  - future misses can be diagnosed by asking:
+    - what path did the recognizer choose?
+    - what does the same model see on the `full` crop?
+    - which exact squares differ from truth?
+  - this should prevent shallow analysis from sending future recovery runs toward the wrong datasets or the wrong subsystem.
+
+## Entry
+
+- commit: `pending`
+- objective: Make deep diagnostic snapshots part of the before/after recognizer protocol so updates cannot drift silently.
+- files:
+  - `docs/ENGINEERING_LOG.md`
+  - `scripts/deep_diagnostic_v6.py`
+  - `scripts/compare_deep_diagnostic_reports_v6.py`
+  - `scripts/tests_v6/test_internal_v6.py`
+- behavior_change:
+  - Extended `scripts/deep_diagnostic_v6.py` so it can:
+    - analyze an entire named suite via `--suite-json`
+    - target any recognizer file via `--recognizer-path`
+    - generate a reproducible snapshot JSON for the current path/model behavior
+  - Added `scripts/compare_deep_diagnostic_reports_v6.py` to compare before/after snapshots and flag any non-positive deviation.
+  - This creates a proper protocol:
+    1. baseline deep-diagnostic snapshot on the chosen test set
+    2. recognizer update
+    3. after snapshot on the same test set
+    4. fail the update if there is any regression or same-grade deviation without a positive gain
+- validation:
+  - `python3 -m py_compile scripts/deep_diagnostic_v6.py scripts/compare_deep_diagnostic_reports_v6.py scripts/tests_v6/test_internal_v6.py`
+  - `python3 -m unittest -q scripts.tests_v6.test_internal_v6`
+- result:
+  - recognizer work now has a concrete before/after gate tied to the exact miss-autopsy protocol, instead of relying on memory or ad hoc console checks.

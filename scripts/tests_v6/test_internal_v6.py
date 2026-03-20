@@ -17,13 +17,27 @@ for path in (TRAIN_DIR, SCRIPTS_DIR):
         sys.path.insert(0, str(path))
 
 import evaluate_v6_hardset as eval_v6
+import compare_deep_diagnostic_reports_v6 as deep_diff
+import deep_diagnostic_v6 as deep_diag
 import recognizer_v6 as v6
+import recognizer_v6_fullguard as v6_fullguard
 
 
 class TestDomainSuiteData(unittest.TestCase):
     def test_domain_suite_cases_exist_in_truth_and_are_non_empty(self):
         truth = eval_v6.load_truth(TRAIN_DIR / "images_4_test" / "truth_verified.json")
         suite_path = SCRIPTS_DIR / "testdata" / "v6_domain_cases.json"
+        suite = json.loads(suite_path.read_text(encoding="utf-8"))
+        self.assertTrue(suite)
+        for category, names in suite.items():
+            self.assertTrue(category)
+            self.assertTrue(names)
+            for name in names:
+                self.assertIn(name, truth)
+
+    def test_fullguard_suite_cases_exist_in_truth_and_are_non_empty(self):
+        truth = eval_v6.load_truth(TRAIN_DIR / "images_4_test" / "truth_verified.json")
+        suite_path = SCRIPTS_DIR / "testdata" / "v6_fullguard_cases.json"
         suite = json.loads(suite_path.read_text(encoding="utf-8"))
         self.assertTrue(suite)
         for category, names in suite.items():
@@ -223,6 +237,87 @@ class TestSelectionHelpers(unittest.TestCase):
         ]
         best = v6.select_best_candidate(scored)
         self.assertEqual(best[0], "warp_a")
+
+
+class TestDeepDiagnosticHelpers(unittest.TestCase):
+    def test_classify_failure_path(self):
+        self.assertEqual(
+            deep_diag.classify_failure_path(chosen_ok=False, full_ok=True, full_available=True),
+            "recognizer_selection_failure",
+        )
+        self.assertEqual(
+            deep_diag.classify_failure_path(chosen_ok=False, full_ok=False, full_available=True),
+            "model_or_full_crop_failure",
+        )
+        self.assertEqual(
+            deep_diag.classify_failure_path(chosen_ok=True, full_ok=True, full_available=True),
+            "no_board_failure",
+        )
+
+    def test_diff_squares(self):
+        truth = "r7/8/8/8/8/8/P7/7R"
+        actual = "8/8/8/8/8/8/8/7R"
+        self.assertEqual(deep_diag.diff_squares(truth, actual), ["a2", "a8"])
+
+
+class TestDeepDiagnosticDiffHelpers(unittest.TestCase):
+    def test_status_rank(self):
+        chosen_ok = {"current_model": {"chosen_board_ok": True, "full_board_ok": True}}
+        full_only = {"current_model": {"chosen_board_ok": False, "full_board_ok": True}}
+        full_fail = {"current_model": {"chosen_board_ok": False, "full_board_ok": False}}
+        self.assertEqual(deep_diff.status_rank(chosen_ok), 2)
+        self.assertEqual(deep_diff.status_rank(full_only), 1)
+        self.assertEqual(deep_diff.status_rank(full_fail), 0)
+
+
+class TestFullGuardHelpers(unittest.TestCase):
+    def test_edge_drop_metrics_counts_deleted_edge_pieces(self):
+        full = "r6r/p6p/8/8/8/8/P6P/R6R"
+        partial = "8/8/8/8/8/8/8/8"
+        edge_drop, file_drop, rank_drop, edge_mismatch = v6_fullguard._edge_drop_metrics(full, partial)
+        self.assertEqual(edge_drop, 8)
+        self.assertEqual(file_drop, 8)
+        self.assertEqual(rank_drop, 4)
+        self.assertEqual(edge_mismatch, 8)
+
+    def test_select_best_candidate_prefers_full_on_same_fen_near_tie(self):
+        base_img = Image.new("RGB", (512, 512), (120, 120, 120))
+        same_fen = "k4r2/p7/P6p/2p3p1/5q2/4pB2/1R6/1R2K3"
+        scored = [
+            ("full", base_img, same_fen, 0.7828, 13, "white", "default", 0.0, True),
+            ("contour_robust", base_img, same_fen, 0.8410, 13, "white", "default", 0.8, True),
+        ]
+        best = v6_fullguard.select_best_candidate(scored)
+        self.assertEqual(best[0], "full")
+
+    def test_compute_dark_edge_trim_box_identity_on_bright_image(self):
+        img = Image.new("RGB", (256, 256), (180, 180, 180))
+        trim_box = v6_fullguard.compute_dark_edge_trim_box(img)
+        self.assertFalse(trim_box["trimmed"])
+        self.assertEqual((trim_box["x0"], trim_box["y0"], trim_box["x1"], trim_box["y1"]), (0, 0, 256, 256))
+
+    def test_full_refinement_variants_include_base(self):
+        img = Image.new("RGB", (256, 256), (120, 120, 120))
+        variants = v6_fullguard._build_full_refinement_variants(img)
+        names = [item["variant"] for item in variants]
+        self.assertIn("base", names)
+
+    def test_should_refine_full_trim_requires_strong_trim_pattern(self):
+        self.assertFalse(
+            v6_fullguard.should_refine_full_trim(
+                {"trimmed": True, "left": 0, "top": 0, "right": 0, "bottom": 18}
+            )
+        )
+        self.assertFalse(
+            v6_fullguard.should_refine_full_trim(
+                {"trimmed": True, "left": 142, "top": 0, "right": 0, "bottom": 0}
+            )
+        )
+        self.assertTrue(
+            v6_fullguard.should_refine_full_trim(
+                {"trimmed": True, "left": 59, "top": 264, "right": 61, "bottom": 185}
+            )
+        )
 
 
 class TestTimeoutSafety(unittest.TestCase):
