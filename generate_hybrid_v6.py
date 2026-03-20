@@ -53,7 +53,7 @@ SEED = env_int("SEED", 1337)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BOARD_THEMES_DIR = os.path.join(BASE_DIR, "board_themes")
 PIECE_SETS_DIR = os.path.join(BASE_DIR, "piece_sets")
-OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6_targeted_recovery_v11"))
+OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6_targeted_recovery_v13"))
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Keep broad/default profiles on the established, general-purpose piece pool.
