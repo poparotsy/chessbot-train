@@ -35,10 +35,10 @@ def env_float(name, default):
     return float(raw) if raw is not None else default
 
 # ============ HUMAN CONFIG (SAFE TO EDIT) ============
-DATA_DIR = os.getenv("DATA_DIR", "tensors_v6_targeted_recovery_v11")
-MODEL_SAVE_PATH = os.getenv("MODEL_SAVE_PATH", "models/model_hybrid_v6_targeted_recovery_v11_latest_best.pt")
-FINAL_MODEL_SAVE_PATH = os.getenv("FINAL_MODEL_SAVE_PATH", "models/model_hybrid_v6_targeted_recovery_v11_final.pt")
-CHECKPOINT_DIR = os.getenv("CHECKPOINT_DIR", "models/checkpoints_v6_targeted_recovery_v11")
+DATA_DIR = os.getenv("DATA_DIR", "tensors_v6_targeted_recovery_v12")
+MODEL_SAVE_PATH = os.getenv("MODEL_SAVE_PATH", "models/model_hybrid_v6_targeted_recovery_v12_latest_best.pt")
+FINAL_MODEL_SAVE_PATH = os.getenv("FINAL_MODEL_SAVE_PATH", "models/model_hybrid_v6_targeted_recovery_v12_final.pt")
+CHECKPOINT_DIR = os.getenv("CHECKPOINT_DIR", "models/checkpoints_v6_targeted_recovery_v12")
 CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, "latest.pt")
 BASE_MODEL_PATH = os.getenv("BASE_MODEL_PATH", "models/model_hybrid_v6_champion_48of50_base.pt")
 EPOCHS = env_int("EPOCHS", 120)
@@ -53,6 +53,10 @@ RANK_TRUTH_JSON = "images_4_test/truth_verified.json"
 RANK_IMAGES_DIR = "images_4_test"
 RANK_TIMEOUT_SEC = 45.0
 RANK_COMPARE_FULL_FEN = False
+RUN_DOMAIN_SUITE_AFTER_BEST = env_bool("RUN_DOMAIN_SUITE_AFTER_BEST", False)
+DOMAIN_SUITE_SCRIPT_PATH = "scripts/evaluate_v6_domain_suite.py"
+DOMAIN_SUITE_JSON = "scripts/testdata/v6_domain_cases.json"
+DOMAIN_SUITE_OUTPUT_JSON = "reports/v6_domain_suite_latest.json"
 
 # ============ ADVANCED / INTERNAL ============
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
@@ -229,6 +233,32 @@ def run_rank_on_best():
         print(f"   ⚠️ rank_models_v6.py exited with code {result.returncode}")
 
 
+def run_domain_suite_on_best():
+    cmd = [
+        sys.executable,
+        DOMAIN_SUITE_SCRIPT_PATH,
+        "--model-path",
+        MODEL_SAVE_PATH,
+        "--truth-json",
+        RANK_TRUTH_JSON,
+        "--images-dir",
+        RANK_IMAGES_DIR,
+        "--suite-json",
+        DOMAIN_SUITE_JSON,
+        "--timeout-sec",
+        str(RANK_TIMEOUT_SEC),
+        "--output-json",
+        DOMAIN_SUITE_OUTPUT_JSON,
+    ]
+    if RANK_COMPARE_FULL_FEN:
+        cmd.append("--compare-full-fen")
+
+    print("   🧭 Running domain suite on current best...")
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0:
+        print(f"   ⚠️ evaluate_v6_domain_suite.py exited with code {result.returncode}")
+
+
 def train():
     global INTERRUPTED
 
@@ -376,6 +406,8 @@ def train():
             print(f"   💾 Best model saved (val_acc: {accuracy:.4f})")
             if RUN_RANK_AFTER_BEST:
                 run_rank_on_best()
+            if RUN_DOMAIN_SUITE_AFTER_BEST:
+                run_domain_suite_on_best()
 
         scheduler.step()
 

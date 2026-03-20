@@ -782,3 +782,56 @@ Every commit must be documented with:
 - result:
   - the failed broad retry is documented as a reject
   - the next run is isolated to a narrower `v11` recipe intended to preserve the `48/50` champion behavior while probing only the remaining final-two gap
+
+## Entry
+
+- commit: `pending`
+- objective: Add a tiny domain regression suite so v6 runs can be read directionally before the full hardset settles.
+- files:
+  - `docs/ENGINEERING_LOG.md`
+  - `scripts/evaluate_v6_domain_suite.py`
+  - `scripts/testdata/v6_domain_cases.json`
+  - `scripts/tests_v6/test_internal_v6.py`
+  - `train_hybrid_v6.py`
+- behavior_change:
+  - Added a tiny domain suite keyed to the current fragile categories:
+    - `dark_anchor` -> `00005`, `00017`
+    - `shirt_print` -> `00003`, `00028`, `00031`
+    - `wood_arrow` -> `00026`
+    - `tilted_dark_sparse` -> `00021`, `00049`
+  - Added `scripts/evaluate_v6_domain_suite.py`, which reuses `evaluate_v6_hardset.py` internally and prints per-category pass counts, confidence, and misses.
+  - Added optional trainer hook `RUN_DOMAIN_SUITE_AFTER_BEST` so future runs can fire the tiny domain suite after a new best save, writing to `reports/v6_domain_suite_latest.json`.
+  - Added a unit guard so the suite file cannot silently drift away from `truth_verified.json`.
+- validation:
+  - `python3 -m py_compile train_hybrid_v6.py scripts/evaluate_v6_domain_suite.py scripts/tests_v6/test_internal_v6.py`
+  - `python3 -m unittest -q scripts.tests_v6.test_internal_v6`
+  - `python3 scripts/evaluate_v6_domain_suite.py --model-path models/model_hybrid_v6_champion_48of50.pt --truth-json images_4_test/truth_verified.json --suite-json scripts/testdata/v6_domain_cases.json`
+  - `python3 scripts/evaluate_v6_domain_suite.py --model-path models/model_hybrid_v6_targeted_recovery_v11_latest_best.pt --truth-json images_4_test/truth_verified.json --suite-json scripts/testdata/v6_domain_cases.json`
+- result:
+  - the tiny suite already cleanly distinguishes the current co-champion frontier:
+    - champion: `dark_anchor 2/2`, `tilted_dark_sparse 2/2`, `shirt_print 2/3`, `wood_arrow 0/1`
+    - preserved `v11`: `dark_anchor 2/2`, `shirt_print 2/3`, `wood_arrow 1/1`, `tilted_dark_sparse 1/2`
+  - this gives an early directional read on whether a checkpoint is drifting toward `00026` risk or `00049` risk before waiting on the entire 50-image hardset.
+
+## Entry
+
+- commit: `pending`
+- objective: Correct the dark recipe after resumed `v11` training showed the model was preserving `00026` while actively unlearning ordinary dark anchors.
+- files:
+  - `docs/ENGINEERING_LOG.md`
+  - `generate_hybrid_v6.py`
+  - `train_hybrid_v6.py`
+- behavior_change:
+  - Promoted a new `v6_targeted_recovery_v12` lane aimed at "recover dark while keeping `00026`".
+  - Expanded `dark_anchor_clean` to include the newer dark boards (`dash`, `glass`, `marble2`, `stone`, `walnut`) so ordinary dark anchors are taught on the same board family that recent experiments introduced.
+  - Made `dark_anchor_clean` more ordinary and less stress-heavy by raising labels and lowering sparse/clutter/tilt pressure.
+  - Kept `broadcast_dark_sparse` as a narrower `00049` stress lane by trimming screenshot/banner pressure and slightly reducing king-dominant tilt.
+  - Shifted `tilt_anchor` onto the newer dark board family so tilt robustness is exercised on the same darker backgrounds without letting that lane define all dark behavior.
+  - Reduced `wood_3d_arrow_clean` to maintenance weight now that `00026` can be recovered, while keeping `shirt_print_reference` strong for `00031`.
+  - Switched generator and trainer defaults from `v11` to the new `v12` lane.
+- validation:
+  - rationale from resumed `v11` hardset drift: `00026` remained solved while `00005`, `00017`, and `00049` regressed together, showing the dark mix was misbalanced rather than simply undertrained.
+  - `python3 -m py_compile generate_hybrid_v6.py train_hybrid_v6.py`
+- result:
+  - the next run is explicitly designed to stop `broadcast_dark_sparse` from standing in for "all dark boards"
+  - ordinary dark-board anchors should dominate again, with `00049` pressure isolated as a smaller stress lane

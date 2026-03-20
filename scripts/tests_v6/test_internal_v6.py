@@ -1,4 +1,5 @@
 import unittest
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +18,19 @@ for path in (TRAIN_DIR, SCRIPTS_DIR):
 
 import evaluate_v6_hardset as eval_v6
 import recognizer_v6 as v6
+
+
+class TestDomainSuiteData(unittest.TestCase):
+    def test_domain_suite_cases_exist_in_truth_and_are_non_empty(self):
+        truth = eval_v6.load_truth(TRAIN_DIR / "images_4_test" / "truth_verified.json")
+        suite_path = SCRIPTS_DIR / "testdata" / "v6_domain_cases.json"
+        suite = json.loads(suite_path.read_text(encoding="utf-8"))
+        self.assertTrue(suite)
+        for category, names in suite.items():
+            self.assertTrue(category)
+            self.assertTrue(names)
+            for name in names:
+                self.assertIn(name, truth)
 
 
 class TestSideToMoveAliases(unittest.TestCase):
