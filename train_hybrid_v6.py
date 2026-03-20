@@ -35,10 +35,10 @@ def env_float(name, default):
     return float(raw) if raw is not None else default
 
 # ============ HUMAN CONFIG (SAFE TO EDIT) ============
-DATA_DIR = os.getenv("DATA_DIR", "tensors_v6_targeted_recovery_v12")
-MODEL_SAVE_PATH = os.getenv("MODEL_SAVE_PATH", "models/model_hybrid_v6_targeted_recovery_v12_latest_best.pt")
-FINAL_MODEL_SAVE_PATH = os.getenv("FINAL_MODEL_SAVE_PATH", "models/model_hybrid_v6_targeted_recovery_v12_final.pt")
-CHECKPOINT_DIR = os.getenv("CHECKPOINT_DIR", "models/checkpoints_v6_targeted_recovery_v12")
+DATA_DIR = os.getenv("DATA_DIR", "tensors_v6_targeted_recovery_v13")
+MODEL_SAVE_PATH = os.getenv("MODEL_SAVE_PATH", "models/model_hybrid_v6_targeted_recovery_v13_latest_best.pt")
+FINAL_MODEL_SAVE_PATH = os.getenv("FINAL_MODEL_SAVE_PATH", "models/model_hybrid_v6_targeted_recovery_v13_final.pt")
+CHECKPOINT_DIR = os.getenv("CHECKPOINT_DIR", "models/checkpoints_v6_targeted_recovery_v13")
 CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, "latest.pt")
 BASE_MODEL_PATH = os.getenv("BASE_MODEL_PATH", "models/model_hybrid_v6_champion_48of50_base.pt")
 EPOCHS = env_int("EPOCHS", 120)

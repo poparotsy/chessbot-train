@@ -156,8 +156,12 @@ def main():
             f"force_piece_occlusion={args.force_piece_occlusion}, "
             f"tilt_max_deg={args.tilt_max_deg if args.tilt_max_deg is not None else 'profile-default'}"
         )
-    for i in range(args.count):
-        sampled_profile = gen.choose_profile(profile)
+    if profile is None and default_weights and hasattr(gen, "build_profile_plan"):
+        profile_plan, _profile_counts = gen.build_profile_plan(args.count, default_weights)
+    else:
+        profile_plan = [gen.choose_profile(profile) for _ in range(args.count)]
+
+    for i, sampled_profile in enumerate(profile_plan):
         fen_board = gen.random_training_board(profile=sampled_profile).board_fen()
         image, board_theme, piece_set, label_pov = render_board_image(gen, fen_board, profile=sampled_profile)
         out_path = output_dir / f"sample_{args.version}_{i + 1:03d}.png"

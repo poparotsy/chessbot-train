@@ -220,26 +220,22 @@ PROFILE_OVERRIDES = {
     },
     "dark_anchor_clean": {
         "BOARD_THEME_NAMES": [
-            "grey.jpg",
-            "olive.jpg",
             "wood4.jpg",
-            "metal.jpg",
-            "blue3.jpg",
             "dash.png",
             "glass.png",
-            "marble2.png",
             "stone.png",
             "walnut.png",
+            "dark_wood.png",
         ],
         "PIECE_SET_NAMES": ["cburnett", "merida", "maestro", "governor"],
-        "LABELS_PROB": 0.82,
+        "LABELS_PROB": 0.58,
         "TRIM_CAPTURE_PROB": 0.06,
         "ARTIFACT_EMPTY_TILE_PROB": 0.04,
-        "HIGHLIGHT_BOARD_PROB": 0.08,
-        "ARROW_BOARD_PROB": 0.04,
-        "TACTICAL_MARKER_PROB": 0.10,
-        "WATERMARK_BOARD_PROB": 0.02,
-        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.02,
+        "HIGHLIGHT_BOARD_PROB": 0.04,
+        "ARROW_BOARD_PROB": 0.02,
+        "TACTICAL_MARKER_PROB": 0.06,
+        "WATERMARK_BOARD_PROB": 0.01,
+        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.01,
         "HARD_EDGE_ROOK_PROB": 0.08,
         "HARD_FILE_EDGE_ROOK_PROB": 0.06,
         "SPARSE_BOARD_PROB": 0.06,
@@ -841,7 +837,7 @@ PROFILE_OVERRIDES = {
 
 # Deterministic data recipe (not ad-hoc random drift):
 # fixed per-chunk quotas that are auditable and repeatable.
-RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_targeted_recovery_v12")
+RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_targeted_recovery_v13")
 PROFILE_RECIPES = {
     "v6_targeted_v1": [
         ("clean", 0.30),
@@ -982,6 +978,16 @@ PROFILE_RECIPES = {
         ("book_page_reference", 0.02),
         ("digital_overlay_clean", 0.04),
         ("tilt_anchor", 0.06),
+    ],
+    "v6_targeted_recovery_v13": [
+        ("dark_anchor_clean", 0.50),
+        ("broadcast_dark_sparse", 0.14),
+        ("tilt_anchor", 0.10),
+        ("shirt_print_reference", 0.12),
+        ("clean", 0.06),
+        ("wood_3d_arrow_clean", 0.04),
+        ("diagtransfer_hatched", 0.02),
+        ("digital_overlay_clean", 0.02),
     ],
 }
 DEFAULT_PROFILE_WEIGHTS = PROFILE_RECIPES.get(RECIPE_NAME, PROFILE_RECIPES["v6_mono_logo_recovery_v6"])
@@ -1413,6 +1419,37 @@ def apply_broadcast_dark_style(background):
     out_img = ImageEnhance.Contrast(out_img).enhance(random.uniform(1.02, 1.12))
     if random.random() < 0.65:
         out_img = out_img.filter(ImageFilter.UnsharpMask(radius=0.8, percent=115, threshold=2))
+    return out_img
+
+
+def apply_dark_anchor_grade(background):
+    import cv2
+
+    arr = np.asarray(background, dtype=np.float32)
+    hsv = cv2.cvtColor(np.clip(arr, 0, 255).astype(np.uint8), cv2.COLOR_RGB2HSV).astype(np.float32)
+
+    # Two real-anchor moods:
+    # - cooler blue-grey dark boards like 00005
+    # - warmer brown dark boards like 00017
+    mode = random.choice(("cool_00005", "warm_00017"))
+    hsv[:, :, 1] *= random.uniform(0.40, 0.70)
+    hsv[:, :, 2] *= random.uniform(0.76, 0.88)
+    rgb = cv2.cvtColor(np.clip(hsv, 0, 255).astype(np.uint8), cv2.COLOR_HSV2RGB).astype(np.float32)
+
+    if mode == "cool_00005":
+        rgb[:, :, 2] *= random.uniform(1.05, 1.12)
+        rgb[:, :, 1] *= random.uniform(0.98, 1.04)
+        rgb[:, :, 0] *= random.uniform(0.92, 0.98)
+    else:
+        rgb[:, :, 0] *= random.uniform(1.04, 1.12)
+        rgb[:, :, 1] *= random.uniform(0.95, 1.00)
+        rgb[:, :, 2] *= random.uniform(0.84, 0.92)
+
+    out_img = Image.fromarray(np.clip(rgb, 0, 255).astype(np.uint8))
+    out_img = ImageEnhance.Contrast(out_img).enhance(random.uniform(1.00, 1.08))
+    out_img = ImageEnhance.Brightness(out_img).enhance(random.uniform(0.94, 0.99))
+    if random.random() < 0.55:
+        out_img = out_img.filter(ImageFilter.UnsharpMask(radius=0.6, percent=105, threshold=2))
     return out_img
 
 def draw_arrow(draw, start_square, end_square, color, ts):
@@ -2336,6 +2373,8 @@ def render_board(fen, return_meta=False, profile=None):
         background = apply_digital_overlay_clean(background, grid)
     background = apply_piece_occlusion_overlay(background, grid, cfg)
     background = apply_local_piece_tilt(background, grid, cfg)
+    if profile == "dark_anchor_clean":
+        background = apply_dark_anchor_grade(background)
     if profile == "broadcast_dark_sparse":
         background = apply_broadcast_dark_style(background)
 
