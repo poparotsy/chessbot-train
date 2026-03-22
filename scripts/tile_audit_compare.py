@@ -11,8 +11,11 @@ from PIL import Image
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TRAIN_DIR = os.path.dirname(SCRIPT_DIR)
-if TRAIN_DIR not in sys.path:
-    sys.path.insert(0, TRAIN_DIR)
+V5_DIR = os.path.join(SCRIPT_DIR, "v5")
+V4_DIR = os.path.join(SCRIPT_DIR, "v4")
+for path in (TRAIN_DIR, V5_DIR, V4_DIR):
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
 import recognizer_v5 as r5
 

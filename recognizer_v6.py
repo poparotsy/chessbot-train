@@ -19,7 +19,7 @@ except ModuleNotFoundError:
 IMG_SIZE = 64
 FEN_CHARS = "1PNBRQKpnbrqk"
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_MODEL_PATH = os.path.abspath(os.path.join(THIS_DIR, "models", "model_hybrid_v5_latest_best.pt"))
+DEFAULT_MODEL_PATH = os.path.abspath(os.path.join(THIS_DIR, "models", "model_hybrid_v6_champion_48of50.pt"))
 MODEL_PATH = os.path.abspath(os.environ.get("CHESSBOT_MODEL_PATH", DEFAULT_MODEL_PATH))
 USE_EDGE_DETECTION = True
 USE_SQUARE_DETECTION = True
