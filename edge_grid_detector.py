@@ -1,577 +1,459 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
-import math
-from typing import Iterable
-
 import cv2
 import numpy as np
 from PIL import Image
 
-
-def _to_rgb_array(img: Image.Image | np.ndarray) -> np.ndarray:
-    if isinstance(img, Image.Image):
-        return np.array(img.convert("RGB"))
-    arr = np.asarray(img)
-    if arr.ndim == 2:
-        return cv2.cvtColor(arr.astype(np.uint8), cv2.COLOR_GRAY2RGB)
-    return arr.astype(np.uint8)
-
-
-def _to_gray(img: Image.Image | np.ndarray) -> np.ndarray:
-    return cv2.cvtColor(_to_rgb_array(img), cv2.COLOR_RGB2GRAY)
+from recognizer_v6_candidate_core import (
+    compute_quad_metrics,
+    is_warp_geometry_relaxed,
+    is_warp_geometry_trustworthy,
+    order_corners,
+    perspective_transform,
+    warp_geometry_quality,
+)
 
 
-def _normalize_line(rho: float, theta: float) -> tuple[float, float]:
-    rho = float(rho)
-    theta = float(theta)
-    if rho < 0.0:
-        rho = -rho
-        theta -= math.pi
-    return rho, theta % math.pi
+def _gray_rgb(img):
+    rgb = np.array(img.convert("RGB"))
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    return rgb, gray
 
 
-def _order_corners(corners: np.ndarray) -> np.ndarray:
-    rect = np.zeros((4, 2), dtype=np.float32)
-    pts = corners.astype(np.float32)
-    s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]
-    rect[2] = pts[np.argmax(s)]
-    diff = np.diff(pts, axis=1)
-    rect[1] = pts[np.argmin(diff)]
-    rect[3] = pts[np.argmax(diff)]
-    return rect
+def _smooth_1d(signal, kernel):
+    signal = np.asarray(signal, dtype=np.float32)
+    if signal.size < kernel or kernel <= 1:
+        return signal
+    if kernel % 2 == 0:
+        kernel += 1
+    return cv2.GaussianBlur(signal.reshape(-1, 1), (1, kernel), 0).reshape(-1)
 
 
-def _quad_area(corners: np.ndarray) -> float:
-    pts = corners.astype(np.float32)
-    x = pts[:, 0]
-    y = pts[:, 1]
-    return float(0.5 * abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1))))
+def _normalize_signal(signal):
+    signal = np.asarray(signal, dtype=np.float32)
+    signal -= float(signal.min())
+    vmax = float(signal.max())
+    if vmax <= 1e-6:
+        return signal
+    return signal / vmax
 
 
-def _quad_metrics(corners: np.ndarray, width: int, height: int) -> dict[str, float]:
-    pts = _order_corners(corners)
-    top = np.linalg.norm(pts[1] - pts[0])
-    right = np.linalg.norm(pts[2] - pts[1])
-    bottom = np.linalg.norm(pts[3] - pts[2])
-    left = np.linalg.norm(pts[0] - pts[3])
+def _sample_signal(signal, center, radius):
+    lo = max(0, int(round(center - radius)))
+    hi = min(len(signal), int(round(center + radius + 1)))
+    if hi <= lo:
+        return 0.0
+    return float(np.mean(signal[lo:hi]))
 
-    def safe_ratio(a: float, b: float) -> float:
-        if a <= 1e-6 or b <= 1e-6:
-            return 0.0
-        return float(min(a / b, b / a))
 
-    def angle_deg(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
-        v1 = a - b
-        v2 = c - b
-        n1 = np.linalg.norm(v1)
-        n2 = np.linalg.norm(v2)
-        if n1 <= 1e-6 or n2 <= 1e-6:
-            return 0.0
-        cos_t = np.clip(np.dot(v1, v2) / (n1 * n2), -1.0, 1.0)
-        return float(np.degrees(np.arccos(cos_t)))
+def _search_axis_grid(signal):
+    n = int(len(signal))
+    if n < 64:
+        return None
+    smooth = _smooth_1d(signal, max(9, (n // 48) * 2 + 1))
+    smooth = _normalize_signal(smooth)
+    low_step = max(8, int(round(n * 0.085)))
+    high_step = min(int(round(n * 0.18)), n // 2)
+    best = None
+    radius = max(1.0, n / 256.0)
+    for step in range(low_step, max(low_step + 1, high_step + 1)):
+        max_start = n - 1 - (8 * step)
+        if max_start < 0:
+            continue
+        start_count = min(32, max(1, max_start + 1))
+        starts = np.linspace(0, max_start, start_count)
+        for start in starts:
+            positions = [start + (i * step) for i in range(9)]
+            values = np.array([_sample_signal(smooth, pos, radius) for pos in positions], dtype=np.float32)
+            line_score = float(np.mean(values))
+            support_ratio = float(np.mean(values >= max(0.25, float(np.mean(smooth)))))
+            border_strength = float((values[0] + values[-1]) * 0.5)
+            regularity = float(1.0 - min(1.0, np.std(np.diff(positions)) / max(1.0, step)))
+            score = (0.55 * line_score) + (0.25 * support_ratio) + (0.15 * border_strength) + (0.05 * regularity)
+            row = {
+                "start": float(start),
+                "step": float(step),
+                "positions": positions,
+                "line_score": line_score,
+                "support_ratio": support_ratio,
+                "border_strength": border_strength,
+                "regularity": regularity,
+                "score": score,
+            }
+            if best is None or row["score"] > best["score"]:
+                best = row
+    return best
 
-    angles = [
-        angle_deg(pts[3], pts[0], pts[1]),
-        angle_deg(pts[0], pts[1], pts[2]),
-        angle_deg(pts[1], pts[2], pts[3]),
-        angle_deg(pts[2], pts[3], pts[0]),
-    ]
+
+def evaluate_warped_grid(img):
+    _, gray = _gray_rgb(img)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    norm = clahe.apply(gray)
+    gx = np.abs(cv2.Sobel(norm, cv2.CV_32F, 1, 0, ksize=3))
+    gy = np.abs(cv2.Sobel(norm, cv2.CV_32F, 0, 1, ksize=3))
+    col_signal = _normalize_signal(np.mean(gx, axis=0))
+    row_signal = _normalize_signal(np.mean(gy, axis=1))
+    x_grid = _search_axis_grid(col_signal)
+    y_grid = _search_axis_grid(row_signal)
+    if x_grid is None or y_grid is None:
+        return {
+            "evidence": 0.0,
+            "support_ratio": 0.0,
+            "score": 0.0,
+            "grid_box": None,
+            "x_grid": x_grid,
+            "y_grid": y_grid,
+        }
+    x0 = x_grid["start"]
+    x1 = x_grid["start"] + (8.0 * x_grid["step"])
+    y0 = y_grid["start"]
+    y1 = y_grid["start"] + (8.0 * y_grid["step"])
+    width = max(1.0, x1 - x0)
+    height = max(1.0, y1 - y0)
+    ratio = min(width / height, height / width)
+    coverage = min(1.0, (width * height) / float(img.size[0] * img.size[1]))
+    evidence = float(
+        (0.35 * x_grid["line_score"])
+        + (0.35 * y_grid["line_score"])
+        + (0.15 * x_grid["border_strength"])
+        + (0.15 * y_grid["border_strength"])
+    )
+    support_ratio = float(0.5 * (x_grid["support_ratio"] + y_grid["support_ratio"]))
+    score = float((0.55 * evidence) + (0.20 * support_ratio) + (0.15 * ratio) + (0.10 * coverage))
     return {
-        "area_ratio": _quad_area(pts) / float(max(1, width * height)),
-        "opposite_similarity": safe_ratio(top, bottom) * safe_ratio(left, right),
-        "aspect_similarity": safe_ratio(top, left) * safe_ratio(right, bottom),
-        "min_angle": float(min(angles)),
-        "max_angle": float(max(angles)),
+        "evidence": evidence,
+        "support_ratio": support_ratio,
+        "score": score,
+        "coverage": coverage,
+        "ratio": ratio,
+        "grid_box": (float(x0), float(y0), float(x1), float(y1)),
+        "x_grid": x_grid,
+        "y_grid": y_grid,
     }
 
 
-def _warp_geometry_quality(metrics: dict[str, float]) -> float:
-    area = max(0.0, min(1.0, metrics["area_ratio"] / 0.20))
-    opp = max(0.0, min(1.0, metrics["opposite_similarity"] / 0.72))
-    asp = max(0.0, min(1.0, metrics["aspect_similarity"] / 0.68))
-    angle_span = max(0.0, min(1.0, (metrics["max_angle"] - metrics["min_angle"]) / 180.0))
-    angle = 1.0 - angle_span
-    return float(0.35 * area + 0.30 * opp + 0.25 * asp + 0.10 * angle)
-
-
-def _edge_map(gray: np.ndarray) -> np.ndarray:
-    blur = cv2.GaussianBlur(gray, (3, 3), 0)
-    sharp = cv2.Canny(blur, 40, 120, apertureSize=3)
-    soft = cv2.Canny(blur, 18, 72, apertureSize=3)
-    adap = cv2.adaptiveThreshold(
-        blur,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY_INV,
-        31,
-        9,
+def score_full_frame_board(img):
+    meta = evaluate_warped_grid(img)
+    ratio = img.size[0] / float(max(1, img.size[1]))
+    ratio_score = min(ratio, 1.0 / max(ratio, 1e-6))
+    score = float((0.70 * meta["score"]) + (0.30 * ratio_score))
+    trusted = bool(
+        0.88 <= ratio <= 1.12
+        and meta["evidence"] >= 0.34
+        and meta["support_ratio"] >= 0.46
     )
-    edges = cv2.bitwise_or(sharp, soft)
-    edges = cv2.bitwise_or(edges, adap)
-    return cv2.dilate(edges, np.ones((2, 2), np.uint8), iterations=1)
+    return {
+        **meta,
+        "score": score,
+        "trusted": trusted,
+        "ratio_score": ratio_score,
+    }
 
 
-def _extract_hough_lines(gray: np.ndarray) -> list[tuple[float, float]]:
-    h, w = gray.shape[:2]
-    min_dim = min(h, w)
-    raw = cv2.HoughLines(_edge_map(gray), 1, np.pi / 360, threshold=max(50, int(min_dim * 0.16)))
-    if raw is None:
-        return []
-    return [_normalize_line(float(line[0][0]), float(line[0][1])) for line in raw]
+def crop_warp_to_detected_grid(img):
+    meta = evaluate_warped_grid(img)
+    box = meta["grid_box"]
+    if box is None:
+        return None
+    x0, y0, x1, y1 = box
+    width = max(1.0, x1 - x0)
+    height = max(1.0, y1 - y0)
+    coverage = (width * height) / float(img.size[0] * img.size[1])
+    ratio = width / float(max(1.0, height))
+    if coverage < 0.55 or coverage > 0.995:
+        return None
+    if not (0.88 <= ratio <= 1.12):
+        return None
+    px0 = max(0, int(round(x0)))
+    py0 = max(0, int(round(y0)))
+    px1 = min(img.size[0], int(round(x1)))
+    py1 = min(img.size[1], int(round(y1)))
+    if px1 - px0 < img.size[0] * 0.55 or py1 - py0 < img.size[1] * 0.55:
+        return None
+    cropped = img.crop((px0, py0, px1, py1))
+    if cropped.size == img.size:
+        return None
+    return cropped.resize(img.size, Image.LANCZOS)
 
 
-def _contour_maps(gray: np.ndarray) -> list[np.ndarray]:
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    grad = cv2.morphologyEx(blur, cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8))
-    adap = cv2.adaptiveThreshold(
-        blur,
+def _grid_margin_score(meta, img_size, min_span_ratio=0.0):
+    box = meta.get("grid_box")
+    if box is None:
+        return 0.0
+    width, height = img_size
+    x0, y0, x1, y1 = box
+    margins = np.array(
+        [x0, y0, max(0.0, width - x1), max(0.0, height - y1)],
+        dtype=np.float32,
+    )
+    avg_margin = float(np.mean(margins) / max(1.0, min(width, height)))
+    inset_score = float(max(0.0, 1.0 - (avg_margin / 0.18)))
+    tight_score = 0.0
+    if min_span_ratio >= 0.85:
+        tight_score = float(max(0.0, 1.0 - (avg_margin / 0.025)))
+    return max(inset_score, tight_score)
+
+
+def _checker_texture_score(img):
+    gray = cv2.cvtColor(np.array(img.convert("RGB")), cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+    gray = cv2.resize(gray, (512, 512), interpolation=cv2.INTER_AREA)
+    cell = 64
+    means = np.zeros((8, 8), dtype=np.float32)
+    stds = np.zeros((8, 8), dtype=np.float32)
+    for row in range(8):
+        for col in range(8):
+            patch = gray[row * cell:(row + 1) * cell, col * cell:(col + 1) * cell]
+            inner = patch[12:-12, 12:-12]
+            means[row, col] = float(np.mean(inner))
+            stds[row, col] = float(np.std(inner))
+
+    parity = (np.indices((8, 8)).sum(axis=0) % 2).astype(bool)
+    even = means[~parity]
+    odd = means[parity]
+    sep = float(abs(float(np.mean(even)) - float(np.mean(odd))))
+    within = float(0.5 * (float(np.std(even)) + float(np.std(odd))))
+    contrast = sep / max(1e-4, within)
+    row_alt = float(np.mean(np.abs(np.diff(means, axis=1))))
+    col_alt = float(np.mean(np.abs(np.diff(means, axis=0))))
+    alt = 0.5 * (row_alt + col_alt)
+    texture = float(np.mean(stds))
+
+    contrast_score = min(1.0, contrast / 1.2)
+    sep_score = min(1.0, sep / 0.12)
+    alt_score = min(1.0, alt / 0.18)
+    texture_target = max(0.0, 1.0 - (abs(texture - 0.12) / 0.12))
+    return float(
+        (0.35 * contrast_score)
+        + (0.25 * sep_score)
+        + (0.25 * alt_score)
+        + (0.15 * texture_target)
+    )
+
+
+def _proposal_dedupe_key(corners, width, height):
+    corners = np.asarray(corners, dtype=np.float32)
+    center = corners.mean(axis=0)
+    metrics = compute_quad_metrics(corners, width, height)
+    return (
+        round(float(center[0]) / max(1.0, width), 2),
+        round(float(center[1]) / max(1.0, height), 2),
+        round(metrics["area_ratio"], 2),
+    )
+
+
+def _collect_contour_proposals(img):
+    _, gray = _gray_rgb(img)
+    height, width = gray.shape
+    proposals = []
+    seen = set()
+
+    variants = []
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    norm = clahe.apply(gray)
+    variants.append(cv2.Canny(norm, 30, 100))
+    variants.append(cv2.Canny(norm, 50, 150))
+    variants.append(cv2.Canny(norm, 70, 200))
+    adaptive = cv2.adaptiveThreshold(
+        norm,
         255,
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY_INV,
         31,
         7,
     )
-    otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
-    canny = cv2.Canny(blur, 35, 120, apertureSize=3)
-    return [
-        cv2.dilate(canny, np.ones((3, 3), np.uint8), iterations=1),
-        cv2.dilate(grad, np.ones((3, 3), np.uint8), iterations=1),
-        cv2.morphologyEx(adap, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8), iterations=1),
-        cv2.morphologyEx(otsu, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8), iterations=1),
-    ]
+    variants.append(adaptive)
+
+    for variant in variants:
+        contours, _ = cv2.findContours(variant, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:120]:
+            area = cv2.contourArea(contour)
+            if area < (width * height * 0.12):
+                continue
+            peri = cv2.arcLength(contour, True)
+            candidate_quads = []
+            for eps in (0.01, 0.02, 0.03, 0.05):
+                approx = cv2.approxPolyDP(contour, eps * peri, True)
+                if len(approx) == 4:
+                    candidate_quads.append(("contour_quad", order_corners(approx.reshape(4, 2))))
+                    break
+            rect = cv2.minAreaRect(contour)
+            rect_box = cv2.boxPoints(rect)
+            candidate_quads.append(("min_area_rect", order_corners(rect_box)))
+            for tag, corners in candidate_quads:
+                metrics = compute_quad_metrics(corners, width, height)
+                if not is_warp_geometry_relaxed(metrics):
+                    continue
+                dedupe = (tag,) + _proposal_dedupe_key(corners, width, height)
+                if dedupe in seen:
+                    continue
+                seen.add(dedupe)
+                proposals.append(
+                    {
+                        "tag": tag,
+                        "corners": corners.astype(np.float32),
+                        "metrics": metrics,
+                    }
+                )
+    return proposals
 
 
-def _cluster_positions(items: Iterable[tuple[float, float]], threshold: float) -> list[dict[str, float]]:
-    entries = sorted((float(pos), float(weight)) for pos, weight in items)
-    if not entries:
-        return []
-    clusters: list[list[tuple[float, float]]] = [[entries[0]]]
-    for pos, weight in entries[1:]:
-        center = float(np.mean([p for p, _ in clusters[-1]]))
-        if abs(pos - center) <= threshold:
-            clusters[-1].append((pos, weight))
-        else:
-            clusters.append([(pos, weight)])
-    merged = []
-    for cluster in clusters:
-        positions = np.array([pos for pos, _ in cluster], dtype=np.float32)
-        weights = np.array([weight for _, weight in cluster], dtype=np.float32)
-        merged.append(
+def _collect_bright_board_proposals(img):
+    rgb = np.array(img.convert("RGB"))
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+    height, width = rgb.shape[:2]
+    mask = (((hsv[:, :, 1] < 80) & (hsv[:, :, 2] > 150)).astype(np.uint8)) * 255
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    proposals = []
+    seen = set()
+    for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:20]:
+        x, y, w, h = cv2.boundingRect(contour)
+        area_ratio = (w * h) / float(max(1, width * height))
+        aspect_similarity = min(w / float(max(h, 1)), h / float(max(w, 1)))
+        if area_ratio < 0.10 or aspect_similarity < 0.45:
+            continue
+        # Bright framed boards in screenshot layouts often sit inside a wider bright
+        # component; search a few square windows inside that component.
+        side_candidates = sorted(
             {
-                "pos": float(np.average(positions, weights=np.maximum(weights, 1e-3))),
-                "weight": float(np.sum(weights)),
+                int(round(h * 1.02)),
+                int(round(h * 1.06)),
+                int(round(h * 1.10)),
             }
         )
-    return merged
-
-
-def _fit_nine_line_lattice(
-    clustered: list[dict[str, float]],
-    span: float,
-    *,
-    min_lines: int = 6,
-) -> dict[str, object] | None:
-    if len(clustered) < min_lines:
-        return None
-    positions = np.array([item["pos"] for item in clustered], dtype=np.float32)
-    weights = np.array([item["weight"] for item in clustered], dtype=np.float32)
-    total_weight = float(np.sum(weights)) + 1e-6
-    best = None
-
-    diffs = np.diff(np.sort(positions))
-    step_candidates: list[float] = [float(span / 8.0), float(span / 7.5), float(span / 9.0)]
-    if diffs.size:
-        dense = diffs[(diffs > 1.0) & np.isfinite(diffs)]
-        for diff in dense:
-            for divisor in (1, 2, 3, 4, 5):
-                step_candidates.append(float(diff / divisor))
-    min_spacing = max(6.0, span / 20.0)
-    max_spacing = max(min_spacing + 1.0, span / 3.0)
-    step_candidates = sorted(
-        {round(step, 2) for step in step_candidates if min_spacing <= step <= max_spacing}
-    )
-    if not step_candidates:
-        return None
-
-    for spacing in step_candidates:
-        tolerance = max(4.0, spacing * 0.22)
-        for anchor_pos in positions:
-            for anchor_idx in range(9):
-                origin = float(anchor_pos - anchor_idx * spacing)
-                lattice = origin + spacing * np.arange(9, dtype=np.float32)
-                nearest = np.min(np.abs(positions[:, None] - lattice[None, :]), axis=1)
-                matched = nearest <= tolerance
-                support_count = int(np.sum(matched))
-                if support_count < min_lines:
-                    continue
-                support_ratio = float(np.sum(weights[matched]) / total_weight)
-                residual = float(
-                    np.sum(weights * np.minimum(nearest, tolerance))
-                    / (total_weight * max(spacing, 1e-6))
-                )
-                visible = float(
-                    np.mean(np.logical_and(lattice >= -0.1 * span, lattice <= 1.1 * span).astype(np.float32))
-                )
-                if visible < 0.55:
-                    continue
-                score = support_ratio * 5.5 + visible * 1.0 - residual * 2.0
-                candidate = {
-                    "positions": lattice.tolist(),
-                    "spacing": float(spacing),
-                    "support_ratio": float(support_ratio),
-                    "regularity": 1.0,
-                    "coverage": float(visible),
-                    "residual": float(residual),
-                    "score": float(score),
-                }
-                if best is None or float(candidate["score"]) > float(best["score"]):
-                    best = candidate
-    return best
-
-
-def _warp_grid_evidence_score(img: Image.Image | np.ndarray, corners: np.ndarray, size: int = 256) -> float:
-    arr = _to_rgb_array(img)
-    dst = np.array([[0, 0], [size - 1, 0], [size - 1, size - 1], [0, size - 1]], dtype=np.float32)
-    mat = cv2.getPerspectiveTransform(corners.astype(np.float32), dst)
-    warped = cv2.warpPerspective(arr, mat, (size, size))
-    gray = cv2.cvtColor(warped, cv2.COLOR_RGB2GRAY)
-    blur = cv2.GaussianBlur(gray, (3, 3), 0)
-    gx = np.abs(cv2.Sobel(blur, cv2.CV_32F, 1, 0, ksize=3))
-    gy = np.abs(cv2.Sobel(blur, cv2.CV_32F, 0, 1, ksize=3))
-    x_proj = gx.mean(axis=0)
-    y_proj = gy.mean(axis=1)
-    tile = max(6, size // 8)
-
-    def acf_score(signal: np.ndarray) -> float:
-        centered = signal - float(np.mean(signal))
-        denom = float(np.dot(centered, centered))
-        if denom <= 1e-6:
-            return 0.0
-        acf = np.correlate(centered, centered, mode="full")[len(centered) - 1 :]
-        peaks = []
-        for k in range(1, 5):
-            center = int(round(k * tile))
-            if center + 3 >= len(acf):
-                break
-            lo = max(1, center - 3)
-            hi = min(len(acf), center + 4)
-            peaks.append(float(np.max(acf[lo:hi])) / denom)
-        return float(np.mean(peaks)) if peaks else 0.0
-
-    return float(max(0.0, min(1.0, 0.5 * (acf_score(x_proj) + acf_score(y_proj)))))
-
-
-def detect_aligned_square_grid(
-    img: Image.Image | np.ndarray,
-    *,
-    min_lines: int = 6,
-) -> dict[str, object] | None:
-    gray = _to_gray(img)
-    h, w = gray.shape[:2]
-    min_dim = min(h, w)
-    if min_dim < 120:
-        return None
-    lines = _extract_hough_lines(gray)
-    if len(lines) < min_lines * 2:
-        return None
-
-    x_family = []
-    y_family = []
-    for rho, theta in lines:
-        theta_deg = theta * 180.0 / math.pi
-        if min(theta_deg, abs(theta_deg - 180.0)) <= 18.0:
-            x_family.append((rho, 1.0))
-        elif abs(theta_deg - 90.0) <= 18.0:
-            y_family.append((rho, 1.0))
-    if len(x_family) < min_lines or len(y_family) < min_lines:
-        return None
-
-    x_fit = _fit_nine_line_lattice(_cluster_positions(x_family, threshold=max(4.0, w / 70.0)), float(w), min_lines=min_lines)
-    y_fit = _fit_nine_line_lattice(_cluster_positions(y_family, threshold=max(4.0, h / 70.0)), float(h), min_lines=min_lines)
-    if x_fit is None or y_fit is None:
-        return None
-
-    x_positions = np.clip(np.array(x_fit["positions"], dtype=np.float32), 0, w - 1)
-    y_positions = np.clip(np.array(y_fit["positions"], dtype=np.float32), 0, h - 1)
-    support = 0.5 * (float(x_fit["support_ratio"]) + float(y_fit["support_ratio"]))
-    regularity = 0.5 * (float(x_fit["regularity"]) + float(y_fit["regularity"]))
-    evidence = _warp_grid_evidence_score(
-        img,
-        np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32),
-    )
-    score = 4.0 * support + 2.5 * regularity + 2.5 * evidence
-    return {
-        "x_edges": [int(round(x)) for x in x_positions],
-        "y_edges": [int(round(y)) for y in y_positions],
-        "support_ratio": float(support),
-        "regularity": float(regularity),
-        "evidence": float(evidence),
-        "score": float(score),
-        "trusted": bool(support >= 0.72 and regularity >= 0.72 and evidence >= 0.22),
-    }
-
-
-def crop_warp_to_detected_grid(
-    img: Image.Image | np.ndarray,
-    *,
-    min_support: float = 0.55,
-    min_evidence: float = 0.12,
-) -> Image.Image | None:
-    arr = _to_rgb_array(img)
-    aligned = detect_aligned_square_grid(arr)
-    if aligned is None:
-        return None
-    if float(aligned["support_ratio"]) < min_support or float(aligned["evidence"]) < min_evidence:
-        return None
-    x_edges = np.array(aligned["x_edges"], dtype=np.int32)
-    y_edges = np.array(aligned["y_edges"], dtype=np.int32)
-    x0 = max(0, int(x_edges[0]))
-    x1 = min(arr.shape[1] - 1, int(x_edges[-1]))
-    y0 = max(0, int(y_edges[0]))
-    y1 = min(arr.shape[0] - 1, int(y_edges[-1]))
-    if x1 - x0 < 80 or y1 - y0 < 80:
-        return None
-    cropped = arr[y0 : y1 + 1, x0 : x1 + 1]
-    return Image.fromarray(cropped)
-
-
-def detect_quad_board_boxes(
-    img: Image.Image | np.ndarray,
-    *,
-    max_candidates: int = 6,
-) -> list[dict[str, object]]:
-    arr = _to_rgb_array(img)
-    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
-    h, w = gray.shape[:2]
-    candidates = []
-
-    for contour_map in _contour_maps(gray):
-        for retrieval in (cv2.RETR_EXTERNAL, cv2.RETR_LIST):
-            contours, _ = cv2.findContours(contour_map, retrieval, cv2.CHAIN_APPROX_SIMPLE)
-            for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:80]:
-                area = float(cv2.contourArea(contour))
-                if area <= float(h * w) * 0.04:
-                    continue
-                peri = cv2.arcLength(contour, True)
-                proposals: list[np.ndarray] = []
-                for eps in (0.01, 0.02, 0.03, 0.05, 0.08):
-                    approx = cv2.approxPolyDP(contour, eps * peri, True)
-                    if len(approx) == 4 and cv2.isContourConvex(approx):
-                        proposals.append(approx.reshape(4, 2).astype(np.float32))
-                        break
-                rect = cv2.minAreaRect(contour)
-                box = cv2.boxPoints(rect).astype(np.float32)
-                proposals.append(box)
-                for corners in proposals:
-                    ordered = _order_corners(corners)
-                    metrics = _quad_metrics(ordered, w, h)
-                    if metrics["area_ratio"] < 0.08:
+        x_offsets = [0.08, 0.12, 0.16]
+        y_offsets = [-0.02, 0.0, 0.02]
+        for side in side_candidates:
+            if side <= 0:
+                continue
+            side = min(side, width, height)
+            for x_frac in x_offsets:
+                for y_frac in y_offsets:
+                    px = int(round(x + (w * x_frac)))
+                    py = int(round(y + (h * y_frac)))
+                    px = max(0, min(px, width - side))
+                    py = max(0, min(py, height - side))
+                    corners = np.array(
+                        [[px, py], [px + side, py], [px + side, py + side], [px, py + side]],
+                        dtype=np.float32,
+                    )
+                    dedupe = ("bright_board_square",) + _proposal_dedupe_key(corners, width, height)
+                    if dedupe in seen:
                         continue
-                    if metrics["min_angle"] < 40.0 or metrics["max_angle"] > 140.0:
-                        continue
-                    evidence = _warp_grid_evidence_score(arr, ordered)
-                    geometry = _warp_geometry_quality(metrics)
-                    score = 3.8 * evidence + 3.2 * geometry
-                    candidates.append(
+                    seen.add(dedupe)
+                    proposals.append(
                         {
-                            "tag": "quad_box",
-                            "corners": ordered,
-                            "score": float(score),
-                            "support_ratio": float(evidence),
-                            "regularity": float(geometry),
-                            "evidence": float(evidence),
-                            "geometry": float(geometry),
-                            "trusted": bool(evidence >= 0.18 and geometry >= 0.65),
+                            "tag": "bright_board_square",
+                            "corners": corners,
+                            "metrics": compute_quad_metrics(corners, width, height),
                         }
                     )
+    return proposals
 
-    try:
-        import recognizer_v6 as base_recognizer
 
-        for tag, detector in (
-            ("robust_contour", base_recognizer.find_board_corners),
-            ("legacy_contour", base_recognizer.find_board_corners_legacy),
-        ):
-            corners = detector(Image.fromarray(arr))
-            if corners is None:
-                continue
-            ordered = _order_corners(np.asarray(corners, dtype=np.float32))
-            metrics = _quad_metrics(ordered, w, h)
-            evidence = _warp_grid_evidence_score(arr, ordered)
-            geometry = _warp_geometry_quality(metrics)
-            score = 3.8 * evidence + 3.2 * geometry
-            candidates.append(
-                {
-                    "tag": tag,
-                    "corners": ordered,
-                    "score": float(score),
-                    "support_ratio": float(evidence),
-                    "regularity": float(geometry),
-                    "evidence": float(evidence),
-                    "geometry": float(geometry),
-                    "trusted": bool(evidence >= 0.18 and geometry >= 0.65),
-                }
-            )
-    except Exception:
-        pass
-
-    candidates.sort(
-        key=lambda row: (
-            float(row["score"]),
-            float(row["evidence"]),
-            float(row["geometry"]),
-        ),
-        reverse=True,
+def _score_proposal(img, proposal):
+    corners = proposal["corners"]
+    metrics = proposal["metrics"]
+    span_x = float(corners[:, 0].max() - corners[:, 0].min()) / float(max(1, img.size[0]))
+    span_y = float(corners[:, 1].max() - corners[:, 1].min()) / float(max(1, img.size[1]))
+    min_span_ratio = float(min(span_x, span_y))
+    warped = perspective_transform(img, corners)
+    refined = crop_warp_to_detected_grid(warped)
+    scoring_img = refined if refined is not None else warped
+    warped_eval = evaluate_warped_grid(scoring_img)
+    geometry = warp_geometry_quality(metrics)
+    evidence = float(warped_eval["evidence"])
+    support_ratio = float(warped_eval["support_ratio"])
+    grid_ratio_score = float(warped_eval.get("ratio", 0.0))
+    x_line = float(warped_eval["x_grid"]["line_score"]) if warped_eval.get("x_grid") else 0.0
+    y_line = float(warped_eval["y_grid"]["line_score"]) if warped_eval.get("y_grid") else 0.0
+    axis_balance = float(min(x_line, y_line) / max(x_line, y_line, 1e-6))
+    margin_score = _grid_margin_score(
+        warped_eval,
+        (scoring_img.size[0], scoring_img.size[1]),
+        min_span_ratio=min_span_ratio,
     )
-    deduped = []
-    seen = set()
-    for row in candidates:
-        rounded = tuple(int(round(v / 16.0)) for v in row["corners"].reshape(-1))
-        if rounded in seen:
-            continue
-        seen.add(rounded)
-        deduped.append(row)
-        if len(deduped) >= max_candidates:
-            break
-    return deduped
-
-
-def score_full_frame_board(img: Image.Image | np.ndarray) -> dict[str, object]:
-    arr = _to_rgb_array(img)
-    h, w = arr.shape[:2]
-    aligned = detect_aligned_square_grid(arr)
-    evidence = _warp_grid_evidence_score(
-        arr,
-        np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32),
+    checker_score = _checker_texture_score(scoring_img)
+    score = float(
+        (0.14 * geometry)
+        + (0.12 * evidence)
+        + (0.10 * support_ratio)
+        + (0.04 * margin_score)
+        + (0.34 * checker_score)
+        + (0.12 * grid_ratio_score)
+        + (0.14 * axis_balance)
     )
-    support = float(aligned["support_ratio"]) if aligned is not None else 0.0
-    regularity = float(aligned["regularity"]) if aligned is not None else 0.0
-    score = 4.0 * support + 2.5 * regularity + 2.5 * evidence
+    if refined is not None and checker_score >= 0.65:
+        score += 0.03
+    trusted = bool(is_warp_geometry_trustworthy(metrics) and evidence >= 0.34 and support_ratio >= 0.46)
     return {
-        "tag": "full",
-        "score": float(score),
-        "support_ratio": float(support),
-        "regularity": float(regularity),
-        "evidence": float(evidence),
-        "trusted": bool(support >= 0.72 and regularity >= 0.72 and evidence >= 0.22),
+        "tag": proposal["tag"],
+        "corners": corners,
+        "geometry": float(geometry),
+        "evidence": evidence,
+        "score": score,
+        "support_ratio": support_ratio,
+        "grid_ratio_score": float(grid_ratio_score),
+        "axis_balance": float(axis_balance),
+        "margin_score": float(margin_score),
+        "min_span_ratio": float(min_span_ratio),
+        "checker_score": float(checker_score),
+        "trusted": trusted,
     }
 
 
-def detect_axis_aligned_board_boxes(
-    img: Image.Image | np.ndarray,
-    *,
-    max_candidates: int = 4,
-) -> list[dict[str, object]]:
-    arr = _to_rgb_array(img)
-    h, w = arr.shape[:2]
-    min_dim = min(h, w)
-    if min_dim < 140:
-        return []
+def detect_board_grid(img, max_hypotheses=6):
+    hypotheses = []
+    full_meta = score_full_frame_board(img)
+    contour_proposals = _collect_contour_proposals(img)
+    for proposal in contour_proposals:
+        hypotheses.append(_score_proposal(img, proposal))
+    for proposal in _collect_bright_board_proposals(img):
+        hypotheses.append(_score_proposal(img, proposal))
 
-    side_fracs = (0.44, 0.52, 0.60, 0.68, 0.76, 0.84, 0.92)
-    candidates = []
-    for frac in side_fracs:
-        side = int(round(min_dim * frac))
-        if side < 120 or side > max(h, w):
-            continue
-        x_max = max(0, w - side)
-        y_max = max(0, h - side)
-        x_step = max(24, side // 6)
-        y_step = max(24, side // 6)
-        x_positions = list(range(0, x_max + 1, x_step))
-        y_positions = list(range(0, y_max + 1, y_step))
-        if not x_positions or x_positions[-1] != x_max:
-            x_positions.append(x_max)
-        if not y_positions or y_positions[-1] != y_max:
-            y_positions.append(y_max)
-        for x0 in x_positions:
-            for y0 in y_positions:
-                roi = arr[y0 : y0 + side, x0 : x0 + side]
-                aligned = detect_aligned_square_grid(roi)
-                if aligned is None:
-                    continue
-                x_edges = np.array(aligned["x_edges"], dtype=np.float32)
-                y_edges = np.array(aligned["y_edges"], dtype=np.float32)
-                corners = np.array(
-                    [
-                        [x0 + x_edges[0], y0 + y_edges[0]],
-                        [x0 + x_edges[-1], y0 + y_edges[0]],
-                        [x0 + x_edges[-1], y0 + y_edges[-1]],
-                        [x0 + x_edges[0], y0 + y_edges[-1]],
-                    ],
-                    dtype=np.float32,
-                )
-                width = max(1.0, float(corners[1, 0] - corners[0, 0]))
-                height = max(1.0, float(corners[2, 1] - corners[1, 1]))
-                area_ratio = (width * height) / float(max(1, w * h))
-                geometry = max(0.0, min(1.0, 1.0 - abs(1.0 - width / height)))
-                score = float(aligned["score"] + 1.2 * geometry + 0.6 * min(1.0, area_ratio / 0.30))
-                candidates.append(
+    if full_meta["grid_box"] is not None:
+        x0, y0, x1, y1 = full_meta["grid_box"]
+        width = max(1.0, x1 - x0)
+        height = max(1.0, y1 - y0)
+        ratio = width / height
+        coverage = (width * height) / float(img.size[0] * img.size[1])
+        if 0.88 <= ratio <= 1.12 and 0.35 <= coverage <= 0.98:
+            corners = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32)
+            metrics = compute_quad_metrics(corners, img.size[0], img.size[1])
+            hypotheses.append(
+                _score_proposal(
+                    img,
                     {
                         "tag": "aligned_box",
                         "corners": corners,
-                        "score": score,
-                        "support_ratio": float(aligned["support_ratio"]),
-                        "regularity": float(aligned["regularity"]),
-                        "evidence": float(aligned["evidence"]),
-                        "geometry": float(geometry),
-                        "trusted": bool(aligned["trusted"] and geometry >= 0.80),
-                    }
+                        "metrics": metrics,
+                    },
                 )
+            )
 
-    candidates.sort(
-        key=lambda row: (
-            float(row["score"]),
-            float(row["support_ratio"]),
-            float(row["evidence"]),
-            float(row["regularity"]),
-        ),
-        reverse=True,
-    )
     deduped = []
     seen = set()
-    for row in candidates:
-        rounded = tuple(int(round(v / 12.0)) for v in row["corners"].reshape(-1))
-        if rounded in seen:
+    for row in sorted(hypotheses, key=lambda item: (item["score"], item["evidence"], item["geometry"]), reverse=True):
+        key = _proposal_dedupe_key(row["corners"], img.size[0], img.size[1])
+        if key in seen:
             continue
-        seen.add(rounded)
-        deduped.append(row)
-        if len(deduped) >= max_candidates:
-            break
-    return deduped
-
-
-def detect_board_grid(
-    img: Image.Image | np.ndarray,
-    *,
-    max_hypotheses: int = 4,
-) -> list[dict[str, object]]:
-    hypotheses = detect_quad_board_boxes(img, max_candidates=max_hypotheses)
-    if len(hypotheses) >= max_hypotheses:
-        return hypotheses[:max_hypotheses]
-    axis = detect_axis_aligned_board_boxes(img, max_candidates=max_hypotheses)
-    merged = hypotheses[:]
-    for row in axis:
-        merged.append(row)
-    merged.sort(
-        key=lambda row: (
-            float(row["score"]),
-            float(row["evidence"]),
-            float(row["geometry"]),
-            float(row["support_ratio"]),
-        ),
-        reverse=True,
-    )
-    deduped = []
-    seen = set()
-    for row in merged:
-        rounded = tuple(int(round(v / 16.0)) for v in row["corners"].reshape(-1))
-        if rounded in seen:
-            continue
-        seen.add(rounded)
+        seen.add(key)
         deduped.append(row)
         if len(deduped) >= max_hypotheses:
             break
+    if len(deduped) >= 2:
+        best_score = float(deduped[0]["score"])
+        ambiguous = [row for row in deduped if best_score - float(row["score"]) <= 0.05]
+        if len(ambiguous) >= 2:
+            ambiguous.sort(
+                key=lambda row: (
+                    (0.60 * float(row.get("checker_score", 0.0))) + (0.40 * float(row.get("evidence", 0.0))),
+                    float(row.get("support_ratio", 0.0)),
+                    float(row.get("score", 0.0)),
+                ),
+                reverse=True,
+            )
+            remainder = [row for row in deduped if best_score - float(row["score"]) > 0.05]
+            deduped = ambiguous + remainder
     return deduped
