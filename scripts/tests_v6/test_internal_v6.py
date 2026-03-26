@@ -12,7 +12,8 @@ from PIL import Image
 SCRIPT_DIR = Path(__file__).resolve().parent
 TRAIN_DIR = SCRIPT_DIR.parent.parent
 SCRIPTS_DIR = TRAIN_DIR / "scripts"
-for path in (TRAIN_DIR, SCRIPTS_DIR):
+ARCHIVE_DIR = TRAIN_DIR / "archive" / "recognizer_legacy"
+for path in (TRAIN_DIR, SCRIPTS_DIR, ARCHIVE_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
@@ -96,27 +97,25 @@ class TestBatchingInvariant(unittest.TestCase):
 class TestDetectorHelpers(unittest.TestCase):
     def test_build_detector_candidates_keeps_full_and_trusted_warp(self):
         base_img = Image.new("RGB", (512, 512), (120, 120, 120))
-        lens = [{
-            "tag": "contour_robust",
-            "corners": np.array([[0, 0], [511, 0], [511, 511], [0, 511]], dtype=np.float32),
-            "warp_quality": 0.8,
-            "trusted": True,
-            "relaxed": False,
-            "metrics": {"area_ratio": 1.0},
-            "lens_confidence": 1.0,
-        }]
-        metrics = {
-            "area_ratio": 0.9,
-            "opposite_similarity": 0.95,
-            "aspect_similarity": 0.95,
-            "min_angle": 89.0,
-            "max_angle": 91.0,
-        }
         with (
-            patch.object(v6.BoardDetector, "lens_hypotheses", return_value=lens),
-            patch.object(v6.BoardDetector, "_refine_corners_grid_fit", return_value=(lens[0]["corners"], 0.0)),
-            patch.object(v6, "compute_quad_metrics", return_value=metrics),
+            patch.object(
+                v6,
+                "score_full_frame_board",
+                return_value={"score": 0.95, "trusted": True, "support_ratio": 1.0, "coverage": 0.99, "evidence": 0.70},
+            ),
+            patch.object(
+                v6,
+                "detect_board_grid",
+                return_value=[{
+                    "tag": "contour_robust",
+                    "corners": np.array([[0, 0], [511, 0], [511, 511], [0, 511]], dtype=np.float32),
+                    "score": 0.80,
+                    "trusted": True,
+                    "support_ratio": 0.88,
+                }],
+            ),
             patch.object(v6, "perspective_transform", return_value=base_img),
+            patch.object(v6, "crop_warp_to_detected_grid", return_value=None),
         ):
             out = v6.build_detector_candidates(base_img)
         tags = [item[0] for item in out]
@@ -194,9 +193,9 @@ class TestOrientationHelpers(unittest.TestCase):
 
 
 class TestDecodeHelpers(unittest.TestCase):
-    def test_decode_candidate_applies_allowed_rescore_and_orientation(self):
+    def test_decode_candidate_applies_orientation_to_full_candidate(self):
         base_img = Image.new("RGB", (512, 512), (120, 120, 120))
-        candidate = ("full", base_img, 0.0, True)
+        candidate = ("full", base_img, 0.0, True, 0.9, 1.0)
         orientation_context = {
             "label_perspective_result": None,
             "label_details": {"left": None, "right": None},
@@ -208,10 +207,12 @@ class TestDecodeHelpers(unittest.TestCase):
             patch.object(
                 v6,
                 "infer_fen_on_image_clean",
-                return_value=("8/8/8/8/8/8/8/K6k", 0.8, 2, {"tile_infos": []}),
+                side_effect=[
+                    ("8/8/8/8/8/8/8/K6k", 0.8, 2),
+                    ("8/8/8/8/8/8/8/K6k", 0.8, 2, {"tile_infos": []}),
+                    ("8/8/8/8/8/8/8/K5k1", 0.81, 2, {"tile_infos": []}),
+                ],
             ),
-            patch.object(v6, "image_saturation_stats", return_value={"sat_mean": 20.0, "sat_std": 5.0}),
-            patch.object(v6, "rescore_low_saturation_sparse_from_topk", return_value=("8/8/8/8/8/8/8/K5k1", 0.81, 2)),
             patch.object(v6, "resolve_candidate_orientation", return_value=("black", "label")),
         ):
             decoded = v6.decode_candidate(
@@ -224,11 +225,11 @@ class TestDecodeHelpers(unittest.TestCase):
         self.assertEqual(decoded[0], "full")
         self.assertEqual(decoded[5], "black")
         self.assertEqual(decoded[6], "label")
-        self.assertEqual(decoded[2], v6.rotate_fen_180("8/8/8/8/8/8/8/K5k1"))
+        self.assertEqual(decoded[2], v6.rotate_fen_180("8/8/8/8/8/8/8/K6k"))
 
 
 class TestSelectionHelpers(unittest.TestCase):
-    def test_select_best_candidate_prefers_plausible_sparse_board(self):
+    def test_select_best_candidate_returns_first_scored_entry(self):
         base_img = Image.new("RGB", (512, 512), (120, 120, 120))
         scored = [
             ("full", base_img, "8/8/8/8/8/8/8/8", 0.60, 0, "white", "default", 0.0, True),
@@ -236,7 +237,7 @@ class TestSelectionHelpers(unittest.TestCase):
             ("warp_b", base_img, "8/8/8/8/8/8/8/K5k1", 0.55, 2, "white", "default", 0.6, True),
         ]
         best = v6.select_best_candidate(scored)
-        self.assertEqual(best[0], "warp_a")
+        self.assertEqual(best[0], "full")
 
 
 class TestDeepDiagnosticHelpers(unittest.TestCase):
