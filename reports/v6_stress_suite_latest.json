@@ -1,43 +1,37 @@
 {
   "images": 120,
-  "primary_pass": 69,
-  "avg_confidence": 0.8300988280912861,
+  "primary_pass": 83,
+  "avg_confidence": 0.8537433630864446,
   "categories": [
     {
-      "category": "edge_frame",
-      "passed": 1,
-      "total": 29,
-      "avg_confidence": 0.5701348056920387
-    },
-    {
-      "category": "mono_scan",
-      "passed": 24,
-      "total": 24,
-      "avg_confidence": 0.9590663178241812
-    },
-    {
-      "category": "wood_3d_arrow_clean",
-      "passed": 12,
-      "total": 22,
-      "avg_confidence": 0.8820242145395075
-    },
-    {
-      "category": "shirt_print_reference",
-      "passed": 15,
-      "total": 19,
-      "avg_confidence": 0.9331925057217871
-    },
-    {
-      "category": "book_page_reference",
-      "passed": 8,
-      "total": 14,
-      "avg_confidence": 0.8686169279473168
-    },
-    {
-      "category": "dark_anchor",
-      "passed": 9,
+      "category": "print_scan_reference",
+      "passed": 10,
       "total": 12,
-      "avg_confidence": 0.8970442548549423
+      "avg_confidence": 0.939523684210144
+    },
+    {
+      "category": "square_reference",
+      "passed": 61,
+      "total": 78,
+      "avg_confidence": 0.8928243131555903
+    },
+    {
+      "category": "wide_ui_reference",
+      "passed": 3,
+      "total": 12,
+      "avg_confidence": 0.5762414193789785
+    },
+    {
+      "category": "tall_ui_reference",
+      "passed": 6,
+      "total": 15,
+      "avg_confidence": 0.7949154239458343
+    },
+    {
+      "category": "wood_neo_reference",
+      "passed": 3,
+      "total": 3,
+      "avg_confidence": 0.8986648473267754
     }
   ]
 }
