@@ -27,7 +27,7 @@ images_boundary_v6/
 !recognizer/
 !recognizer/recognizer_v6.py
 !recognizer/requirements.txt
-!recognizer/*.pt
+recognizer/*.pt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
