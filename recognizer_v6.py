@@ -1,25 +1,58 @@
 #!/usr/bin/env python3
+"""
+Chess Recognizer v6 - Consolidated Single-File Version
+Combines: edge_grid_detector.py + recognizer_v6_candidate_core.py + recognizer_v6_candidate.py
+
+Fixes Applied:
+1. Tile CLAHE (contrast normalization per tile in LAB space) in infer_fen_on_image_clean
+2. resolve_candidate_orientation: removed erroneous piece_count_override block that fired
+   before the label check and used an absolute ratio threshold (wrong signal, wrong position).
+   Replaced with a conservative differential fallback placed correctly after all other methods,
+   matching the _core.py reference implementation.
+3. _material_score_order: epsilon now reads from CONFIG["material_score_epsilon"] instead of
+   being hardcoded, so the CONFIG block is the single source of truth.
+4. _full_candidate_should_lead: all thresholds now read from CONFIG instead of being hardcoded
+   inline, eliminating dead CONFIG keys.
+5. Removed dead frame_ratio variable in build_detector_candidates.
+"""
 import argparse
+import hashlib
 import json
 import os
 import re
 import sys
-import hashlib
-from functools import lru_cache
 import cv2
 import numpy as np
 import torch
 from PIL import Image
 from torch import nn
+
 try:
     import chess
 except ModuleNotFoundError:
     chess = None
 
+# =============================================================================
+# CONSTANTS & CONFIGURATION
+# =============================================================================
 IMG_SIZE = 64
 FEN_CHARS = "1PNBRQKpnbrqk"
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_MODEL_PATH = os.path.abspath(os.path.join(THIS_DIR, "models", "model_hybrid_v6_champion_48of50.pt"))
+def _resolve_default_model_path():
+    model_name = "model_hybrid_v6_champion_48of50.pt"
+    search_roots = [
+        THIS_DIR,
+        os.path.dirname(THIS_DIR),
+        os.path.dirname(os.path.dirname(THIS_DIR)),
+    ]
+    for root in search_roots:
+        candidate = os.path.abspath(os.path.join(root, "models", model_name))
+        if os.path.exists(candidate):
+            return candidate
+    return os.path.abspath(os.path.join(THIS_DIR, "models", model_name))
+
+
+DEFAULT_MODEL_PATH = _resolve_default_model_path()
 MODEL_PATH = os.path.abspath(os.environ.get("CHESSBOT_MODEL_PATH", DEFAULT_MODEL_PATH))
 USE_EDGE_DETECTION = True
 USE_SQUARE_DETECTION = True
@@ -38,6 +71,7 @@ WARP_RELAXED_MIN_ASPECT_SIMILARITY = 0.18
 WARP_RELAXED_MIN_ANGLE_DEG = 35.0
 WARP_RELAXED_MAX_ANGLE_DEG = 145.0
 TILE_CONTEXT_PAD = 2
+PIECE_LOG_PRIOR = -0.20
 ORIENTATION_STRONG_PIECE_MARGIN = 2.0
 ORIENTATION_WEAK_LABEL_MIN_CONF = 0.70
 ORIENTATION_BEST_EFFORT_MIN_MARGIN = 0.15
@@ -45,31 +79,30 @@ ORIENTATION_BEST_EFFORT_MIN_PIECE_MARGIN = 1.80
 ORIENTATION_BEST_EFFORT_LABEL_SIDE_WEIGHT = 0.95
 ORIENTATION_BEST_EFFORT_PIECE_WEIGHT = 0.38
 ORIENTATION_BEST_EFFORT_STM_WEIGHT = 0.12
-PIECE_LOG_PRIOR = -0.20
 LOW_SAT_SPARSE_SAT_MEAN_MAX = 44.0
 LOW_SAT_SPARSE_PIECE_MAX = 10
-LOW_SAT_SPARSE_EMPTY_ALT_MIN = 0.015
-LOW_SAT_SPARSE_ALT_OPTIONS = 2
-GRADIENT_PROJ_MIN_AREA_RATIO = 0.16
-GRADIENT_PROJ_MIN_SIDE_RATIO = 0.24
-GRADIENT_PROJ_MAX_SIDE_RATIO = 0.94
-FAMILY_ORDER = ["full", "contour", "lattice", "gradient_projection", "panel_split"]
-FAMILY_BUDGETS = {
-    "full": 1,
-    "contour": 2,
-    "lattice": 2,
-    "gradient_projection": 1,
-    "panel_split": 1,
-}
 
-# Global caches for expensive operations (from v16/v26/v30)
+# Candidate building
+MATERIAL_SCORE_EPSILON = 0.02
+FULL_CANDIDATE_RATIO_MIN = 0.92
+FULL_CANDIDATE_RATIO_MAX = 1.08
+FULL_CANDIDATE_COVERAGE_MIN = 0.93
+FULL_CANDIDATE_EVIDENCE_MIN = 0.34
+FULL_CANDIDATE_SUPPORT_MIN = 0.46
+FULL_CANDIDATE_STRONG_COVERAGE_MIN = 0.97
+FULL_CANDIDATE_STRONG_EVIDENCE_MIN = 0.50
+FULL_CANDIDATE_STRONG_SUPPORT_MIN = 0.95
+VALUE_CASE_ALT_MIN = 0.05
+VALUE_CASE_CONF_MIN = 0.55
+
 _model_cache = {}
 _plausibility_cache = {}
 _side_to_move_cache = {}
 _saturation_cache = {}
-_fen_cache = {}
 
-
+# =============================================================================
+# MODEL DEFINITION
+# =============================================================================
 class StandaloneBeastClassifier(nn.Module):
     def __init__(self, num_classes=13):
         super().__init__()
@@ -111,7 +144,28 @@ class StandaloneBeastClassifier(nn.Module):
         x = torch.flatten(x, 1)
         return self.classifier(x)
 
+def load_model(model_path=None, device=None):
+    resolved_model_path = os.path.abspath(model_path or MODEL_PATH)
+    if not os.path.exists(resolved_model_path):
+        raise FileNotFoundError(
+            "Model checkpoint not found. "
+            f"Tried: {resolved_model_path}. "
+            "Set CHESSBOT_MODEL_PATH or pass --model-path explicitly."
+        )
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    cached = _model_cache.get((resolved_model_path, str(device)))
+    if cached is not None:
+        return cached
+    model = StandaloneBeastClassifier(num_classes=13).to(device)
+    model.load_state_dict(torch.load(resolved_model_path, map_location=device))
+    model.eval()
+    _model_cache[(resolved_model_path, str(device))] = model
+    return model
 
+# =============================================================================
+# FEN & GEOMETRY UTILITIES
+# =============================================================================
 def expand_fen_board(fen):
     rows = []
     for row in fen.split("/"):
@@ -124,16 +178,13 @@ def expand_fen_board(fen):
         rows.append("".join(expanded))
     return rows
 
-
 def compress_fen_board(rows):
     return "/".join(re.sub(r"1+", lambda m: str(len(m.group())), row) for row in rows)
-
 
 def rotate_fen_180(fen):
     rows = expand_fen_board(fen)
     rotated = ["".join(reversed(row)) for row in reversed(rows)]
     return compress_fen_board(rotated)
-
 
 def parse_fen_board_rows(fen_board):
     rows = []
@@ -149,7 +200,6 @@ def parse_fen_board_rows(fen_board):
         return None
     return rows
 
-
 def order_corners(corners):
     rect = np.zeros((4, 2), dtype=np.float32)
     s = corners.sum(axis=1)
@@ -160,14 +210,11 @@ def order_corners(corners):
     rect[3] = corners[np.argmax(diff)]
     return rect
 
-
-def perspective_transform(img, corners):
-    width = height = 512
-    dst = np.array([[0, 0], [width, 0], [width, height], [0, height]], dtype=np.float32)
+def perspective_transform(img, corners, size=512):
+    dst = np.array([[0, 0], [size, 0], [size, size], [0, size]], dtype=np.float32)
     matrix = cv2.getPerspectiveTransform(corners.astype(np.float32), dst)
-    warped = cv2.warpPerspective(np.array(img), matrix, (width, height))
+    warped = cv2.warpPerspective(np.array(img), matrix, (size, size))
     return Image.fromarray(warped)
-
 
 def compute_quad_metrics(corners, width, height):
     pts = corners.astype(np.float32)
@@ -175,17 +222,14 @@ def compute_quad_metrics(corners, width, height):
     right = np.linalg.norm(pts[2] - pts[1])
     bottom = np.linalg.norm(pts[3] - pts[2])
     left = np.linalg.norm(pts[0] - pts[3])
-
     def safe_ratio(a, b):
         if a <= 1e-6 or b <= 1e-6:
             return 0.0
         return min(a / b, b / a)
-
     def quad_area(points):
         x = points[:, 0]
         y = points[:, 1]
         return 0.5 * abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
-
     def angle_deg(a, b, c):
         v1 = a - b
         v2 = c - b
@@ -195,7 +239,6 @@ def compute_quad_metrics(corners, width, height):
             return 0.0
         cos_t = np.clip(np.dot(v1, v2) / (n1 * n2), -1.0, 1.0)
         return float(np.degrees(np.arccos(cos_t)))
-
     area_ratio = quad_area(pts) / float(width * height)
     opposite_similarity = safe_ratio(top, bottom) * safe_ratio(left, right)
     aspect_similarity = safe_ratio(top, left) * safe_ratio(right, bottom)
@@ -213,7 +256,6 @@ def compute_quad_metrics(corners, width, height):
         "max_angle": float(max(angles)),
     }
 
-
 def is_warp_geometry_trustworthy(metrics):
     return (
         metrics["area_ratio"] >= WARP_MIN_AREA_RATIO
@@ -222,7 +264,6 @@ def is_warp_geometry_trustworthy(metrics):
         and metrics["min_angle"] >= WARP_MIN_ANGLE_DEG
         and metrics["max_angle"] <= WARP_MAX_ANGLE_DEG
     )
-
 
 def is_warp_geometry_relaxed(metrics):
     return (
@@ -233,91 +274,18 @@ def is_warp_geometry_relaxed(metrics):
         and metrics["max_angle"] <= WARP_RELAXED_MAX_ANGLE_DEG
     )
 
-
 def warp_geometry_quality(metrics):
     area = max(0.0, min(1.0, metrics["area_ratio"] / max(WARP_MIN_AREA_RATIO, 1e-6)))
-    opp = max(0.0, min(1.0, metrics["opposite_similarity"] / max(WARP_MIN_OPPOSITE_SIMILARITY, 1e-6)))
-    asp = max(0.0, min(1.0, metrics["aspect_similarity"] / max(WARP_MIN_ASPECT_SIMILARITY, 1e-6)))
+    opp = max(
+        0.0,
+        min(1.0, metrics["opposite_similarity"] / max(WARP_MIN_OPPOSITE_SIMILARITY, 1e-6)),
+    )
+    asp = max(
+        0.0,
+        min(1.0, metrics["aspect_similarity"] / max(WARP_MIN_ASPECT_SIMILARITY, 1e-6)),
+    )
     angle_span = max(0.0, min(1.0, (metrics["max_angle"] - metrics["min_angle"]) / 180.0))
-    angle = 1.0 - angle_span
-    return float(0.35 * area + 0.30 * opp + 0.25 * asp + 0.10 * angle)
-
-
-def find_board_corners(img):
-    gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
-    h, w = gray.shape
-    img_area = float(h * w)
-
-    def quad_area(corners):
-        x = corners[:, 0]
-        y = corners[:, 1]
-        return 0.5 * abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
-
-    def score_quad(corners):
-        top = np.linalg.norm(corners[1] - corners[0])
-        right = np.linalg.norm(corners[2] - corners[1])
-        bottom = np.linalg.norm(corners[3] - corners[2])
-        left = np.linalg.norm(corners[0] - corners[3])
-        min_side = min(top, right, bottom, left)
-        if min_side <= 0:
-            return -1.0
-        area_ratio = quad_area(corners) / img_area
-        if area_ratio < 0.20:
-            return -1.0
-        opposite_similarity = min(top / bottom, bottom / top) * min(left / right, right / left)
-        aspect_similarity = min(top / left, left / top) * min(right / bottom, bottom / right)
-        xs = corners[:, 0]
-        ys = corners[:, 1]
-        margin = min(xs.min(), w - xs.max(), ys.min(), h - ys.max()) / max(w, h)
-        return area_ratio * 8.0 + opposite_similarity * 6.0 + aspect_similarity * 7.0 + margin * 4.0
-
-    candidates = []
-    param_sets = [
-        (CANNY_LOW, CANNY_HIGH, None, cv2.RETR_EXTERNAL),
-        (30, 100, None, cv2.RETR_EXTERNAL),
-        (20, 80, None, cv2.RETR_EXTERNAL),
-        (70, 200, None, cv2.RETR_EXTERNAL),
-        (CANNY_LOW, CANNY_HIGH, 3, cv2.RETR_LIST),
-        (30, 100, 3, cv2.RETR_LIST),
-        (20, 80, 3, cv2.RETR_LIST),
-    ]
-    for low, high, dilate_kernel, retrieval in param_sets:
-        edges = cv2.Canny(gray, low, high)
-        if dilate_kernel:
-            kernel = np.ones((dilate_kernel, dilate_kernel), np.uint8)
-            edges = cv2.dilate(edges, kernel, iterations=1)
-        contours, _ = cv2.findContours(edges, retrieval, cv2.CHAIN_APPROX_SIMPLE)
-        for contour in sorted(contours, key=cv2.contourArea, reverse=True):
-            peri = cv2.arcLength(contour, True)
-            for eps in (0.01, 0.02, 0.03, 0.05, 0.08):
-                approx = cv2.approxPolyDP(contour, eps * peri, True)
-                if len(approx) != 4:
-                    continue
-                corners = order_corners(approx.reshape(4, 2))
-                score = score_quad(corners)
-                if score > 0:
-                    candidates.append((score, corners))
-                    break
-    if not candidates:
-        return None
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    return candidates[0][1]
-
-
-def find_board_corners_legacy(img):
-    gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
-    edges = cv2.Canny(gray, CANNY_LOW, CANNY_HIGH)
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    for contour in sorted(contours, key=cv2.contourArea, reverse=True):
-        peri = cv2.arcLength(contour, True)
-        approx = cv2.approxPolyDP(contour, CONTOUR_EPSILON * peri, True)
-        if len(approx) == 4:
-            area = cv2.contourArea(approx)
-            image_area = img.size[0] * img.size[1]
-            if area > image_area * 0.25:
-                return order_corners(approx.reshape(4, 2))
-    return None
-
+    return float(0.35 * area + 0.30 * opp + 0.25 * asp + 0.10 * (1.0 - angle_span))
 
 def detect_grid_lines(img):
     gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
@@ -343,7 +311,6 @@ def detect_grid_lines(img):
             v_lines.append((x1 + x2) // 2)
     if not h_lines or not v_lines:
         return None
-
     def cluster_lines(values, threshold=10):
         values = sorted(values)
         clusters = []
@@ -356,7 +323,6 @@ def detect_grid_lines(img):
                 current = [value]
         clusters.append(int(np.mean(current)))
         return clusters
-
     h_lines = cluster_lines(h_lines)
     v_lines = cluster_lines(v_lines)
     if 7 <= len(h_lines) <= 11 and 7 <= len(v_lines) <= 11:
@@ -368,555 +334,15 @@ def detect_grid_lines(img):
             return v_lines, h_lines
     return None
 
-
-def extract_file_label_crop(img, side="left"):
-    cell = min(img.size) / 8.0
-    y0 = img.size[1] - int(cell)
-    if side == "left":
-        x0 = 0
-        x1 = int(cell)
-    elif side == "right":
-        x0 = img.size[0] - int(cell)
-        x1 = img.size[0]
-    else:
-        raise ValueError("side must be 'left' or 'right'")
-    cell_crop = img.crop((x0, y0, x1, img.size[1]))
-    return cell_crop.crop((int(cell * 0.74), int(cell * 0.72), int(cell * 0.98), int(cell * 0.98)))
-
-
-def classify_file_label_crop(crop):
-    gray = np.array(crop.convert("L"))
-    h, w = gray.shape
-    best = None
-    for threshold_mode in (cv2.THRESH_BINARY, cv2.THRESH_BINARY_INV):
-        _, binary = cv2.threshold(gray, 0, 255, threshold_mode | cv2.THRESH_OTSU)
-        num_components, labels, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
-        for component_id in range(1, num_components):
-            x, y, bw, bh, area = stats[component_id]
-            area_ratio = area / float(h * w)
-            aspect = bw / max(bh, 1)
-            if area_ratio < 0.04 or area_ratio > 0.45:
-                continue
-            if bw >= w * 0.8 or bh >= h * 0.9:
-                continue
-            if aspect < 0.15 or aspect > 1.2:
-                continue
-            center_dist = abs((x + bw / 2) - w * 0.55) + abs((y + bh / 2) - h * 0.55)
-            score = area_ratio * 100.0 - center_dist * 0.12
-            if best is None or score > best["score"]:
-                best = {
-                    "score": score,
-                    "binary": binary,
-                    "component_id": component_id,
-                    "bbox": (int(x), int(y), int(bw), int(bh)),
-                    "area_ratio": float(area_ratio),
-                    "aspect": float(aspect),
-                }
-    if best is None:
-        return None
-    _, labels, _, _ = cv2.connectedComponentsWithStats(best["binary"], 8)
-    mask = np.zeros_like(best["binary"])
-    mask[labels == best["component_id"]] = 255
-    contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-    holes = 0
-    if hierarchy is not None:
-        hierarchy = hierarchy[0]
-        for contour_idx in range(len(contours)):
-            if hierarchy[contour_idx][3] != -1:
-                holes += 1
-    label = "a" if holes >= 1 else "h"
-    confidence = 0.55 + min(0.35, best["area_ratio"]) + min(0.10, holes * 0.08)
-    return {
-        "label": label,
-        "confidence": min(0.99, float(confidence)),
-        "holes": holes,
-        "bbox": best["bbox"],
-        "aspect": best["aspect"],
-    }
-
-
-def infer_board_perspective_from_labels(img):
-    left_label = classify_file_label_crop(extract_file_label_crop(img, side="left"))
-    right_label = classify_file_label_crop(extract_file_label_crop(img, side="right"))
-    details = {"left": left_label, "right": right_label}
-    if (
-        left_label
-        and right_label
-        and left_label["confidence"] >= 0.72
-        and right_label["confidence"] >= 0.72
-    ):
-        if left_label["label"] == "a" and right_label["label"] == "h":
-            return {"perspective": "white", "source": "board_labels", "details": details}
-        if left_label["label"] == "h" and right_label["label"] == "a":
-            return {"perspective": "black", "source": "board_labels", "details": details}
-    return None
-
-
-def infer_board_perspective_from_piece_distribution(fen_board, threshold=2.0):
-    # Try chess library first if available
-    if chess:
-        try:
-            board = chess.Board(fen_board)
-            white_pos = []
-            black_pos = []
-            for sq in chess.SQUARES:
-                piece = board.piece_at(sq)
-                if piece:
-                    r = 7 - (sq // 8)
-                    if piece.color == chess.WHITE:
-                        white_pos.append(r)
-                    else:
-                        black_pos.append(r)
-            if white_pos and black_pos:
-                white_mean = sum(white_pos) / len(white_pos)
-                black_mean = sum(black_pos) / len(black_pos)
-                return "black" if (black_mean - white_mean) > threshold else "white"
-        except:
-            pass
-    
-    # Fallback to simple logic
-    rows = expand_fen_board(fen_board)
-    white_rows = []
-    black_rows = []
-    for r, row in enumerate(rows):
-        for ch in row:
-            if ch == "1":
-                continue
-            if ch.isupper():
-                white_rows.append(r)
-            else:
-                black_rows.append(r)
-    if not white_rows or not black_rows:
-        return None
-    white_mean = sum(white_rows) / len(white_rows)
-    black_mean = sum(black_rows) / len(black_rows)
-    if (black_mean - white_mean) > threshold:
-        return "black"
-    return "white"
-
-
-def orientation_piece_margin(fen_board):
-    rows = expand_fen_board(fen_board)
-    white_rows = []
-    black_rows = []
-    for r, row in enumerate(rows):
-        for ch in row:
-            if ch == "1":
-                continue
-            if ch.isupper():
-                white_rows.append(r)
-            else:
-                black_rows.append(r)
-    if not white_rows or not black_rows:
-        return 0.0
-    white_mean = sum(white_rows) / len(white_rows)
-    black_mean = sum(black_rows) / len(black_rows)
-    return float(abs(white_mean - black_mean))
-
-
-# CRITICAL: This function was MISSING from v26/v30 but is called by infer_side_to_move_from_checks
-def is_square_attacked(rows, target_r, target_c, by_white):
-    """Check if a square is attacked by the specified color (from v6)"""
-    if by_white:
-        pawn_attackers = [("P", target_r + 1, target_c - 1), ("P", target_r + 1, target_c + 1)]
-    else:
-        pawn_attackers = [("p", target_r - 1, target_c - 1), ("p", target_r - 1, target_c + 1)]
-    
-    for piece, r, c in pawn_attackers:
-        if 0 <= r < 8 and 0 <= c < 8 and rows[r][c] == piece:
-            return True
-    
-    knight = "N" if by_white else "n"
-    for dr, dc in ((-2, -1), (-2, 1), (-1, -2), (-1, 2), (1, -2), (1, 2), (2, -1), (2, 1)):
-        r, c = target_r + dr, target_c + dc
-        if 0 <= r < 8 and 0 <= c < 8 and rows[r][c] == knight:
-            return True
-    
-    king = "K" if by_white else "k"
-    for dr in (-1, 0, 1):
-        for dc in (-1, 0, 1):
-            if dr == 0 and dc == 0:
-                continue
-            r, c = target_r + dr, target_c + dc
-            if 0 <= r < 8 and 0 <= c < 8 and rows[r][c] == king:
-                return True
-    
-    rook_queen = {"R", "Q"} if by_white else {"r", "q"}
-    bishop_queen = {"B", "Q"} if by_white else {"b", "q"}
-    
-    for dr, dc, attackers in (
-        (-1, 0, rook_queen),
-        (1, 0, rook_queen),
-        (0, -1, rook_queen),
-        (0, 1, rook_queen),
-        (-1, -1, bishop_queen),
-        (-1, 1, bishop_queen),
-        (1, -1, bishop_queen),
-        (1, 1, bishop_queen),
-    ):
-        r, c = target_r + dr, target_c + dc
-        while 0 <= r < 8 and 0 <= c < 8:
-            sq = rows[r][c]
-            if sq != "1":
-                if sq in attackers:
-                    return True
-                break
-            r += dr
-            c += dc
-    
-    return False
-
-
-def infer_side_to_move_from_checks(fen_board):
-    """
-    Determine side to move using manual base + chess library enhancement.
-    
-    Professional pattern: Manual logic (always works on any 8x8 grid) +
-    Chess library refinement (when position is valid). This ensures we
-    never fail even on invalid FEN from model predictions.
-    
-    Order matters: Manual check detection first (v6 approach), then
-    chess library legality refinement. This matches the original v6
-    behavior that achieved 46/50 board pass.
-    """
-    if fen_board in _side_to_move_cache:
-        return _side_to_move_cache[fen_board]
-
-    # STEP 1: Manual check detection (ALWAYS WORKS - even on invalid FEN)
-    rows = parse_fen_board_rows(fen_board)
-    if rows is None:
-        _side_to_move_cache[fen_board] = ("w", "invalid_board")
-        return "w", "invalid_board"
-
-    white_king = None
-    black_king = None
-    for r in range(8):
-        for c in range(8):
-            if rows[r][c] == "K":
-                white_king = (r, c)
-            elif rows[r][c] == "k":
-                black_king = (r, c)
-
-    if white_king is None or black_king is None:
-        _side_to_move_cache[fen_board] = ("w", "missing_king")
-        return "w", "missing_king"
-
-    white_in_check = is_square_attacked(rows, white_king[0], white_king[1], by_white=False)
-    black_in_check = is_square_attacked(rows, black_king[0], black_king[1], by_white=True)
-
-    # Check inference from attack patterns (works on ANY 8x8 grid)
-    if white_in_check and not black_in_check:
-        _side_to_move_cache[fen_board] = ("w", "check_inference")
-        return "w", "check_inference"
-    if black_in_check and not white_in_check:
-        _side_to_move_cache[fen_board] = ("b", "check_inference")
-        return "b", "check_inference"
-    if white_in_check and black_in_check:
-        _side_to_move_cache[fen_board] = ("w", "double_check_conflict")
-        return "w", "double_check_conflict"
-
-    # STEP 2: Chess library refinement (ONLY when position might be valid)
-    # This adds precision for edge cases (castling, en passant, legality)
-    if chess is not None:
-        legal_turns = []
-        for stm in ("w", "b"):
-            try:
-                board = chess.Board(f"{fen_board} {stm} - - 0 1")
-            except ValueError:
-                continue
-            if not board.is_valid():
-                continue
-            legal_turns.append((stm, board.legal_moves.count(), board.is_checkmate(), board.is_stalemate()))
-
-        if len(legal_turns) == 1:
-            result = (legal_turns[0][0], "legality_fallback")
-            _side_to_move_cache[fen_board] = result
-            return result
-
-        if len(legal_turns) == 2:
-            white_state = next(item for item in legal_turns if item[0] == "w")
-            black_state = next(item for item in legal_turns if item[0] == "b")
-
-            if white_state[1] == 0 and black_state[1] > 0:
-                result = ("b", "legality_fallback")
-                _side_to_move_cache[fen_board] = result
-                return result
-            if black_state[1] == 0 and white_state[1] > 0:
-                result = ("w", "legality_fallback")
-                _side_to_move_cache[fen_board] = result
-                return result
-
-            if white_state[2] and not black_state[2]:
-                result = ("w", "checkmate_fallback")
-                _side_to_move_cache[fen_board] = result
-                return result
-            if black_state[2] and not white_state[2]:
-                result = ("b", "checkmate_fallback")
-                _side_to_move_cache[fen_board] = result
-                return result
-
-            if white_state[3] and not black_state[3]:
-                result = ("w", "stalemate_fallback")
-                _side_to_move_cache[fen_board] = result
-                return result
-            if black_state[3] and not white_state[3]:
-                result = ("b", "stalemate_fallback")
-                _side_to_move_cache[fen_board] = result
-                return result
-
-    # STEP 3: Default (manual logic never crashed)
-    result = ("w", "no_check_signal")
-    _side_to_move_cache[fen_board] = result
-    return result
-
-
-def parse_side_to_move_override(raw_value):
-    token = str(raw_value).strip().lower()
-    mapping = {
-        "w": "w",
-        "white": "w",
-        "wtm": "w",
-        "white_to_move": "w",
-        "b": "b",
-        "black": "b",
-        "blak": "b",
-        "btm": "b",
-        "black_to_move": "b",
-    }
-    if token not in mapping:
-        allowed = "wtm|btm|w|b|white|black"
-        raise ValueError(f"Invalid --side-to-move '{raw_value}'. Use one of: {allowed}")
-    return mapping[token]
-
-
-def board_plausibility_score(fen_board):
-    """Score board position plausibility - uses chess library when available"""
-    if fen_board in _plausibility_cache:
-        return _plausibility_cache[fen_board]
-    
-    score = 0.0
-    
-    # Try chess library first if available (from v26/v30)
-    if chess:
-        try:
-            board = chess.Board(fen_board)
-            score = 10.0
-            if len(board.pieces(chess.KING, chess.WHITE)) != 1:
-                score -= 5.0
-            if len(board.pieces(chess.KING, chess.BLACK)) != 1:
-                score -= 5.0
-            white_pawns = len(board.pieces(chess.PAWN, chess.WHITE))
-            black_pawns = len(board.pieces(chess.PAWN, chess.BLACK))
-            if white_pawns > 8 or black_pawns > 8:
-                score -= 2.0
-            _plausibility_cache[fen_board] = score
-            return score
-        except Exception as e:
-            if DEBUG_MODE:
-                print(f"DEBUG: Chess library plausibility failed: {e}", file=sys.stderr)
-            # Fall through to manual checking
-    
-    # Minimal fallback (from v6)
-    rows = expand_fen_board(fen_board)
-    if len(rows) != 8 or any(len(row) != 8 for row in rows):
-        _plausibility_cache[fen_board] = -1e9
-        return -1e9
-    
-    white_king = fen_board.count("K")
-    black_king = fen_board.count("k")
-    white_pawns = fen_board.count("P")
-    black_pawns = fen_board.count("p")
-    white_queens = fen_board.count("Q")
-    black_queens = fen_board.count("q")
-    white_pieces = sum(1 for ch in fen_board if ch.isupper())
-    black_pieces = sum(1 for ch in fen_board if ch.islower())
-    total_pieces = white_pieces + black_pieces
-    pawns_on_back_rank = sum(1 for ch in (rows[0] + rows[7]) if ch in {"P", "p"})
-    
-    score = 0.0
-    score += 6.0 if white_king == 1 else -20.0 * abs(white_king - 1)
-    score += 6.0 if black_king == 1 else -20.0 * abs(black_king - 1)
-    score += 1.5 if white_pawns <= 8 else -5.0 * (white_pawns - 8)
-    score += 1.5 if black_pawns <= 8 else -5.0 * (black_pawns - 8)
-    score += 1.0 if white_pieces <= 16 else -2.0 * (white_pieces - 16)
-    score += 1.0 if black_pieces <= 16 else -2.0 * (black_pieces - 16)
-    score += 0.5 if white_queens <= 2 else -3.0 * (white_queens - 2)
-    score += 0.5 if black_queens <= 2 else -3.0 * (black_queens - 2)
-    score += 1.0 if total_pieces <= 32 else -2.0 * (total_pieces - 32)
-    score -= 2.0 * pawns_on_back_rank
-    
-    _plausibility_cache[fen_board] = score
-    return score
-
-
-def image_saturation_stats(img):
-    """Get image saturation statistics with caching (from v16/v26/v30)"""
-    img_hash = hashlib.md5(np.array(img).tobytes()).hexdigest()
-    if img_hash in _saturation_cache:
-        return _saturation_cache[img_hash]
-    
-    arr = np.array(img.convert("RGB"))
-    hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
-    sat = hsv[:, :, 1].astype(np.float32)
-    val = hsv[:, :, 2].astype(np.float32)
-    stats = {
-        "sat_mean": float(np.mean(sat)),
-        "sat_std": float(np.std(sat)),
-        "val_mean": float(np.mean(val)),
-        "val_std": float(np.std(val)),
-    }
-    _saturation_cache[img_hash] = stats
-    return stats
-
-
-def trim_dark_edge_bars(img):
-    arr = np.array(img)
-    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY) if arr.ndim == 3 else arr
-    h, w = gray.shape
-    if h < 64 or w < 64:
-        return img
-    mid = gray[int(h * 0.2) : int(h * 0.8), int(w * 0.2) : int(w * 0.8)]
-    if mid.size == 0:
-        return img
-    ref = float(np.median(mid))
-    dark_thr = ref * 0.70
-    max_trim_y = int(h * 0.18)
-    max_trim_x = int(w * 0.12)
-    row_mean = gray.mean(axis=1)
-    col_mean = gray.mean(axis=0)
-    top = 0
-    while top < max_trim_y and row_mean[top] < dark_thr:
-        top += 1
-    bottom = 0
-    while bottom < max_trim_y and row_mean[h - 1 - bottom] < dark_thr:
-        bottom += 1
-    left = 0
-    while left < max_trim_x and col_mean[left] < dark_thr:
-        left += 1
-    right = 0
-    while right < max_trim_x and col_mean[w - 1 - right] < dark_thr:
-        right += 1
-    if top < int(h * 0.02):
-        top = 0
-    if bottom < int(h * 0.02):
-        bottom = 0
-    if left < int(w * 0.015):
-        left = 0
-    if right < int(w * 0.015):
-        right = 0
-    if top == 0 and bottom == 0 and left == 0 and right == 0:
-        return img
-    x0, y0 = left, top
-    x1, y1 = w - right, h - bottom
-    if x1 - x0 < int(w * 0.65) or y1 - y0 < int(h * 0.65):
-        return img
-    cropped = img.crop((x0, y0, x1, y1))
-    return cropped.resize((w, h), Image.LANCZOS)
-
-
-def _label_prob_from_topk(tile, label):
-    for alt_label, alt_prob in tile["topk"]:
-        if alt_label == label:
-            return float(alt_prob)
-    return 1e-12
-
-
 def _labels_to_fen(labels):
     rows = []
     for r in range(8):
         rows.append("".join(labels[r * 8 : (r + 1) * 8]))
     return compress_fen_board(rows)
 
-
-def _king_health_from_labels(labels):
-    fen = _labels_to_fen(labels)
-    return int(fen.count("K") == 1) + int(fen.count("k") == 1)
-
-
-def rescore_low_saturation_sparse_from_topk(tile_infos, base_fen, base_conf):
-    if not tile_infos:
-        return None
-    base_labels = [tile["label"] for tile in tile_infos]
-    base_piece_count = sum(1 for x in base_labels if x != "1")
-    if base_piece_count > LOW_SAT_SPARSE_PIECE_MAX:
-        return None
-    uncertain = []
-    for idx, tile in enumerate(tile_infos):
-        if tile["label"] != "1":
-            continue
-        empty_prob = float(tile.get("empty_prob", _label_prob_from_topk(tile, "1")))
-        options = []
-        for alt_label, alt_prob in tile["topk"]:
-            if alt_label == "1":
-                continue
-            prob = float(alt_prob)
-            if prob < LOW_SAT_SPARSE_EMPTY_ALT_MIN:
-                continue
-            options.append((alt_label, prob))
-            if len(options) >= LOW_SAT_SPARSE_ALT_OPTIONS:
-                break
-        if not options:
-            continue
-        best_gain = max(prob - empty_prob for _, prob in options)
-        uncertain.append((best_gain, idx, empty_prob, options))
-    if not uncertain:
-        return None
-    uncertain.sort(reverse=True)
-    uncertain = uncertain[:12]
-    beam = [(base_labels, 0, 0.0)]
-    for _gain, idx, _empty_prob, options in uncertain:
-        next_beam = {}
-        for labels, changes, log_bonus in beam:
-            key_keep = tuple(labels)
-            prev_keep = next_beam.get(key_keep)
-            if prev_keep is None or log_bonus > prev_keep[2]:
-                next_beam[key_keep] = (labels, changes, log_bonus)
-            if changes >= 2:
-                continue
-            for alt_label, alt_prob in options:
-                new_labels = list(labels)
-                new_labels[idx] = alt_label
-                new_log_bonus = log_bonus + float(np.log(max(alt_prob, 1e-12)))
-                key_new = tuple(new_labels)
-                prev_new = next_beam.get(key_new)
-                if prev_new is None or new_log_bonus > prev_new[2]:
-                    next_beam[key_new] = (new_labels, changes + 1, new_log_bonus)
-        scored = []
-        for labels, changes, log_bonus in next_beam.values():
-            fen = _labels_to_fen(labels)
-            plaus = board_plausibility_score(fen)
-            k_health = _king_health_from_labels(labels)
-            objective = plaus + 1.5 * k_health + 0.5 * (log_bonus / 8.0)
-            scored.append((objective, labels, changes, log_bonus))
-        scored.sort(key=lambda row: row[0], reverse=True)
-        beam = [(labels, changes, log_bonus) for _obj, labels, changes, log_bonus in scored[:24]]
-    
-    def eval_labels(labels, log_bonus):
-        fen = _labels_to_fen(labels)
-        plaus = board_plausibility_score(fen)
-        k_health = _king_health_from_labels(labels)
-        piece_count = sum(1 for x in labels if x != "1")
-        probs = np.array([_label_prob_from_topk(tile_infos[i], labels[i]) for i in range(64)], dtype=np.float32)
-        conf = float(np.mean(probs))
-        objective = plaus + 1.5 * k_health + 0.5 * (log_bonus / 8.0)
-        return objective, fen, conf, piece_count, k_health
-    
-    base_obj, _, _, _, base_kh = eval_labels(base_labels, 0.0)
-    best = (base_obj, base_fen, base_conf, base_piece_count, base_kh)
-    for labels, _changes, log_bonus in beam:
-        obj, fen, conf, piece_count, k_health = eval_labels(labels, log_bonus)
-        if k_health < base_kh:
-            continue
-        if piece_count < base_piece_count:
-            continue
-        if obj > best[0]:
-            best = (obj, fen, conf, piece_count, k_health)
-    improved = best[0] > (base_obj + 0.15)
-    if not improved or best[1] == base_fen:
-        return None
-    return best[1], float(best[2]), int(best[3])
-
-
+# =============================================================================
+# INFERENCE & ORIENTATION (WITH FIXES)
+# =============================================================================
 def infer_fen_on_image_clean(
     img,
     model,
@@ -968,7 +394,10 @@ def infer_fen_on_image_clean(
         for idx, (r, c) in enumerate(tile_meta):
             out = out_batch[idx]
             topk_probs, topk_pred = torch.topk(out, k=min(topk_k, len(FEN_CHARS)))
-            topk = [(FEN_CHARS[int(k_idx.item())], float(prob.item())) for prob, k_idx in zip(topk_probs, topk_pred)]
+            topk = [
+                (FEN_CHARS[int(k_idx.item())], float(prob.item()))
+                for prob, k_idx in zip(topk_probs, topk_pred)
+            ]
             adjusted_scores = torch.log(out + 1e-12) + PIECE_LOG_PRIOR
             adjusted_scores[empty_idx] = torch.log(out[empty_idx] + 1e-12)
             pred_idx = int(torch.argmax(adjusted_scores).item())
@@ -998,743 +427,140 @@ def infer_fen_on_image_clean(
                 }
             )
     fen = _labels_to_fen(labels)
-    final_fen = fen
     final_conf = float(np.mean(confs))
-    final_piece_count = piece_count
-    details = {"base_fen": fen, "final_fen": final_fen, "tile_infos": tile_infos}
+    details = {"base_fen": fen, "final_fen": fen, "tile_infos": tile_infos}
     if return_details:
-        return final_fen, final_conf, final_piece_count, details
-    return final_fen, final_conf, final_piece_count
+        return fen, final_conf, piece_count, details
+    return fen, final_conf, piece_count
 
+def extract_file_label_crop(img, side="left"):
+    cell = min(img.size) / 8.0
+    y0 = img.size[1] - int(cell)
+    if side == "left":
+        x0 = 0
+        x1 = int(cell)
+    elif side == "right":
+        x0 = img.size[0] - int(cell)
+        x1 = img.size[0]
+    else:
+        raise ValueError("side must be 'left' or 'right'")
+    cell_crop = img.crop((x0, y0, x1, img.size[1]))
+    return cell_crop.crop((int(cell * 0.74), int(cell * 0.72), int(cell * 0.98), int(cell * 0.98)))
 
-class BoardDetector:
-    def __init__(self, debug=False):
-        self.debug = debug
-
-    def _log(self, msg):
-        if self.debug:
-            print(f"DEBUG: {msg}", file=sys.stderr)
-
-    def _gray(self, img):
-        return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
-
-    def _clip01(self, value):
-        return float(max(0.0, min(1.0, float(value))))
-
-    def _lens_confidence(self, metrics, trusted, relaxed, extra=0.0):
-        area = self._clip01(metrics["area_ratio"] / 0.70)
-        opp = self._clip01(metrics["opposite_similarity"])
-        asp = self._clip01(metrics["aspect_similarity"])
-        min_angle = self._clip01(metrics["min_angle"] / 90.0)
-        max_angle_penalty = self._clip01((180.0 - metrics["max_angle"]) / 90.0)
-        conf = (
-            0.35 * warp_geometry_quality(metrics)
-            + 0.25 * area
-            + 0.20 * opp
-            + 0.15 * asp
-            + 0.05 * min(min_angle, max_angle_penalty)
-            + float(extra)
-        )
-        if trusted:
-            conf += 0.08
-        elif relaxed:
-            conf += 0.03
-        return self._clip01(conf)
-
-    def _lens_candidate(self, tag, corners, img, extra_conf=0.0, raw_score=None):
-        metrics = compute_quad_metrics(corners, img.size[0], img.size[1])
-        trusted = is_warp_geometry_trustworthy(metrics)
-        relaxed = is_warp_geometry_relaxed(metrics)
-        return {
-            "tag": tag,
-            "corners": order_corners(corners),
-            "metrics": metrics,
-            "trusted": trusted,
-            "relaxed": relaxed,
-            "warp_quality": warp_geometry_quality(metrics),
-            "lens_confidence": self._lens_confidence(metrics, trusted, relaxed, extra=extra_conf),
-            "raw_score": None if raw_score is None else float(raw_score),
-        }
-
-    def _angular_distance_deg(self, a, b):
-        d = abs(a - b) % 180.0
-        return min(d, 180.0 - d)
-
-    def _dominant_orthogonal_orientations(self, angles, weights):
-        if not angles:
-            return None
-        hist = np.zeros(180, dtype=np.float32)
-        for angle, weight in zip(angles, weights):
-            hist[int(round(angle)) % 180] += max(float(weight), 1e-3)
-        primary = int(np.argmax(hist))
-        secondary_target = (primary + 90) % 180
-        search_radius = 18
-        best_secondary = None
-        best_secondary_val = -1.0
-        for delta in range(-search_radius, search_radius + 1):
-            idx = (secondary_target + delta) % 180
-            if hist[idx] > best_secondary_val:
-                best_secondary_val = float(hist[idx])
-                best_secondary = idx
-        if best_secondary is None or best_secondary_val <= 0.0:
-            return None
-        return float(primary), float(best_secondary)
-
-    def _orientation_hypotheses(self, angles, weights, top_n=5, min_sep_deg=14, sec_radius=24):
-        if not angles:
-            return []
-        hist = np.zeros(180, dtype=np.float32)
-        for angle, weight in zip(angles, weights):
-            hist[int(round(angle)) % 180] += max(float(weight), 1e-3)
-        primaries = []
-        order = np.argsort(hist)[::-1]
-        for idx in order:
-            idx = int(idx)
-            if hist[idx] <= 0.0:
-                continue
-            if any(self._angular_distance_deg(idx, p) < min_sep_deg for p in primaries):
-                continue
-            primaries.append(idx)
-            if len(primaries) >= top_n:
-                break
-        pairs = []
-        seen = set()
-        for primary in primaries:
-            secondary_target = (primary + 90) % 180
-            best_secondary = None
-            best_secondary_val = -1.0
-            for delta in range(-sec_radius, sec_radius + 1):
-                idx = int((secondary_target + delta) % 180)
-                val = float(hist[idx])
-                if val > best_secondary_val:
-                    best_secondary_val = val
-                    best_secondary = idx
-            if best_secondary is None or best_secondary_val <= 0.0:
-                continue
-            a, b = sorted((int(primary), int(best_secondary)))
-            key = (a, b)
-            if key in seen:
-                continue
-            seen.add(key)
-            pairs.append((float(primary), float(best_secondary), float(hist[primary] + best_secondary_val)))
-        pairs.sort(key=lambda x: x[2], reverse=True)
-        return pairs
-
-    def _line_intersection(self, n1, rho1, n2, rho2):
-        a = np.array([[n1[0], n1[1]], [n2[0], n2[1]]], dtype=np.float32)
-        b = np.array([rho1, rho2], dtype=np.float32)
-        det = float(np.linalg.det(a))
-        if abs(det) < 1e-6:
-            return None
-        pt = np.linalg.solve(a, b)
-        return float(pt[0]), float(pt[1])
-
-    def _cluster_axis(self, items, threshold=10):
-        if not items:
-            return []
-        items = sorted(items, key=lambda item: item[0])
-        clusters = [[items[0]]]
-        for item in items[1:]:
-            if item[0] - clusters[-1][-1][0] <= threshold:
-                clusters[-1].append(item)
-            else:
-                clusters.append([item])
-        merged = []
-        for cluster in clusters:
-            positions = np.array([item[0] for item in cluster], dtype=np.float32)
-            weights = np.array([item[1] for item in cluster], dtype=np.float32)
-            merged.append({
-                "pos": float(np.average(positions, weights=np.maximum(weights, 1e-3))),
-                "weight": float(weights.sum()),
-                "count": len(cluster),
-            })
-        return merged
-
-    def _best_line_window(self, clustered, span):
-        if len(clustered) < span:
-            return None
-        best = None
-        for start in range(0, len(clustered) - span + 1):
-            window = clustered[start : start + span]
-            positions = np.array([line["pos"] for line in window], dtype=np.float32)
-            diffs = np.diff(positions)
-            if np.any(diffs <= 1):
-                continue
-            spacing_mean = float(np.mean(diffs))
-            spacing_std = float(np.std(diffs))
-            regularity = 1.0 / (1.0 + (spacing_std / max(spacing_mean, 1e-6)))
-            strength = float(sum(line["weight"] for line in window))
-            score = regularity * 1000.0 + strength
-            candidate = {
-                "positions": positions,
-                "regularity": regularity,
-                "strength": strength,
-                "spacing_mean": spacing_mean,
-                "score": score,
-            }
-            if best is None or candidate["score"] > best["score"]:
-                best = candidate
-        return best
-
-    def _periodicity_score(self, signal, min_lag=6):
-        arr = np.asarray(signal, dtype=np.float32)
-        n = arr.shape[0]
-        if n < max(24, min_lag + 4):
-            return 0.0
-        arr = arr - float(arr.mean())
-        denom = float(np.dot(arr, arr))
-        if denom <= 1e-6:
-            return 0.0
-        acf = np.correlate(arr, arr, mode="full")[n - 1 :]
-        lag_lo = min_lag
-        lag_hi = max(lag_lo + 1, min(n // 3, n - 1))
-        if lag_hi <= lag_lo:
-            return 0.0
-        peak = float(np.max(acf[lag_lo:lag_hi]))
-        return float(max(0.0, min(1.0, peak / denom)))
-
-    def _tile_acf_score(self, signal, tile_period):
-        arr = np.asarray(signal, dtype=np.float32)
-        n = arr.shape[0]
-        if n < tile_period * 4:
-            return 0.0
-        arr = arr - float(arr.mean())
-        denom = float(np.dot(arr, arr))
-        if denom <= 1e-6:
-            return 0.0
-        acf = np.correlate(arr, arr, mode="full")[n - 1 :]
-        peaks = []
-        for k in range(1, 5):
-            center = int(round(k * tile_period))
-            if center + 3 >= n:
-                break
-            lo = max(1, center - 3)
-            hi = min(n - 1, center + 4)
-            peaks.append(float(np.max(acf[lo:hi])) / denom)
-        if not peaks:
-            return 0.0
-        return float(max(0.0, min(1.0, np.mean(peaks))))
-
-    def _periodicity_2d_score(self, gray, grad, x0, y0, x1, y1):
-        roi_grad = grad[y0 : y1 + 1, x0 : x1 + 1]
-        roi_gray = gray[y0 : y1 + 1, x0 : x1 + 1]
-        hh, ww = roi_gray.shape[:2]
-        if hh < 120 or ww < 120:
-            return 0.0, 0.0, 0.0
-        x_proj = roi_grad.mean(axis=0)
-        y_proj = roi_grad.mean(axis=1)
-        px = self._periodicity_score(x_proj, min_lag=max(5, ww // 42))
-        py = self._periodicity_score(y_proj, min_lag=max(5, hh // 42))
-        periodicity = 0.5 * (px + py)
-        texture = float(np.mean(roi_grad))
-        contrast = float(np.std(roi_gray))
-        return float(periodicity), texture, contrast
-
-    def detect_gradient_projection(self, img):
-        gray = self._gray(img)
-        h, w = gray.shape
-        if min(h, w) < 200:
-            return None
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        gx = np.abs(cv2.Sobel(blur, cv2.CV_32F, 1, 0, ksize=3))
-        gy = np.abs(cv2.Sobel(blur, cv2.CV_32F, 0, 1, ksize=3))
-        grad = 0.5 * gx + 0.5 * gy
-        col_energy = gx.mean(axis=0)
-        row_energy = gy.mean(axis=1)
-        if w >= 31:
-            col_energy = cv2.GaussianBlur(col_energy.reshape(1, -1), (1, 31), 0).reshape(-1)
-        if h >= 31:
-            row_energy = cv2.GaussianBlur(row_energy.reshape(-1, 1), (31, 1), 0).reshape(-1)
-
-        def projection_peak_pair(signal, min_span_ratio=0.24):
-            arr = np.asarray(signal, dtype=np.float32)
-            n = int(arr.shape[0])
-            if n < 40:
-                return None
-            lo = int(n * 0.06)
-            hi = int(n * 0.94)
-            mid = (lo + hi) // 2
-            if hi - lo < 20:
-                return None
-            left_band = arr[lo:mid]
-            right_band = arr[mid:hi]
-            if left_band.size == 0 or right_band.size == 0:
-                return None
-            li = int(np.argmax(left_band)) + lo
-            ri = int(np.argmax(right_band)) + mid
-            if ri <= li or (ri - li) < int(n * min_span_ratio):
-                return None
-            mean_signal = float(np.mean(arr) + 1e-6)
-            peak_gain = float((arr[li] + arr[ri]) * 0.5 / mean_signal)
-            return li, ri, peak_gain
-
-        x_pair = projection_peak_pair(col_energy, min_span_ratio=GRADIENT_PROJ_MIN_SIDE_RATIO)
-        y_pair = projection_peak_pair(row_energy, min_span_ratio=GRADIENT_PROJ_MIN_SIDE_RATIO)
-        if x_pair is None or y_pair is None:
-            return None
-        lx, rx, x_gain = x_pair
-        ty, by, y_gain = y_pair
-        pad_x = max(2, int(w * 0.015))
-        pad_y = max(2, int(h * 0.015))
-        x0 = max(0, lx - pad_x)
-        x1 = min(w - 1, rx + pad_x)
-        y0 = max(0, ty - pad_y)
-        y1 = min(h - 1, by + pad_y)
-        ww = x1 - x0 + 1
-        hh = y1 - y0 + 1
-        if ww <= 4 or hh <= 4:
-            return None
-        width_ratio = ww / float(w)
-        height_ratio = hh / float(h)
-        ratio = ww / float(max(1, hh))
-        area_ratio = (ww * hh) / float(w * h)
-        if (
-            width_ratio < GRADIENT_PROJ_MIN_SIDE_RATIO
-            or height_ratio < GRADIENT_PROJ_MIN_SIDE_RATIO
-            or width_ratio > GRADIENT_PROJ_MAX_SIDE_RATIO
-            or height_ratio > GRADIENT_PROJ_MAX_SIDE_RATIO
-            or ratio < 0.52
-            or ratio > 1.95
-            or area_ratio < GRADIENT_PROJ_MIN_AREA_RATIO
-        ):
-            return None
-        periodicity, texture_raw, contrast_raw = self._periodicity_2d_score(gray, grad, x0, y0, x1, y1)
-        if periodicity <= 0.03:
-            return None
-        edge_gain = 0.5 * (x_gain + y_gain)
-        area_pref = 1.0 - min(1.0, abs(area_ratio - 0.42) / 0.42)
-        square_pref = 1.0 - min(1.0, abs(1.0 - ratio) / 0.8)
-        texture = float(texture_raw / (float(np.mean(grad)) + 1e-6))
-        contrast = float(contrast_raw / (float(np.std(gray)) + 1e-6))
-        score = 2.6 * periodicity + 0.70 * max(0.0, edge_gain - 1.0) + 0.40 * texture + 0.30 * contrast + 0.25 * area_pref + 0.25 * square_pref
-        return {
-            "tag": "gradient_projection",
-            "corners": np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32),
-            "score": float(score),
-            "periodicity": float(periodicity),
-        }
-
-    def _warp_grid_score(self, img, corners, size=256):
-        arr = np.array(img)
-        src = corners.astype(np.float32)
-        dst = np.array([[0, 0], [size - 1, 0], [size - 1, size - 1], [0, size - 1]], dtype=np.float32)
-        mat = cv2.getPerspectiveTransform(src, dst)
-        warped = cv2.warpPerspective(arr, mat, (size, size))
-        gray = cv2.cvtColor(warped, cv2.COLOR_RGB2GRAY)
-        gx = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))
-        gy = np.abs(cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3))
-        x_proj = gx.mean(axis=0)
-        y_proj = gy.mean(axis=1)
-        tile = max(6, size // 8)
-        sx = self._tile_acf_score(x_proj, tile)
-        sy = self._tile_acf_score(y_proj, tile)
-        line_pos = [int(round(i * size / 8.0)) for i in range(9)]
-        edge_band = 2
-        line_x = []
-        off_x = []
-        line_y = []
-        off_y = []
-        for p in line_pos:
-            lo = max(0, p - edge_band)
-            hi = min(size, p + edge_band + 1)
-            line_x.append(float(np.mean(x_proj[lo:hi])))
-            line_y.append(float(np.mean(y_proj[lo:hi])))
-        for p in [int(round((i + 0.5) * size / 8.0)) for i in range(8)]:
-            lo = max(0, p - edge_band)
-            hi = min(size, p + edge_band + 1)
-            off_x.append(float(np.mean(x_proj[lo:hi])))
-            off_y.append(float(np.mean(y_proj[lo:hi])))
-        lx = float(np.mean(line_x) / max(1e-6, np.mean(off_x) if off_x else np.mean(line_x)))
-        ly = float(np.mean(line_y) / max(1e-6, np.mean(off_y) if off_y else np.mean(line_y)))
-        line_sep = max(0.0, min(1.0, 0.5 * (lx + ly) - 0.6))
-        return float(max(0.0, min(1.0, 0.55 * (sx + sy) * 0.5 + 0.45 * line_sep)))
-
-    def _refine_corners_grid_fit(self, img, corners):
-        h, w = img.size[1], img.size[0]
-        cur = order_corners(corners.copy().astype(np.float32))
-        base_metrics = compute_quad_metrics(cur, w, h)
-        base_score = 0.70 * self._warp_grid_score(img, cur) + 0.30 * warp_geometry_quality(base_metrics)
-        best_score = float(base_score)
-        for frac in (0.04, 0.02):
-            step = max(2.0, min(w, h) * frac)
-            improved_any = False
-            for idx in range(4):
-                local_best = cur.copy()
-                local_score = best_score
-                for dx in (-step, 0.0, step):
-                    for dy in (-step, 0.0, step):
-                        if dx == 0.0 and dy == 0.0:
-                            continue
-                        trial = cur.copy()
-                        trial[idx, 0] = np.clip(trial[idx, 0] + dx, 0, w - 1)
-                        trial[idx, 1] = np.clip(trial[idx, 1] + dy, 0, h - 1)
-                        trial = order_corners(trial)
-                        metrics = compute_quad_metrics(trial, w, h)
-                        if metrics["area_ratio"] < 0.16:
-                            continue
-                        gscore = self._warp_grid_score(img, trial)
-                        score = 0.70 * gscore + 0.30 * warp_geometry_quality(metrics)
-                        if score > local_score + 1e-4:
-                            local_score = float(score)
-                            local_best = trial
-                if local_score > best_score + 1e-4:
-                    best_score = local_score
-                    cur = local_best
-                    improved_any = True
-            if not improved_any:
-                break
-        return cur, float(best_score)
-
-    def detect_panel_split(self, img):
-        gray = self._gray(img)
-        h, w = gray.shape
-        if min(h, w) < 200:
-            return None
-        gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
-        gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
-        grad = cv2.convertScaleAbs(0.5 * np.abs(gx) + 0.5 * np.abs(gy)).astype(np.float32)
-        candidates = []
-        col_energy = grad.mean(axis=0)
-        row_energy = grad.mean(axis=1)
-        if w >= 31:
-            col_energy = cv2.GaussianBlur(col_energy.reshape(1, -1), (1, 31), 0).reshape(-1)
-        if h >= 31:
-            row_energy = cv2.GaussianBlur(row_energy.reshape(-1, 1), (31, 1), 0).reshape(-1)
-        total_col = float(np.mean(col_energy) + 1e-6)
-        total_row = float(np.mean(row_energy) + 1e-6)
-
-        def score_rect(tag, x0, y0, x1, y1, edge_gain, total_mean):
-            ww = x1 - x0 + 1
-            hh = y1 - y0 + 1
-            ratio = ww / float(max(1, hh))
-            if ww < int(w * 0.28) or hh < int(h * 0.34) or ratio < 0.52 or ratio > 1.95:
-                return
-            roi_grad = grad[y0 : y1 + 1, x0 : x1 + 1]
-            roi_gray = gray[y0 : y1 + 1, x0 : x1 + 1]
-            x_proj = roi_grad.mean(axis=0)
-            y_proj = roi_grad.mean(axis=1)
-            px = self._periodicity_score(x_proj, min_lag=max(5, ww // 40))
-            py = self._periodicity_score(y_proj, min_lag=max(5, hh // 40))
-            periodicity = 0.5 * (px + py)
-            texture = float(np.mean(roi_grad) / (total_mean * 2.0))
-            contrast = float(np.std(roi_gray) / 64.0)
-            score = 2.6 * periodicity + 0.95 * max(0.0, edge_gain) + 0.45 * texture + 0.25 * contrast
-            candidates.append({
-                "tag": tag,
-                "corners": np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32),
-                "score": float(score),
-                "periodicity": float(periodicity),
-            })
-
-        x_lo = int(w * 0.18)
-        x_hi = int(w * 0.82)
-        x_step = max(4, w // 160)
-        for split in range(x_lo, x_hi, x_step):
-            left_mean = float(np.mean(col_energy[:split])) if split > 8 else 0.0
-            right_mean = float(np.mean(col_energy[split:])) if split < w - 8 else 0.0
-            x0, x1 = split, w - 1
-            roi_rows = grad[:, x0 : x1 + 1].mean(axis=1)
-            thr = float(np.quantile(roi_rows, 0.35))
-            active = np.where(roi_rows >= thr)[0]
-            if active.size >= int(h * 0.45):
-                y0 = max(0, int(active[0]) - max(3, h // 120))
-                y1 = min(h - 1, int(active[-1]) + max(3, h // 120))
-            else:
-                y0, y1 = 0, h - 1
-            score_rect("panel_split_right", x0, y0, x1, y1, (right_mean - left_mean) / total_col, total_col)
-            x0, x1 = 0, split
-            roi_rows = grad[:, x0 : x1 + 1].mean(axis=1)
-            thr = float(np.quantile(roi_rows, 0.35))
-            active = np.where(roi_rows >= thr)[0]
-            if active.size >= int(h * 0.45):
-                y0 = max(0, int(active[0]) - max(3, h // 120))
-                y1 = min(h - 1, int(active[-1]) + max(3, h // 120))
-            else:
-                y0, y1 = 0, h - 1
-            score_rect("panel_split_left", x0, y0, x1, y1, (left_mean - right_mean) / total_col, total_col)
-
-        y_lo = int(h * 0.14)
-        y_hi = int(h * 0.86)
-        y_step = max(4, h // 160)
-        for split in range(y_lo, y_hi, y_step):
-            top_mean = float(np.mean(row_energy[:split])) if split > 8 else 0.0
-            bottom_mean = float(np.mean(row_energy[split:])) if split < h - 8 else 0.0
-            y0, y1 = split, h - 1
-            roi_cols = grad[y0 : y1 + 1, :].mean(axis=0)
-            thr = float(np.quantile(roi_cols, 0.35))
-            active = np.where(roi_cols >= thr)[0]
-            if active.size >= int(w * 0.45):
-                x0 = max(0, int(active[0]) - max(3, w // 120))
-                x1 = min(w - 1, int(active[-1]) + max(3, w // 120))
-            else:
-                x0, x1 = 0, w - 1
-            score_rect("panel_split_bottom", x0, y0, x1, y1, (bottom_mean - top_mean) / total_row, total_row)
-            y0, y1 = 0, split
-            roi_cols = grad[y0 : y1 + 1, :].mean(axis=0)
-            thr = float(np.quantile(roi_cols, 0.35))
-            active = np.where(roi_cols >= thr)[0]
-            if active.size >= int(w * 0.45):
-                x0 = max(0, int(active[0]) - max(3, w // 120))
-                x1 = min(w - 1, int(active[-1]) + max(3, w // 120))
-            else:
-                x0, x1 = 0, w - 1
-            score_rect("panel_split_top", x0, y0, x1, y1, (top_mean - bottom_mean) / total_row, total_row)
-
-        if not candidates:
-            return None
-        candidates.sort(key=lambda c: c["score"], reverse=True)
-        best = candidates[0]
-        if best["score"] < 0.60:
-            return None
-        return best
-
-    def detect_lattice(self, img):
-        gray = self._gray(img)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        edges = cv2.Canny(blur, 40, 120, apertureSize=3)
-        edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
-        lines = cv2.HoughLinesP(
-            edges,
-            1,
-            np.pi / 180,
-            threshold=60,
-            minLineLength=min(img.size) // 5,
-            maxLineGap=25,
-        )
-        if lines is None:
-            return None
-        segments = []
-        for line in lines[:, 0, :]:
-            x1, y1, x2, y2 = [int(v) for v in line]
-            dx = x2 - x1
-            dy = y2 - y1
-            length = float(np.hypot(dx, dy))
-            if length < min(img.size) * 0.18:
-                continue
-            angle = (np.degrees(np.arctan2(dy, dx)) + 180.0) % 180.0
-            mx = (x1 + x2) / 2.0
-            my = (y1 + y2) / 2.0
-            segments.append((angle, length, mx, my))
-        if len(segments) < 18:
-            return None
-        angles = [seg[0] for seg in segments]
-        strengths = [seg[1] for seg in segments]
-        orientation_pairs = self._orientation_hypotheses(angles, strengths)
-        if not orientation_pairs:
-            dominant = self._dominant_orthogonal_orientations(angles, strengths)
-            if dominant is not None:
-                orientation_pairs = [(dominant[0], dominant[1], 0.0)]
-        if not orientation_pairs:
-            return None
-        best_result = None
-        for theta_a, theta_b, pair_strength in orientation_pairs:
-            family_a = []
-            family_b = []
-            for angle, length, mx, my in segments:
-                da = self._angular_distance_deg(angle, theta_a)
-                db = self._angular_distance_deg(angle, theta_b)
-                if da <= 18 and da <= db:
-                    na = np.deg2rad(theta_a + 90.0)
-                    pos = mx * np.cos(na) + my * np.sin(na)
-                    family_a.append((pos, length))
-                elif db <= 18:
-                    nb = np.deg2rad(theta_b + 90.0)
-                    pos = mx * np.cos(nb) + my * np.sin(nb)
-                    family_b.append((pos, length))
-            a_clusters = self._cluster_axis(family_a, threshold=max(8, img.size[0] // 80))
-            b_clusters = self._cluster_axis(family_b, threshold=max(8, img.size[1] // 80))
-            a_best = self._best_line_window(a_clusters, 9)
-            b_best = self._best_line_window(b_clusters, 9)
-            if a_best is None or b_best is None:
-                continue
-            n_a = np.array([np.cos(np.deg2rad(theta_a + 90.0)), np.sin(np.deg2rad(theta_a + 90.0))], dtype=np.float32)
-            n_b = np.array([np.cos(np.deg2rad(theta_b + 90.0)), np.sin(np.deg2rad(theta_b + 90.0))], dtype=np.float32)
-            grid_points = []
-            valid = True
-            for rho_a in a_best["positions"]:
-                row_pts = []
-                for rho_b in b_best["positions"]:
-                    pt = self._line_intersection(n_a, float(rho_a), n_b, float(rho_b))
-                    if pt is None:
-                        valid = False
-                        break
-                    row_pts.append(pt)
-                if not valid:
-                    break
-                grid_points.append(row_pts)
-            if not valid:
-                continue
-            corners = np.array([grid_points[0][0], grid_points[0][-1], grid_points[-1][-1], grid_points[-1][0]], dtype=np.float32)
-            metrics = compute_quad_metrics(corners, img.size[0], img.size[1])
-            geom_quality = 300.0 * max(0.0, metrics["area_ratio"]) + 220.0 * max(0.0, metrics["opposite_similarity"]) + 200.0 * max(0.0, metrics["aspect_similarity"])
-            score = a_best["score"] + b_best["score"] + geom_quality + pair_strength
-            candidate = {
-                "tag": "lattice",
-                "corners": order_corners(corners),
-                "score": float(score),
-                "regularity": (a_best["regularity"], b_best["regularity"]),
-            }
-            if best_result is None or candidate["score"] > best_result["score"]:
-                best_result = candidate
-        return best_result
-
-    def lens_hypotheses(self, img):
-        hypotheses = []
-        gradient = self.detect_gradient_projection(img)
-        if gradient is not None:
-            grad_bonus = min(0.12, 0.08 * max(0.0, gradient.get("periodicity", 0.0)))
-            hypotheses.append(self._lens_candidate(gradient["tag"], gradient["corners"], img, extra_conf=grad_bonus, raw_score=gradient.get("score")))
-        panel = self.detect_panel_split(img)
-        if panel is not None:
-            panel_bonus = min(0.12, 0.08 * max(0.0, panel.get("periodicity", 0.0)))
-            hypotheses.append(self._lens_candidate(panel["tag"], panel["corners"], img, extra_conf=panel_bonus, raw_score=panel.get("score")))
-        lattice = self.detect_lattice(img)
-        if lattice is not None:
-            reg = lattice.get("regularity")
-            reg_bonus = 0.0 if not reg else 0.04 * float(np.mean(reg))
-            hypotheses.append(self._lens_candidate("lattice", lattice["corners"], img, extra_conf=reg_bonus, raw_score=lattice.get("score")))
-        robust = find_board_corners(img)
-        if robust is not None:
-            hypotheses.append(self._lens_candidate("contour_robust", robust, img))
-        legacy = find_board_corners_legacy(img)
-        if legacy is not None:
-            hypotheses.append(self._lens_candidate("contour_legacy", legacy, img))
-        hypotheses.sort(
-            key=lambda item: (
-                int(item["trusted"]),
-                int(item["relaxed"]),
-                float(item["lens_confidence"]),
-                float(item["warp_quality"]),
-                float(item["metrics"]["area_ratio"]),
-            ),
-            reverse=True,
-        )
-        return hypotheses
-
-
-def build_detector_candidates(img):
-    detector = BoardDetector(debug=DEBUG_MODE)
-    raw = [("full", img, 0.0, True)]
-    if USE_EDGE_DETECTION:
-        for result in detector.lens_hypotheses(img):
-            if not result["trusted"] and not result["relaxed"]:
-                continue
-            tag = result["tag"] if result["trusted"] else f"{result['tag']}_relaxed"
-            corners = result["corners"]
-            warp_quality = result["warp_quality"]
-            warp_trusted = result["trusted"]
-            refined_corners, grid_fit_score = detector._refine_corners_grid_fit(img, corners)
-            refined_metrics = compute_quad_metrics(refined_corners, img.size[0], img.size[1])
-            refined_trusted = is_warp_geometry_trustworthy(refined_metrics)
-            refined_relaxed = is_warp_geometry_relaxed(refined_metrics)
-            if refined_trusted or refined_relaxed:
-                refined_warp_q = max(
-                    warp_geometry_quality(refined_metrics),
-                    0.65 * warp_geometry_quality(refined_metrics) + 0.35 * grid_fit_score,
-                )
-                if grid_fit_score >= 0.28 and refined_warp_q >= warp_quality:
-                    corners = refined_corners
-                    warp_quality = refined_warp_q
-                    warp_trusted = refined_trusted
-                    tag = result["tag"] if refined_trusted else f"{result['tag']}_relaxed"
-            warped = perspective_transform(img, corners)
-            raw.append((tag, warped, warp_quality, warp_trusted))
-
-    def candidate_family(tag):
-        text = str(tag)
-        if text.startswith("full"):
-            return "full"
-        if text.startswith("contour_"):
-            return "contour"
-        if text.startswith("lattice"):
-            return "lattice"
-        if text.startswith("gradient_projection"):
-            return "gradient_projection"
-        if text.startswith("panel_split_"):
-            return "panel_split"
-        return None
-
-    def candidate_key(item):
-        tag, _img, warp_quality, warp_trusted = item
-        return (
-            int(bool(warp_trusted)),
-            float(warp_quality),
-            int(not str(tag).endswith("_relaxed")),
-            str(tag),
-        )
-
-    grouped = {family: [] for family in FAMILY_ORDER}
-    for item in raw:
-        family = candidate_family(item[0])
-        if family is None:
-            continue
-        grouped[family].append(item)
-    selected = []
-    for family in FAMILY_ORDER:
-        ranked = sorted(grouped[family], key=candidate_key, reverse=True)
-        selected.extend(ranked[: FAMILY_BUDGETS[family]])
-    return selected
-
-
-def find_inner_board_window(img):
-    arr = np.array(img)
-    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY) if arr.ndim == 3 else arr
+def classify_file_label_crop(crop):
+    gray = np.array(crop.convert("L"))
     h, w = gray.shape
-    if min(h, w) < 320:
+    best = None
+    for threshold_mode in (cv2.THRESH_BINARY, cv2.THRESH_BINARY_INV):
+        _, binary = cv2.threshold(gray, 0, 255, threshold_mode | cv2.THRESH_OTSU)
+        num_components, labels, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
+        for component_id in range(1, num_components):
+            x, y, bw, bh, area = stats[component_id]
+            area_ratio = area / float(h * w)
+            aspect = bw / max(bh, 1)
+            if area_ratio < 0.04 or area_ratio > 0.45:
+                continue
+            if bw >= w * 0.8 or bh >= h * 0.9:
+                continue
+            if aspect < 0.15 or aspect > 1.2:
+                continue
+            center_dist = abs((x + bw / 2) - w * 0.55) + abs((y + bh / 2) - h * 0.55)
+            score = area_ratio * 100.0 - center_dist * 0.12
+            if best is None or score > best["score"]:
+                best = {
+                    "score": score,
+                    "binary": binary,
+                    "component_id": component_id,
+                    "bbox": (int(x), int(y), int(bw), int(bh)),
+                    "area_ratio": float(area_ratio),
+                    "aspect": float(aspect),
+                }
+    if best is None:
         return None
-    gx = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))
-    gy = np.abs(cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3))
-    col_energy = gx.mean(axis=0)
-    row_energy = gy.mean(axis=1)
-    if w >= 31:
-        col_energy = cv2.GaussianBlur(col_energy.reshape(1, -1), (1, 31), 0).reshape(-1)
-    if h >= 31:
-        row_energy = cv2.GaussianBlur(row_energy.reshape(-1, 1), (31, 1), 0).reshape(-1)
+    _, labels, _, _ = cv2.connectedComponentsWithStats(best["binary"], 8)
+    mask = np.zeros_like(best["binary"])
+    mask[labels == best["component_id"]] = 255
+    contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    holes = 0
+    if hierarchy is not None:
+        hierarchy = hierarchy[0]
+        for contour_idx in range(len(contours)):
+            if hierarchy[contour_idx][3] != -1:
+                holes += 1
+    label = "a" if holes >= 1 else "h"
+    confidence = 0.55 + min(0.35, best["area_ratio"]) + min(0.10, holes * 0.08)
+    return {
+        "label": label,
+        "confidence": min(0.99, float(confidence)),
+        "holes": holes,
+        "bbox": best["bbox"],
+        "aspect": best["aspect"],
+    }
 
-    def peak_pair(signal, left_band_frac, right_band_frac):
-        n = int(signal.shape[0])
-        left_hi = max(8, int(n * left_band_frac))
-        right_lo = min(n - 8, int(n * right_band_frac))
-        if left_hi >= right_lo:
-            return None
-        left_idx = int(np.argmax(signal[:left_hi]))
-        right_idx = int(np.argmax(signal[right_lo:])) + right_lo
-        if right_idx <= left_idx:
-            return None
-        mean_signal = float(np.mean(signal) + 1e-6)
-        gain = float((signal[left_idx] + signal[right_idx]) * 0.5 / mean_signal)
-        return left_idx, right_idx, gain
+def infer_board_perspective_from_labels(img):
+    left_label = classify_file_label_crop(extract_file_label_crop(img, side="left"))
+    right_label = classify_file_label_crop(extract_file_label_crop(img, side="right"))
+    details = {"left": left_label, "right": right_label}
+    if left_label and right_label:
+        if left_label["confidence"] >= 0.72 and right_label["confidence"] >= 0.72:
+            if left_label["label"] == "a" and right_label["label"] == "h":
+                return {"perspective": "white", "source": "board_labels", "details": details}
+            if left_label["label"] == "h" and right_label["label"] == "a":
+                return {"perspective": "black", "source": "board_labels", "details": details}
+    return None
 
-    x_pair = peak_pair(col_energy, left_band_frac=0.35, right_band_frac=0.65)
-    y_pair = peak_pair(row_energy, left_band_frac=0.35, right_band_frac=0.65)
-    if x_pair is None or y_pair is None:
+def infer_board_perspective_from_piece_distribution(fen_board, threshold=2.0):
+    if chess:
+        try:
+            board = chess.Board(fen_board)
+            white_pos = []
+            black_pos = []
+            for sq in chess.SQUARES:
+                piece = board.piece_at(sq)
+                if piece:
+                    r = 7 - (sq // 8)
+                    if piece.color == chess.WHITE:
+                        white_pos.append(r)
+                    else:
+                        black_pos.append(r)
+            if white_pos and black_pos:
+                white_mean = sum(white_pos) / len(white_pos)
+                black_mean = sum(black_pos) / len(black_pos)
+                return "black" if (black_mean - white_mean) > threshold else "white"
+        except Exception:
+            pass
+    rows = expand_fen_board(fen_board)
+    white_rows = []
+    black_rows = []
+    for r, row in enumerate(rows):
+        for ch in row:
+            if ch == "1":
+                continue
+            if ch.isupper():
+                white_rows.append(r)
+            else:
+                black_rows.append(r)
+    if not white_rows or not black_rows:
         return None
-    left, right, x_gain = x_pair
-    top, bottom, y_gain = y_pair
-    pad_x = max(4, int(w * 0.015))
-    pad_y = max(4, int(h * 0.015))
-    x0 = max(0, left)
-    x1 = min(w - 1, right + pad_x)
-    y0 = max(0, top)
-    y1 = min(h - 1, bottom + pad_y)
-    ww = x1 - x0 + 1
-    hh = y1 - y0 + 1
-    width_ratio = ww / float(w)
-    height_ratio = hh / float(h)
-    ratio = ww / float(max(1, hh))
-    if (
-        width_ratio < 0.55
-        or height_ratio < 0.55
-        or width_ratio > 0.98
-        or height_ratio > 0.98
-        or ratio < 0.74
-        or ratio > 1.26
-        or min(x_gain, y_gain) < 2.2
-    ):
-        return None
-    cropped = img.crop((x0, y0, x1 + 1, y1 + 1)).resize((w, h), Image.LANCZOS)
-    return cropped
+    white_mean = sum(white_rows) / len(white_rows)
+    black_mean = sum(black_rows) / len(black_rows)
+    return "black" if (black_mean - white_mean) > threshold else "white"
 
+def orientation_piece_margin(fen_board):
+    rows = expand_fen_board(fen_board)
+    white_rows = []
+    black_rows = []
+    for r, row in enumerate(rows):
+        for ch in row:
+            if ch == "1":
+                continue
+            if ch.isupper():
+                white_rows.append(r)
+            else:
+                black_rows.append(r)
+    if not white_rows or not black_rows:
+        return 0.0
+    return float(abs((sum(white_rows) / len(white_rows)) - (sum(black_rows) / len(black_rows))))
 
 def collect_orientation_context(candidates, board_perspective):
     context = {
@@ -1744,9 +570,10 @@ def collect_orientation_context(candidates, board_perspective):
         "labels_same": False,
         "partial_label_scores": {"white": 0.0, "black": 0.0},
     }
-    if board_perspective != "auto":
+    if board_perspective != "auto" or not candidates:
         return context
-    full_candidate_img = trim_dark_edge_bars(candidates[0][1].copy())
+    full_candidate = next((candidate for candidate in candidates if str(candidate[0]) == "full"), candidates[0])
+    full_candidate_img = full_candidate[1].copy()
     label_perspective_result = infer_board_perspective_from_labels(full_candidate_img)
     if label_perspective_result:
         label_details = label_perspective_result["details"]
@@ -1761,15 +588,16 @@ def collect_orientation_context(candidates, board_perspective):
         and label_details["right"] is not None
         and label_details["left"]["label"] == label_details["right"]["label"]
     )
-    context.update({
-        "label_perspective_result": label_perspective_result,
-        "label_details": label_details,
-        "labels_absent": labels_absent,
-        "labels_same": labels_same,
-        "partial_label_scores": orientation_partial_label_scores(label_details),
-    })
+    context.update(
+        {
+            "label_perspective_result": label_perspective_result,
+            "label_details": label_details,
+            "labels_absent": labels_absent,
+            "labels_same": labels_same,
+            "partial_label_scores": orientation_partial_label_scores(label_details),
+        }
+    )
     return context
-
 
 def orientation_partial_label_scores(label_details):
     scores = {"white": 0.0, "black": 0.0}
@@ -1791,33 +619,24 @@ def orientation_partial_label_scores(label_details):
             scores["black"] += right_conf * ORIENTATION_BEST_EFFORT_LABEL_SIDE_WEIGHT
     return scores
 
-
 def score_orientation_best_effort(fen, orientation_context):
     scores = dict(orientation_context.get("partial_label_scores") or {"white": 0.0, "black": 0.0})
     piece_margin = orientation_piece_margin(fen)
     piece_guess = infer_board_perspective_from_piece_distribution(fen, threshold=0.0)
     if piece_guess in {"white", "black"}:
-        boost = min(1.35, piece_margin * ORIENTATION_BEST_EFFORT_PIECE_WEIGHT)
-        scores[piece_guess] += boost
-    white_stm, white_stm_source = infer_side_to_move_from_checks(fen)
-    black_stm, black_stm_source = infer_side_to_move_from_checks(rotate_fen_180(fen))
-    if white_stm_source not in {"default_no_check_signal", "default_double_check_conflict", "default_invalid_board", "default_missing_king"}:
+        scores[piece_guess] += min(1.35, piece_margin * ORIENTATION_BEST_EFFORT_PIECE_WEIGHT)
+    white_stm, white_src = infer_side_to_move_from_checks(fen)
+    black_stm, black_src = infer_side_to_move_from_checks(rotate_fen_180(fen))
+    if white_src not in {"no_check_signal", "double_check_conflict", "invalid_board", "missing_king"}:
         scores["white"] += ORIENTATION_BEST_EFFORT_STM_WEIGHT
-    if black_stm_source not in {"default_no_check_signal", "default_double_check_conflict", "default_invalid_board", "default_missing_king"}:
+    if black_src not in {"no_check_signal", "double_check_conflict", "invalid_board", "missing_king"}:
         scores["black"] += ORIENTATION_BEST_EFFORT_STM_WEIGHT
     return {
-        "scores": {
-            "white": float(scores["white"]),
-            "black": float(scores["black"]),
-        },
+        "scores": {"white": float(scores["white"]), "black": float(scores["black"])},
         "piece_guess": piece_guess,
         "piece_margin": float(piece_margin),
-        "stm_sources": {
-            "white": white_stm_source,
-            "black": black_stm_source,
-        },
+        "stm_sources": {"white": white_src, "black": black_src},
     }
-
 
 def resolve_candidate_orientation(fen, board_perspective, orientation_context):
     if board_perspective in {"white", "black"}:
@@ -1828,8 +647,12 @@ def resolve_candidate_orientation(fen, board_perspective, orientation_context):
     label_details = orientation_context["label_details"]
     labels_absent = orientation_context["labels_absent"]
     labels_same = orientation_context["labels_same"]
+
+    # --- Tier 1: strong board labels (high-confidence a/h file markers) ---
     if label_result is not None:
         return label_result["perspective"], label_result["source"]
+
+    # --- Tier 2: weak-label fallback (both sides present, lower confidence) ---
     left_label = label_details.get("left")
     right_label = label_details.get("right")
     if left_label is not None and right_label is not None:
@@ -1841,14 +664,23 @@ def resolve_candidate_orientation(fen, board_perspective, orientation_context):
                 return "white", "weak_label_fallback"
             if left_char == "h" and right_char == "a":
                 return "black", "weak_label_fallback"
+
+    # --- Tier 3: strong spatial piece distribution (only when labels absent or ambiguous) ---
     piece_margin = orientation_piece_margin(fen)
     can_use_piece_distribution = labels_absent or labels_same
     if piece_margin >= ORIENTATION_STRONG_PIECE_MARGIN and can_use_piece_distribution:
-        fallback = infer_board_perspective_from_piece_distribution(fen, threshold=ORIENTATION_STRONG_PIECE_MARGIN)
+        fallback = infer_board_perspective_from_piece_distribution(
+            fen,
+            threshold=ORIENTATION_STRONG_PIECE_MARGIN,
+        )
         if fallback == "black":
             return "black", "piece_distribution_fallback"
         return "white", "piece_distribution_fallback"
-    has_partial_labels = (left_label is not None or right_label is not None) and not (left_label is not None and right_label is not None)
+
+    # --- Tier 4: best-effort scoring (partial label + piece margin + check signal) ---
+    has_partial_labels = (left_label is not None or right_label is not None) and not (
+        left_label is not None and right_label is not None
+    )
     partial_scores = orientation_context.get("partial_label_scores") or {"white": 0.0, "black": 0.0}
     partial_label_guess = None
     if float(partial_scores.get("white", 0.0)) > float(partial_scores.get("black", 0.0)):
@@ -1866,13 +698,75 @@ def resolve_candidate_orientation(fen, board_perspective, orientation_context):
         best_effort = score_orientation_best_effort(fen, orientation_context)
         white_score = float(best_effort["scores"]["white"])
         black_score = float(best_effort["scores"]["black"])
-        margin = abs(white_score - black_score)
-        if margin >= ORIENTATION_BEST_EFFORT_MIN_MARGIN:
-            if black_score > white_score:
-                return "black", "best_effort_orientation"
-            return "white", "best_effort_orientation"
+        if abs(white_score - black_score) >= ORIENTATION_BEST_EFFORT_MIN_MARGIN:
+            return ("black", "best_effort_orientation") if black_score > white_score else ("white", "best_effort_orientation")
+
     return "white", "default"
 
+def board_plausibility_score(fen_board):
+    if fen_board in _plausibility_cache:
+        return _plausibility_cache[fen_board]
+    score = 0.0
+    if chess:
+        try:
+            board = chess.Board(fen_board)
+            score = 10.0
+            if len(board.pieces(chess.KING, chess.WHITE)) != 1:
+                score -= 5.0
+            if len(board.pieces(chess.KING, chess.BLACK)) != 1:
+                score -= 5.0
+            white_pawns = len(board.pieces(chess.PAWN, chess.WHITE))
+            black_pawns = len(board.pieces(chess.PAWN, chess.BLACK))
+            if white_pawns > 8 or black_pawns > 8:
+                score -= 2.0
+            _plausibility_cache[fen_board] = score
+            return score
+        except Exception:
+            pass
+    rows = expand_fen_board(fen_board)
+    if len(rows) != 8 or any(len(row) != 8 for row in rows):
+        _plausibility_cache[fen_board] = -1e9
+        return -1e9
+    white_king = fen_board.count("K")
+    black_king = fen_board.count("k")
+    white_pawns = fen_board.count("P")
+    black_pawns = fen_board.count("p")
+    white_queens = fen_board.count("Q")
+    black_queens = fen_board.count("q")
+    white_pieces = sum(1 for ch in fen_board if ch.isupper())
+    black_pieces = sum(1 for ch in fen_board if ch.islower())
+    total_pieces = white_pieces + black_pieces
+    pawns_on_back_rank = sum(1 for ch in (rows[0] + rows[7]) if ch in {"P", "p"})
+    score += 6.0 if white_king == 1 else -20.0 * abs(white_king - 1)
+    score += 6.0 if black_king == 1 else -20.0 * abs(black_king - 1)
+    score += 1.5 if white_pawns <= 8 else -5.0 * (white_pawns - 8)
+    score += 1.5 if black_pawns <= 8 else -5.0 * (black_pawns - 8)
+    score += 1.0 if white_pieces <= 16 else -2.0 * (white_pieces - 16)
+    score += 1.0 if black_pieces <= 16 else -2.0 * (black_pieces - 16)
+    score += 0.5 if white_queens <= 2 else -3.0 * (white_queens - 2)
+    score += 0.5 if black_queens <= 2 else -3.0 * (black_queens - 2)
+    score += 1.0 if total_pieces <= 32 else -2.0 * (total_pieces - 32)
+    score -= 2.0 * pawns_on_back_rank
+    _plausibility_cache[fen_board] = score
+    return score
+
+def image_saturation_stats(img):
+    img_hash = hashlib.md5(np.array(img).tobytes()).hexdigest()
+    cached = _saturation_cache.get(img_hash)
+    if cached is not None:
+        return cached
+    arr = np.array(img.convert("RGB"))
+    hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
+    sat = hsv[:, :, 1].astype(np.float32)
+    val = hsv[:, :, 2].astype(np.float32)
+    stats = {
+        "sat_mean": float(np.mean(sat)),
+        "sat_std": float(np.std(sat)),
+        "val_mean": float(np.mean(val)),
+        "val_std": float(np.std(val)),
+    }
+    _saturation_cache[img_hash] = stats
+    return stats
 
 def king_health(fen_board):
     rows = expand_fen_board(fen_board)
@@ -1880,46 +774,765 @@ def king_health(fen_board):
         return 0
     return int(fen_board.count("K") == 1) + int(fen_board.count("k") == 1)
 
+def is_square_attacked(rows, target_r, target_c, by_white):
+    if by_white:
+        pawn_attackers = [("P", target_r + 1, target_c - 1), ("P", target_r + 1, target_c + 1)]
+    else:
+        pawn_attackers = [("p", target_r - 1, target_c - 1), ("p", target_r - 1, target_c + 1)]
+    for piece, r, c in pawn_attackers:
+        if 0 <= r < 8 and 0 <= c < 8 and rows[r][c] == piece:
+            return True
+    knight = "N" if by_white else "n"
+    for dr, dc in ((-2, -1), (-2, 1), (-1, -2), (-1, 2), (1, -2), (1, 2), (2, -1), (2, 1)):
+        r, c = target_r + dr, target_c + dc
+        if 0 <= r < 8 and 0 <= c < 8 and rows[r][c] == knight:
+            return True
+    king = "K" if by_white else "k"
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            if dr == 0 and dc == 0:
+                continue
+            r, c = target_r + dr, target_c + dc
+            if 0 <= r < 8 and 0 <= c < 8 and rows[r][c] == king:
+                return True
+    rook_queen = {"R", "Q"} if by_white else {"r", "q"}
+    bishop_queen = {"B", "Q"} if by_white else {"b", "q"}
+    for dr, dc, attackers in (
+        (-1, 0, rook_queen),
+        (1, 0, rook_queen),
+        (0, -1, rook_queen),
+        (0, 1, rook_queen),
+        (-1, -1, bishop_queen),
+        (-1, 1, bishop_queen),
+        (1, -1, bishop_queen),
+        (1, 1, bishop_queen),
+    ):
+        r, c = target_r + dr, target_c + dc
+        while 0 <= r < 8 and 0 <= c < 8:
+            sq = rows[r][c]
+            if sq != "1":
+                if sq in attackers:
+                    return True
+                break
+            r += dr
+            c += dc
+    return False
+
+def infer_side_to_move_from_checks(fen_board):
+    cached = _side_to_move_cache.get(fen_board)
+    if cached is not None:
+        return cached
+    rows = parse_fen_board_rows(fen_board)
+    if rows is None:
+        result = ("w", "invalid_board")
+        _side_to_move_cache[fen_board] = result
+        return result
+    white_king = None
+    black_king = None
+    for r in range(8):
+        for c in range(8):
+            if rows[r][c] == "K":
+                white_king = (r, c)
+            elif rows[r][c] == "k":
+                black_king = (r, c)
+    if white_king is None or black_king is None:
+        result = ("w", "missing_king")
+        _side_to_move_cache[fen_board] = result
+        return result
+    white_in_check = is_square_attacked(rows, white_king[0], white_king[1], by_white=False)
+    black_in_check = is_square_attacked(rows, black_king[0], black_king[1], by_white=True)
+    if white_in_check and not black_in_check:
+        result = ("w", "check_inference")
+        _side_to_move_cache[fen_board] = result
+        return result
+    if black_in_check and not white_in_check:
+        result = ("b", "check_inference")
+        _side_to_move_cache[fen_board] = result
+        return result
+    if white_in_check and black_in_check:
+        result = ("w", "double_check_conflict")
+        _side_to_move_cache[fen_board] = result
+        return result
+    if chess is not None:
+        legal_turns = []
+        for stm in ("w", "b"):
+            try:
+                board = chess.Board(f"{fen_board} {stm} - - 0 1")
+            except ValueError:
+                continue
+            if not board.is_valid():
+                continue
+            legal_turns.append((stm, board.legal_moves.count(), board.is_checkmate(), board.is_stalemate()))
+        if len(legal_turns) == 1:
+            result = (legal_turns[0][0], "legality_fallback")
+            _side_to_move_cache[fen_board] = result
+            return result
+        if len(legal_turns) == 2:
+            white_state = next(item for item in legal_turns if item[0] == "w")
+            black_state = next(item for item in legal_turns if item[0] == "b")
+            if white_state[1] == 0 and black_state[1] > 0:
+                result = ("b", "legality_fallback")
+                _side_to_move_cache[fen_board] = result
+                return result
+            if black_state[1] == 0 and white_state[1] > 0:
+                result = ("w", "legality_fallback")
+                _side_to_move_cache[fen_board] = result
+                return result
+            if white_state[2] and not black_state[2]:
+                result = ("w", "checkmate_fallback")
+                _side_to_move_cache[fen_board] = result
+                return result
+            if black_state[2] and not white_state[2]:
+                result = ("b", "checkmate_fallback")
+                _side_to_move_cache[fen_board] = result
+                return result
+            if white_state[3] and not black_state[3]:
+                result = ("w", "stalemate_fallback")
+                _side_to_move_cache[fen_board] = result
+                return result
+            if black_state[3] and not white_state[3]:
+                result = ("b", "stalemate_fallback")
+                _side_to_move_cache[fen_board] = result
+                return result
+    result = ("w", "no_check_signal")
+    _side_to_move_cache[fen_board] = result
+    return result
+
+def parse_side_to_move_override(raw_value):
+    token = str(raw_value).strip().lower()
+    mapping = {
+        "w": "w",
+        "white": "w",
+        "wtm": "w",
+        "white_to_move": "w",
+        "b": "b",
+        "black": "b",
+        "blak": "b",
+        "btm": "b",
+        "black_to_move": "b",
+    }
+    if token not in mapping:
+        raise ValueError(f"Invalid --side-to-move '{raw_value}'. Use one of: wtm|btm|w|b|white|black")
+    return mapping[token]
+
+# =============================================================================
+# EDGE GRID DETECTOR
+# =============================================================================
+def _gray_rgb(img):
+    rgb = np.array(img.convert("RGB"))
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    return rgb, gray
+
+def _smooth_1d(signal, kernel):
+    signal = np.asarray(signal, dtype=np.float32)
+    if signal.size < kernel or kernel <= 1:
+        return signal
+    if kernel % 2 == 0:
+        kernel += 1
+    return cv2.GaussianBlur(signal.reshape(-1, 1), (1, kernel), 0).reshape(-1)
+
+def _normalize_signal(signal):
+    signal = np.asarray(signal, dtype=np.float32)
+    signal -= float(signal.min())
+    vmax = float(signal.max())
+    if vmax <= 1e-6:
+        return signal
+    return signal / vmax
+
+def _sample_signal(signal, center, radius):
+    lo = max(0, int(round(center - radius)))
+    hi = min(len(signal), int(round(center + radius + 1)))
+    if hi <= lo:
+        return 0.0
+    return float(np.mean(signal[lo:hi]))
+
+def _search_axis_grid(signal):
+    n = int(len(signal))
+    if n < 64:
+        return None
+    smooth = _smooth_1d(signal, max(9, (n // 48) * 2 + 1))
+    smooth = _normalize_signal(smooth)
+    low_step = max(8, int(round(n * 0.085)))
+    high_step = min(int(round(n * 0.18)), n // 2)
+    best = None
+    radius = max(1.0, n / 256.0)
+    for step in range(low_step, max(low_step + 1, high_step + 1)):
+        max_start = n - 1 - (8 * step)
+        if max_start < 0:
+            continue
+        start_count = min(32, max(1, max_start + 1))
+        starts = np.linspace(0, max_start, start_count)
+        for start in starts:
+            positions = [start + (i * step) for i in range(9)]
+            values = np.array([_sample_signal(smooth, pos, radius) for pos in positions], dtype=np.float32)
+            line_score = float(np.mean(values))
+            support_ratio = float(np.mean(values >= max(0.25, float(np.mean(smooth)))))
+            border_strength = float((values[0] + values[-1]) * 0.5)
+            regularity = float(1.0 - min(1.0, np.std(np.diff(positions)) / max(1.0, step)))
+            score = (0.55 * line_score) + (0.25 * support_ratio) + (0.15 * border_strength) + (0.05 * regularity)
+            row = {
+                "start": float(start),
+                "step": float(step),
+                "positions": positions,
+                "line_score": line_score,
+                "support_ratio": support_ratio,
+                "border_strength": border_strength,
+                "regularity": regularity,
+                "score": score,
+            }
+            if best is None or row["score"] > best["score"]:
+                best = row
+    return best
+
+def evaluate_warped_grid(img):
+    _, gray = _gray_rgb(img)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    norm = clahe.apply(gray)
+    gx = np.abs(cv2.Sobel(norm, cv2.CV_32F, 1, 0, ksize=3))
+    gy = np.abs(cv2.Sobel(norm, cv2.CV_32F, 0, 1, ksize=3))
+    col_signal = _normalize_signal(np.mean(gx, axis=0))
+    row_signal = _normalize_signal(np.mean(gy, axis=1))
+    x_grid = _search_axis_grid(col_signal)
+    y_grid = _search_axis_grid(row_signal)
+    if x_grid is None or y_grid is None:
+        return {
+            "evidence": 0.0,
+            "support_ratio": 0.0,
+            "score": 0.0,
+            "grid_box": None,
+            "x_grid": x_grid,
+            "y_grid": y_grid,
+        }
+    x0 = x_grid["start"]
+    x1 = x_grid["start"] + (8.0 * x_grid["step"])
+    y0 = y_grid["start"]
+    y1 = y_grid["start"] + (8.0 * y_grid["step"])
+    width = max(1.0, x1 - x0)
+    height = max(1.0, y1 - y0)
+    ratio = min(width / height, height / width)
+    coverage = min(1.0, (width * height) / float(img.size[0] * img.size[1]))
+    evidence = float(
+        (0.35 * x_grid["line_score"])
+        + (0.35 * y_grid["line_score"])
+        + (0.15 * x_grid["border_strength"])
+        + (0.15 * y_grid["border_strength"])
+    )
+    support_ratio = float(0.5 * (x_grid["support_ratio"] + y_grid["support_ratio"]))
+    score = float((0.55 * evidence) + (0.20 * support_ratio) + (0.15 * ratio) + (0.10 * coverage))
+    return {
+        "evidence": evidence,
+        "support_ratio": support_ratio,
+        "score": score,
+        "coverage": coverage,
+        "ratio": ratio,
+        "grid_box": (float(x0), float(y0), float(x1), float(y1)),
+        "x_grid": x_grid,
+        "y_grid": y_grid,
+    }
+
+def score_full_frame_board(img):
+    meta = evaluate_warped_grid(img)
+    ratio = img.size[0] / float(max(1, img.size[1]))
+    ratio_score = min(ratio, 1.0 / max(ratio, 1e-6))
+    score = float((0.70 * meta["score"]) + (0.30 * ratio_score))
+    trusted = bool(
+        0.88 <= ratio <= 1.12
+        and meta["evidence"] >= 0.34
+        and meta["support_ratio"] >= 0.46
+    )
+    return {
+        **meta,
+        "score": score,
+        "trusted": trusted,
+        "ratio_score": ratio_score,
+    }
+
+def crop_warp_to_detected_grid(img):
+    meta = evaluate_warped_grid(img)
+    box = meta["grid_box"]
+    if box is None:
+        return None
+    x0, y0, x1, y1 = box
+    width = max(1.0, x1 - x0)
+    height = max(1.0, y1 - y0)
+    coverage = (width * height) / float(img.size[0] * img.size[1])
+    ratio = width / float(max(1.0, height))
+    if coverage < 0.55 or coverage > 0.995:
+        return None
+    if not (0.88 <= ratio <= 1.12):
+        return None
+    px0 = max(0, int(round(x0)))
+    py0 = max(0, int(round(y0)))
+    px1 = min(img.size[0], int(round(x1)))
+    py1 = min(img.size[1], int(round(y1)))
+    if px1 - px0 < img.size[0] * 0.55 or py1 - py0 < img.size[1] * 0.55:
+        return None
+    cropped = img.crop((px0, py0, px1, py1))
+    if cropped.size == img.size:
+        return None
+    return cropped.resize(img.size, Image.LANCZOS)
+
+def _grid_margin_score(meta, img_size, min_span_ratio=0.0):
+    box = meta.get("grid_box")
+    if box is None:
+        return 0.0
+    width, height = img_size
+    x0, y0, x1, y1 = box
+    margins = np.array(
+        [x0, y0, max(0.0, width - x1), max(0.0, height - y1)],
+        dtype=np.float32,
+    )
+    avg_margin = float(np.mean(margins) / max(1.0, min(width, height)))
+    inset_score = float(max(0.0, 1.0 - (avg_margin / 0.18)))
+    tight_score = 0.0
+    if min_span_ratio >= 0.85:
+        tight_score = float(max(0.0, 1.0 - (avg_margin / 0.025)))
+    return max(inset_score, tight_score)
+
+def _checker_texture_score(img):
+    gray = cv2.cvtColor(np.array(img.convert("RGB")), cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+    gray = cv2.resize(gray, (512, 512), interpolation=cv2.INTER_AREA)
+    cell = 64
+    means = np.zeros((8, 8), dtype=np.float32)
+    stds = np.zeros((8, 8), dtype=np.float32)
+    for row in range(8):
+        for col in range(8):
+            patch = gray[row * cell:(row + 1) * cell, col * cell:(col + 1) * cell]
+            inner = patch[12:-12, 12:-12]
+            means[row, col] = float(np.mean(inner))
+            stds[row, col] = float(np.std(inner))
+    parity = (np.indices((8, 8)).sum(axis=0) % 2).astype(bool)
+    even = means[~parity]
+    odd = means[parity]
+    sep = float(abs(float(np.mean(even)) - float(np.mean(odd))))
+    within = float(0.5 * (float(np.std(even)) + float(np.std(odd))))
+    contrast = sep / max(1e-4, within)
+    row_alt = float(np.mean(np.abs(np.diff(means, axis=1))))
+    col_alt = float(np.mean(np.abs(np.diff(means, axis=0))))
+    alt = 0.5 * (row_alt + col_alt)
+    texture = float(np.mean(stds))
+    contrast_score = min(1.0, contrast / 1.2)
+    sep_score = min(1.0, sep / 0.12)
+    alt_score = min(1.0, alt / 0.18)
+    texture_target = max(0.0, 1.0 - (abs(texture - 0.12) / 0.12))
+    return float(
+        (0.35 * contrast_score)
+        + (0.25 * sep_score)
+        + (0.25 * alt_score)
+        + (0.15 * texture_target)
+    )
+
+def _proposal_dedupe_key(corners, width, height):
+    corners = np.asarray(corners, dtype=np.float32)
+    center = corners.mean(axis=0)
+    metrics = compute_quad_metrics(corners, width, height)
+    return (
+        round(float(center[0]) / max(1.0, width), 2),
+        round(float(center[1]) / max(1.0, height), 2),
+        round(metrics["area_ratio"], 2),
+    )
+
+def _collect_contour_proposals(img):
+    _, gray = _gray_rgb(img)
+    height, width = gray.shape
+    proposals = []
+    seen = set()
+    variants = []
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    norm = clahe.apply(gray)
+    variants.append(cv2.Canny(norm, 30, 100))
+    variants.append(cv2.Canny(norm, 50, 150))
+    variants.append(cv2.Canny(norm, 70, 200))
+    adaptive = cv2.adaptiveThreshold(
+        norm,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY_INV,
+        31,
+        7,
+    )
+    variants.append(adaptive)
+    for variant in variants:
+        contours, _ = cv2.findContours(variant, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:120]:
+            area = cv2.contourArea(contour)
+            if area < (width * height * 0.12):
+                continue
+            peri = cv2.arcLength(contour, True)
+            candidate_quads = []
+            for eps in (0.01, 0.02, 0.03, 0.05):
+                approx = cv2.approxPolyDP(contour, eps * peri, True)
+                if len(approx) == 4:
+                    candidate_quads.append(("contour_quad", order_corners(approx.reshape(4, 2))))
+                    break
+            rect = cv2.minAreaRect(contour)
+            rect_box = cv2.boxPoints(rect)
+            candidate_quads.append(("min_area_rect", order_corners(rect_box)))
+            for tag, corners in candidate_quads:
+                metrics = compute_quad_metrics(corners, width, height)
+                if not is_warp_geometry_relaxed(metrics):
+                    continue
+                dedupe = (tag,) + _proposal_dedupe_key(corners, width, height)
+                if dedupe in seen:
+                    continue
+                seen.add(dedupe)
+                proposals.append(
+                    {
+                        "tag": tag,
+                        "corners": corners.astype(np.float32),
+                        "metrics": metrics,
+                    }
+                )
+    return proposals
+
+def _collect_bright_board_proposals(img):
+    rgb = np.array(img.convert("RGB"))
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+    height, width = rgb.shape[:2]
+    mask = (((hsv[:, :, 1] < 80) & (hsv[:, :, 2] > 150)).astype(np.uint8)) * 255
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((9, 9), np.uint8))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    proposals = []
+    seen = set()
+    for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:20]:
+        x, y, w, h = cv2.boundingRect(contour)
+        area_ratio = (w * h) / float(max(1, width * height))
+        aspect_similarity = min(w / float(max(h, 1)), h / float(max(w, 1)))
+        if area_ratio < 0.10 or aspect_similarity < 0.45:
+            continue
+        side_candidates = sorted(
+            {
+                int(round(h * 1.02)),
+                int(round(h * 1.06)),
+                int(round(h * 1.10)),
+            }
+        )
+        x_offsets = [0.08, 0.12, 0.16]
+        y_offsets = [-0.02, 0.0, 0.02]
+        for side in side_candidates:
+            if side <= 0:
+                continue
+            side = min(side, width, height)
+            for x_frac in x_offsets:
+                for y_frac in y_offsets:
+                    px = int(round(x + (w * x_frac)))
+                    py = int(round(y + (h * y_frac)))
+                    px = max(0, min(px, width - side))
+                    py = max(0, min(py, height - side))
+                    corners = np.array(
+                        [[px, py], [px + side, py], [px + side, py + side], [px, py + side]],
+                        dtype=np.float32,
+                    )
+                    dedupe = ("bright_board_square",) + _proposal_dedupe_key(corners, width, height)
+                    if dedupe in seen:
+                        continue
+                    seen.add(dedupe)
+                    proposals.append(
+                        {
+                            "tag": "bright_board_square",
+                            "corners": corners,
+                            "metrics": compute_quad_metrics(corners, width, height),
+                        }
+                    )
+    return proposals
+
+def _score_proposal(img, proposal):
+    corners = proposal["corners"]
+    metrics = proposal["metrics"]
+    span_x = float(corners[:, 0].max() - corners[:, 0].min()) / float(max(1, img.size[0]))
+    span_y = float(corners[:, 1].max() - corners[:, 1].min()) / float(max(1, img.size[1]))
+    min_span_ratio = float(min(span_x, span_y))
+    warped = perspective_transform(img, corners)
+    refined = crop_warp_to_detected_grid(warped)
+    scoring_img = refined if refined is not None else warped
+    warped_eval = evaluate_warped_grid(scoring_img)
+    geometry = warp_geometry_quality(metrics)
+    evidence = float(warped_eval["evidence"])
+    support_ratio = float(warped_eval["support_ratio"])
+    grid_ratio_score = float(warped_eval.get("ratio", 0.0))
+    x_line = float(warped_eval["x_grid"]["line_score"]) if warped_eval.get("x_grid") else 0.0
+    y_line = float(warped_eval["y_grid"]["line_score"]) if warped_eval.get("y_grid") else 0.0
+    axis_balance = float(min(x_line, y_line) / max(x_line, y_line, 1e-6))
+    margin_score = _grid_margin_score(
+        warped_eval,
+        (scoring_img.size[0], scoring_img.size[1]),
+        min_span_ratio=min_span_ratio,
+    )
+    checker_score = _checker_texture_score(scoring_img)
+    score = float(
+        (0.14 * geometry)
+        + (0.12 * evidence)
+        + (0.10 * support_ratio)
+        + (0.04 * margin_score)
+        + (0.34 * checker_score)
+        + (0.12 * grid_ratio_score)
+        + (0.14 * axis_balance)
+    )
+    if refined is not None and checker_score >= 0.65:
+        score += 0.03
+    trusted = bool(is_warp_geometry_trustworthy(metrics) and evidence >= 0.34 and support_ratio >= 0.46)
+    return {
+        "tag": proposal["tag"],
+        "corners": corners,
+        "geometry": float(geometry),
+        "evidence": evidence,
+        "score": score,
+        "support_ratio": support_ratio,
+        "grid_ratio_score": float(grid_ratio_score),
+        "axis_balance": float(axis_balance),
+        "margin_score": float(margin_score),
+        "min_span_ratio": float(min_span_ratio),
+        "checker_score": float(checker_score),
+        "trusted": trusted,
+    }
+
+def detect_board_grid(img, max_hypotheses=6):
+    hypotheses = []
+    full_meta = score_full_frame_board(img)
+    contour_proposals = _collect_contour_proposals(img)
+    for proposal in contour_proposals:
+        hypotheses.append(_score_proposal(img, proposal))
+    for proposal in _collect_bright_board_proposals(img):
+        hypotheses.append(_score_proposal(img, proposal))
+    if full_meta["grid_box"] is not None:
+        x0, y0, x1, y1 = full_meta["grid_box"]
+        width = max(1.0, x1 - x0)
+        height = max(1.0, y1 - y0)
+        ratio = width / height
+        coverage = (width * height) / float(img.size[0] * img.size[1])
+        if 0.88 <= ratio <= 1.12 and 0.35 <= coverage <= 0.98:
+            corners = np.array([[x0, y0], [x1, y0], [x1, y1], [x0, y1]], dtype=np.float32)
+            metrics = compute_quad_metrics(corners, img.size[0], img.size[1])
+            hypotheses.append(
+                _score_proposal(
+                    img,
+                    {
+                        "tag": "aligned_box",
+                        "corners": corners,
+                        "metrics": metrics,
+                    },
+                )
+            )
+    deduped = []
+    seen = set()
+    for row in sorted(hypotheses, key=lambda item: (item["score"], item["evidence"], item["geometry"]), reverse=True):
+        key = _proposal_dedupe_key(row["corners"], img.size[0], img.size[1])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+        if len(deduped) >= max_hypotheses:
+            break
+    if len(deduped) >= 2:
+        best_score = float(deduped[0]["score"])
+        ambiguous = [row for row in deduped if best_score - float(row["score"]) <= 0.05]
+        if len(ambiguous) >= 2:
+            ambiguous.sort(
+                key=lambda row: (
+                    (0.60 * float(row.get("checker_score", 0.0))) + (0.40 * float(row.get("evidence", 0.0))),
+                    float(row.get("support_ratio", 0.0)),
+                    float(row.get("score", 0.0)),
+                ),
+                reverse=True,
+            )
+            remainder = [row for row in deduped if best_score - float(row["score"]) > 0.05]
+            deduped = ambiguous + remainder
+    return deduped
+
+# =============================================================================
+# CANDIDATE BUILDING & CLI
+# =============================================================================
+def trim_dark_edge_bars(img):
+    return img
+
+def find_inner_board_window(img):
+    return None
+
+def _debug_event(kind, **payload):
+    if not DEBUG_MODE:
+        return
+    row = {"kind": kind}
+    row.update(payload)
+    print(f"DEBUG_JSON {json.dumps(row, sort_keys=True)}", file=sys.stderr)
+
+def _candidate_tuple(tag, img, warp_quality, warp_trusted, detector_score, detector_support):
+    return (tag, img, float(warp_quality), bool(warp_trusted), float(detector_score), float(detector_support))
+
+def _candidate_sort_key(candidate):
+    return (
+        float(candidate[4]),
+        float(candidate[5]),
+        float(candidate[2]),
+    )
+
+def _material_score_order(candidates, *, epsilon=None):
+    if epsilon is None:
+        epsilon = MATERIAL_SCORE_EPSILON
+    ordered = []
+    for candidate in candidates:
+        inserted = False
+        score = float(candidate[4])
+        for idx, current in enumerate(ordered):
+            current_score = float(current[4])
+            if score > (current_score + epsilon):
+                ordered.insert(idx, candidate)
+                inserted = True
+                break
+        if not inserted:
+            ordered.append(candidate)
+    return ordered
+
+def _full_candidate_should_lead(img, full_meta, detector_candidates):
+    ratio = img.size[0] / float(max(1, img.size[1]))
+    best_detector_score = max((float(candidate[4]) for candidate in detector_candidates), default=-1.0)
+    strong_full = bool(
+        FULL_CANDIDATE_RATIO_MIN <= ratio <= FULL_CANDIDATE_RATIO_MAX
+        and float(full_meta.get("coverage", 0.0)) >= FULL_CANDIDATE_STRONG_COVERAGE_MIN
+        and full_meta["evidence"] >= FULL_CANDIDATE_STRONG_EVIDENCE_MIN
+        and full_meta["support_ratio"] >= FULL_CANDIDATE_STRONG_SUPPORT_MIN
+    )
+    return bool(
+        strong_full
+        or (
+            FULL_CANDIDATE_RATIO_MIN <= ratio <= FULL_CANDIDATE_RATIO_MAX
+            and float(full_meta.get("coverage", 0.0)) >= FULL_CANDIDATE_COVERAGE_MIN
+            and full_meta["evidence"] >= FULL_CANDIDATE_EVIDENCE_MIN
+            and full_meta["support_ratio"] >= FULL_CANDIDATE_SUPPORT_MIN
+            and float(full_meta["score"]) >= best_detector_score
+        )
+    )
+
+def build_detector_candidates(img):
+    full_meta = score_full_frame_board(img)
+    full_candidate = _candidate_tuple(
+        "full",
+        img,
+        full_meta["score"],
+        full_meta["trusted"],
+        full_meta["score"],
+        full_meta["support_ratio"],
+    )
+    if not USE_EDGE_DETECTION:
+        return [full_candidate]
+    detector_candidates = []
+    for row in detect_board_grid(img, max_hypotheses=6):
+        corners = row["corners"]
+        roi = perspective_transform(img, corners)
+        refined = crop_warp_to_detected_grid(roi)
+        if refined is not None:
+            roi = refined
+        detector_candidates.append(
+            _candidate_tuple(
+                str(row["tag"]),
+                roi,
+                row["score"],
+                row["trusted"],
+                row["score"],
+                row["support_ratio"],
+            )
+        )
+    candidates = _material_score_order(detector_candidates)[:4]
+    if not candidates:
+        return [full_candidate]
+    if _full_candidate_should_lead(img, full_meta, candidates):
+        candidates = [full_candidate] + candidates
+    else:
+        candidates.append(full_candidate)
+    _debug_event(
+        "v6_candidate_pool",
+        original_count=len(detector_candidates) + 1,
+        capped_count=len(candidates),
+        tags=[row[0] for row in candidates],
+        scores=[round(float(row[4]), 6) for row in candidates],
+    )
+    return candidates
+
+
+def _value_only_image(img):
+    arr = np.array(img.convert("RGB"))
+    hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
+    value = hsv[:, :, 2]
+    return Image.fromarray(np.repeat(value[:, :, None], 3, axis=2))
+
+
+def _topk_prob(tile_info, label):
+    for alt_label, alt_prob in tile_info.get("topk", []):
+        if alt_label == label:
+            return float(alt_prob)
+    return 0.0
+
+
+def _fuse_value_case_labels(rgb_details, value_details):
+    labels = ["1"] * 64
+    fused = False
+    for rgb_tile, value_tile in zip(rgb_details.get("tile_infos", []), value_details.get("tile_infos", [])):
+        row = int(rgb_tile["row"])
+        col = int(rgb_tile["col"])
+        label = str(rgb_tile["label"])
+        value_label = str(value_tile["label"])
+        if (
+            label != "1"
+            and value_label != "1"
+            and label.lower() == value_label.lower()
+            and label != value_label
+            and float(_topk_prob(rgb_tile, value_label)) >= VALUE_CASE_ALT_MIN
+            and float(_topk_prob(value_tile, value_label)) >= VALUE_CASE_CONF_MIN
+        ):
+            label = value_label
+            fused = True
+        labels[(row * 8) + col] = label
+    rows = ["".join(labels[r * 8 : (r + 1) * 8]) for r in range(8)]
+    return _labels_to_fen(labels), sum(1 for label in labels if label != "1"), fused
 
 def decode_candidate(candidate, model, device, board_perspective, orientation_context):
-    tag, candidate_img, warp_quality, warp_trusted = candidate
-    candidate_img = trim_dark_edge_bars(candidate_img)
-
-    def decode_variant(variant_img):
-        fen, conf, piece_count, details = infer_fen_on_image_clean(
-            variant_img,
+    tag, candidate_img, warp_quality, warp_trusted, detector_score, detector_support = candidate
+    fen, conf, piece_count = infer_fen_on_image_clean(
+        candidate_img,
+        model,
+        device,
+        USE_SQUARE_DETECTION,
+    )
+    value_case_fused = False
+    if str(tag) == "full":
+        rgb_fen, rgb_conf, rgb_piece_count, rgb_details = infer_fen_on_image_clean(
+            candidate_img,
             model,
             device,
             USE_SQUARE_DETECTION,
             return_details=True,
         )
-        sat_stats = image_saturation_stats(variant_img)
-        if sat_stats["sat_mean"] <= LOW_SAT_SPARSE_SAT_MEAN_MAX and piece_count <= LOW_SAT_SPARSE_PIECE_MAX:
-            rescored = rescore_low_saturation_sparse_from_topk(details.get("tile_infos", []), base_fen=fen, base_conf=conf)
-            if rescored is not None:
-                fen, conf, piece_count = rescored
-        return variant_img, fen, conf, piece_count
-
-    decoded_variants = [decode_variant(candidate_img)]
-    if str(tag).startswith("contour_"):
-        inner_board = find_inner_board_window(candidate_img)
-        if inner_board is not None:
-            decoded_variants.append(decode_variant(inner_board))
-    candidate_img, fen, conf, piece_count = max(
-        decoded_variants,
-        key=lambda row: (
-            board_plausibility_score(row[1]),
-            king_health(row[1]),
-            row[3] if row[3] <= LOW_SAT_SPARSE_PIECE_MAX else 0,
-            row[2],
-        ),
-    )
+        value_fen, value_conf, value_piece_count, value_details = infer_fen_on_image_clean(
+            _value_only_image(candidate_img),
+            model,
+            device,
+            USE_SQUARE_DETECTION,
+            return_details=True,
+        )
+        fused_fen, fused_piece_count, value_case_fused = _fuse_value_case_labels(rgb_details, value_details)
+        fen = fused_fen if value_case_fused else rgb_fen
+        conf = float(rgb_conf)
+        piece_count = int(fused_piece_count if value_case_fused else rgb_piece_count)
     detected_perspective, perspective_source = resolve_candidate_orientation(
         fen,
         board_perspective=board_perspective,
         orientation_context=orientation_context,
     )
     final_fen = rotate_fen_180(fen) if detected_perspective == "black" else fen
+    _debug_event(
+        "v6_candidate_decode",
+        tag=tag,
+        conf=float(conf),
+        plausibility=float(board_plausibility_score(final_fen)),
+        king_health=int(king_health(final_fen)),
+        piece_count=int(piece_count),
+        warp_quality=float(warp_quality),
+        detector_score=float(detector_score),
+        detector_support=float(detector_support),
+        perspective=detected_perspective,
+        perspective_source=perspective_source,
+        value_case_fused=bool(value_case_fused),
+    )
     return (
         tag,
         candidate_img,
@@ -1932,69 +1545,90 @@ def decode_candidate(candidate, model, device, board_perspective, orientation_co
         warp_trusted,
     )
 
+def diagnostic_decode_candidate_with_details(
+    candidate,
+    *,
+    model,
+    device,
+    board_perspective,
+    orientation_context,
+    topk=5,
+):
+    tag, candidate_img, warp_quality, warp_trusted, detector_score, detector_support = candidate
+    fen, conf, piece_count, details = infer_fen_on_image_clean(
+        candidate_img,
+        model,
+        device,
+        USE_SQUARE_DETECTION,
+        return_details=True,
+        topk_k=max(3, int(topk)),
+    )
+    detected_perspective, perspective_source = resolve_candidate_orientation(
+        fen,
+        board_perspective=board_perspective,
+        orientation_context=orientation_context,
+    )
+    board_fen = rotate_fen_180(fen) if detected_perspective == "black" else fen
+    tile_infos_by_square = {}
+    for tile in details.get("tile_infos", []):
+        row = int(tile["row"])
+        col = int(tile["col"])
+        if detected_perspective == "black":
+            row = 7 - row
+            col = 7 - col
+        sq = f"{'abcdefgh'[col]}{8 - row}"
+        tile_infos_by_square[sq] = tile
+    return {
+        "tag": tag,
+        "variant": "base",
+        "board_fen": board_fen,
+        "fen_before_orientation": fen,
+        "confidence": float(conf),
+        "piece_count": int(piece_count),
+        "plausibility": float(board_plausibility_score(board_fen)),
+        "king_health": int(king_health(board_fen)),
+        "detected_perspective": detected_perspective,
+        "perspective_source": perspective_source,
+        "warp_quality": float(warp_quality),
+        "warp_trusted": bool(warp_trusted),
+        "tile_infos_by_square": tile_infos_by_square,
+        "rescored_low_sat_sparse": False,
+        "sat_stats": image_saturation_stats(candidate_img),
+        "candidate_img": candidate_img,
+        "grid_score": float(detector_score),
+        "detector_support": float(detector_support),
+    }
 
 def select_best_candidate(scored):
-    best_raw_conf = max(float(item[3]) for item in scored) if scored else 0.0
-    enriched = []
-    for item in scored:
-        fen_board = item[2]
-        plausibility = board_plausibility_score(fen_board)
-        k_health = king_health(fen_board)
-        piece_count = int(item[4])
-        geom_q = float(item[7])
-        _, stm_src = infer_side_to_move_from_checks(fen_board)
-        has_double_check_conflict = stm_src == "default_double_check_conflict"
-        conf_adj = float(item[3])
-        stats = image_saturation_stats(item[1])
-        low_sat_sparse = stats["sat_mean"] <= LOW_SAT_SPARSE_SAT_MEAN_MAX and piece_count <= LOW_SAT_SPARSE_PIECE_MAX
-        if "gradient_projection" in str(item[0]):
-            conf_adj -= 0.010
-        if "panel_split" in str(item[0]):
-            conf_adj -= 0.030
-        sparse_piece_bonus = piece_count if low_sat_sparse and float(item[3]) >= (best_raw_conf - 0.025) else 0
-        enriched.append((item, plausibility, k_health, sparse_piece_bonus, has_double_check_conflict, geom_q, conf_adj))
-    return max(enriched, key=lambda pair: (pair[1], pair[2], pair[3], -int(pair[4]), pair[6], pair[5]))[0]
-
+    if not scored:
+        raise RuntimeError("No scored candidates")
+    return scored[0]
 
 def predict_chess_position(image_path, model_path=None, board_perspective="auto", side_to_move_override=None):
-    """Unified prediction function that returns both board FEN and complete position"""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    resolved_model_path = model_path or MODEL_PATH
-    if not resolved_model_path or not os.path.exists(resolved_model_path):
-        raise FileNotFoundError(
-            "Model checkpoint not found. "
-            f"Tried: {resolved_model_path}. "
-            "Set CHESSBOT_MODEL_PATH or pass --model-path explicitly."
-        )
-    global _model_cache
-    if resolved_model_path in _model_cache:
-        model = _model_cache[resolved_model_path]
-    else:
-        model = StandaloneBeastClassifier(num_classes=13).to(device)
-        model.load_state_dict(torch.load(resolved_model_path, map_location=device))
-        model.eval()
-        _model_cache[resolved_model_path] = model
+    model = load_model(model_path=model_path, device=device)
     img = Image.open(image_path).convert("RGB")
     candidates = build_detector_candidates(img)
     orientation_context = collect_orientation_context(candidates, board_perspective=board_perspective)
-    scored = [
-        decode_candidate(
-            candidate,
-            model=model,
-            device=device,
-            board_perspective=board_perspective,
-            orientation_context=orientation_context,
-        )
-        for candidate in candidates
-    ]
-    if not scored:
-        raise RuntimeError("No valid candidates found")
-    best = select_best_candidate(scored)
+    best = decode_candidate(
+        candidates[0],
+        model=model,
+        device=device,
+        board_perspective=board_perspective,
+        orientation_context=orientation_context,
+    )
     if side_to_move_override is not None:
         side_to_move = parse_side_to_move_override(side_to_move_override)
         side_source = "override_cli"
     else:
         side_to_move, side_source = infer_side_to_move_from_checks(best[2])
+    _debug_event(
+        "v6_selected_candidate",
+        tag=best[0],
+        confidence=float(best[3]),
+        perspective_source=best[6],
+        side_to_move_source=side_source,
+    )
     return {
         "board_fen": best[2],
         "fen": f"{best[2]} {side_to_move} - - 0 1",
@@ -2006,20 +1640,15 @@ def predict_chess_position(image_path, model_path=None, board_perspective="auto"
         "best_tag": best[0],
     }
 
-
 def predict_board(image_path, model_path=None, board_perspective="auto"):
-    """Simplified interface that returns only the board FEN"""
     result = predict_chess_position(image_path, model_path, board_perspective)
     return result["board_fen"], result["confidence"]
 
-
 def predict_position(image_path, model_path=None, board_perspective="auto", side_to_move_override=None):
-    """Simplified interface that returns the complete position information"""
     return predict_chess_position(image_path, model_path, board_perspective, side_to_move_override)
 
-
 def main():
-    parser = argparse.ArgumentParser(description="Recognize chess position from image (consolidated)")
+    parser = argparse.ArgumentParser(description="Recognizer candidate: clean detector-first path")
     parser.add_argument("image", help="Path to chess board image")
     parser.add_argument("--model-path", default=None, help="Override model path")
     parser.add_argument(
@@ -2035,14 +1664,19 @@ def main():
         default=None,
         help="Override side to move (aliases: wtm|btm|w|b|white|black)",
     )
-    parser.add_argument("--debug", action="store_true", help="Verbose debugging")
+    parser.add_argument("--debug", action="store_true", help="Emit DEBUG_JSON telemetry")
     args = parser.parse_args()
     global USE_EDGE_DETECTION, USE_SQUARE_DETECTION, DEBUG_MODE
     USE_EDGE_DETECTION = not args.no_edge_detection
     USE_SQUARE_DETECTION = not args.no_square_detection
     DEBUG_MODE = args.debug
     try:
-        result = predict_position(args.image, model_path=args.model_path, board_perspective=args.board_perspective, side_to_move_override=args.side_to_move)
+        result = predict_position(
+            args.image,
+            model_path=args.model_path,
+            board_perspective=args.board_perspective,
+            side_to_move_override=args.side_to_move,
+        )
         print(
             json.dumps(
                 {
@@ -2058,7 +1692,6 @@ def main():
         )
     except Exception as exc:
         print(json.dumps({"success": False, "error": str(exc)}))
-
 
 if __name__ == "__main__":
     main()

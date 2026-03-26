@@ -1,0 +1,1411 @@
+{
+  "scripts": [
+    "main",
+    "consolidated"
+  ],
+  "identical_board_images": 50,
+  "images": [
+    {
+      "image": "puzzle-00001.jpeg",
+      "predicted_board": "Rr4k1/RQ5N/8/8/3B2N1/2P5/PKB4q/8",
+      "scripts": {
+        "main": {
+          "confidence": 0.9273,
+          "best_tag": "bright_board_square",
+          "detector_score": 0.8998562873569703,
+          "detector_support": 1.0,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9273,
+          "best_tag": "bright_board_square",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00002.png",
+      "predicted_board": "k7/8/K7/3p4/3P4/3R4/7B/8",
+      "scripts": {
+        "main": {
+          "confidence": 0.8318,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.8931881037115454,
+          "detector_support": 0.7777777777777778,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.8318,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00003.jpeg",
+      "predicted_board": "7R/8/8/8/6pq/7k/4Np1r/5KbQ",
+      "scripts": {
+        "main": {
+          "confidence": 0.8201,
+          "best_tag": "bright_board_square",
+          "detector_score": 0.9473370610216163,
+          "detector_support": 1.0,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.8201,
+          "best_tag": "bright_board_square",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00004.png",
+      "predicted_board": "7k/6R1/6K1/8/8/8/8/8",
+      "scripts": {
+        "main": {
+          "confidence": 0.9165,
+          "best_tag": "aligned_box",
+          "detector_score": 0.917852192273274,
+          "detector_support": 0.8888888888888888,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9165,
+          "best_tag": "aligned_box",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00005.jpeg",
+      "predicted_board": "r3k2r/pp3pp1/2p5/8/3Q3b/1B6/PPPP1PPq/R1B2RK1",
+      "scripts": {
+        "main": {
+          "confidence": 0.7661,
+          "best_tag": "bright_board_square",
+          "detector_score": 0.9741021282823992,
+          "detector_support": 0.9444444444444444,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.7661,
+          "best_tag": "bright_board_square",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00006.jpeg",
+      "predicted_board": "2q1rb2/1R3pkr/3p2pN/2nPp1Q1/4P3/2B4P/6P1/5RK1",
+      "scripts": {
+        "main": {
+          "confidence": 0.9022,
+          "best_tag": "full",
+          "detector_score": 0.8464095211429133,
+          "detector_support": 1.0,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9022,
+          "best_tag": "full",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00007.jpeg",
+      "predicted_board": "kr6/pp6/8/8/8/8/1R4Q1/6K1",
+      "scripts": {
+        "main": {
+          "confidence": 0.9133,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.9045812456073964,
+          "detector_support": 0.8888888888888888,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9133,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00008.jpeg",
+      "predicted_board": "k1b5/pppN4/1R6/8/Q6K/8/8/8",
+      "scripts": {
+        "main": {
+          "confidence": 0.9156,
+          "best_tag": "contour_quad",
+          "detector_score": 0.9118811155874724,
+          "detector_support": 0.8888888888888888,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9156,
+          "best_tag": "contour_quad",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00009.jpeg",
+      "predicted_board": "6k1/6pp/2rBq3/8/3pn3/1Q6/6PP/5RK1",
+      "scripts": {
+        "main": {
+          "confidence": 0.9226,
+          "best_tag": "bright_board_square",
+          "detector_score": 0.9599948386006744,
+          "detector_support": 0.9444444444444444,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9226,
+          "best_tag": "bright_board_square",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00010.jpeg",
+      "predicted_board": "k7/p2N2p1/5p1b/6r1/8/pP3B2/2P3r1/1RK5",
+      "scripts": {
+        "main": {
+          "confidence": 0.8998,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.8591962497721944,
+          "detector_support": 0.8333333333333333,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.8998,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00011.jpeg",
+      "predicted_board": "5rk1/1p1qbpp1/5n2/2Pp1b1p/rP1Bp3/P5P1/3NBP1P/R2QR1K1",
+      "scripts": {
+        "main": {
+          "confidence": 0.9351,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.8440827270474262,
+          "detector_support": 0.7777777777777777,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9351,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00012.jpeg",
+      "predicted_board": "7k/4pK1p/3pP3/2pP4/1p4P1/p6P/7Q/8",
+      "scripts": {
+        "main": {
+          "confidence": 0.869,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.9293198248818134,
+          "detector_support": 0.8888888888888888,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.869,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00013.jpeg",
+      "predicted_board": "k7/2Q1K3/8/8/8/8/4P1PR/2R4q",
+      "scripts": {
+        "main": {
+          "confidence": 0.9138,
+          "best_tag": "full",
+          "detector_score": 0.8594797423158166,
+          "detector_support": 1.0,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9138,
+          "best_tag": "full",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00014.jpeg",
+      "predicted_board": "1K1Rr3/PPP2pPP/2N3N1/8/8/1pp2n2/p1p4p/1k6",
+      "scripts": {
+        "main": {
+          "confidence": 0.9491,
+          "best_tag": "full",
+          "detector_score": 0.772148053489163,
+          "detector_support": 0.8333333333333333,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9491,
+          "best_tag": "full",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00015.jpeg",
+      "predicted_board": "rk6/NPR1K3/8/8/1Q6/8/8/8",
+      "scripts": {
+        "main": {
+          "confidence": 0.9086,
+          "best_tag": "full",
+          "detector_score": 0.8737732197266834,
+          "detector_support": 1.0,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9086,
+          "best_tag": "full",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00016.jpeg",
+      "predicted_board": "6k1/6pp/2rBq3/8/3pn3/1Q6/6PP/5RK1",
+      "scripts": {
+        "main": {
+          "confidence": 0.9226,
+          "best_tag": "bright_board_square",
+          "detector_score": 0.9599948386006744,
+          "detector_support": 0.9444444444444444,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9226,
+          "best_tag": "bright_board_square",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00017.jpeg",
+      "predicted_board": "k4r2/p7/P6p/2p3p1/5q2/4pB2/1R6/1R2K3",
+      "scripts": {
+        "main": {
+          "confidence": 0.7287,
+          "best_tag": "contour_quad",
+          "detector_score": 0.9643850370868001,
+          "detector_support": 1.0,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.7287,
+          "best_tag": "contour_quad",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00018.jpeg",
+      "predicted_board": "1r5k/5Rpp/4R2N/3R4/2R5/5bq1/Q5r1/7K",
+      "scripts": {
+        "main": {
+          "confidence": 0.942,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.9057882475425918,
+          "detector_support": 0.8888888888888888,
+          "perspective_source": "board_labels",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.942,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "board_labels",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00019.jpeg",
+      "predicted_board": "K4BB1/1Q6/5p2/8/2R2r1r/N2N2q1/kp1p1p1p/b7",
+      "scripts": {
+        "main": {
+          "confidence": 0.8974,
+          "best_tag": "bright_board_square",
+          "detector_score": 0.9063161252468196,
+          "detector_support": 0.8333333333333333,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.8974,
+          "best_tag": "bright_board_square",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00020.jpeg",
+      "predicted_board": "8/1r2kp2/1P3Rb1/2K5/1P5P/8/8/8",
+      "scripts": {
+        "main": {
+          "confidence": 0.9467,
+          "best_tag": "contour_quad",
+          "detector_score": 0.9079231991585262,
+          "detector_support": 0.8888888888888888,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9467,
+          "best_tag": "contour_quad",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00021.jpeg",
+      "predicted_board": "8/8/8/8/K7/8/pp1Q4/k7",
+      "scripts": {
+        "main": {
+          "confidence": 0.8973,
+          "best_tag": "contour_quad",
+          "detector_score": 0.9255659014808265,
+          "detector_support": 1.0,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.8973,
+          "best_tag": "contour_quad",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00022.png",
+      "predicted_board": "rn1qkbnr/p1pp3p/6P1/1B2p2Q/8/2N5/PPPP1P1P/R1B1K1Nb",
+      "scripts": {
+        "main": {
+          "confidence": 0.9252,
+          "best_tag": "full",
+          "detector_score": 0.8411707242863912,
+          "detector_support": 1.0,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9252,
+          "best_tag": "full",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00023.jpeg",
+      "predicted_board": "6k1/p2rN1p1/1p4P1/2n5/8/4P3/PPq5/K4R1R",
+      "scripts": {
+        "main": {
+          "confidence": 0.9015,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.8403247471497466,
+          "detector_support": 0.7222222222222222,
+          "perspective_source": "board_labels",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9015,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "board_labels",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00024.jpeg",
+      "predicted_board": "4Rnk1/pr3ppp/1p3q1N/6Q1/2p5/8/P4PPP/6K1",
+      "scripts": {
+        "main": {
+          "confidence": 0.8736,
+          "best_tag": "bright_board_square",
+          "detector_score": 0.9495976455066253,
+          "detector_support": 0.9444444444444444,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.8736,
+          "best_tag": "bright_board_square",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00025.jpeg",
+      "predicted_board": "2r1n1Qk/p1p3pr/1p3p2/8/P1N5/5PP1/B1P1q2P/7K",
+      "scripts": {
+        "main": {
+          "confidence": 0.8832,
+          "best_tag": "bright_board_square",
+          "detector_score": 0.8082851637873706,
+          "detector_support": 0.5555555555555556,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.8832,
+          "best_tag": "bright_board_square",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00026.jpeg",
+      "predicted_board": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8",
+      "scripts": {
+        "main": {
+          "confidence": 0.9086,
+          "best_tag": "full",
+          "detector_score": 0.8223840461640659,
+          "detector_support": 1.0,
+          "perspective_source": "board_labels",
+          "value_case_fused": true
+        },
+        "consolidated": {
+          "confidence": 0.9086,
+          "best_tag": "full",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "board_labels",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00027.jpeg",
+      "predicted_board": "8/8/8/3p4/3R4/K1p5/1pN4R/1kb4Q",
+      "scripts": {
+        "main": {
+          "confidence": 0.9242,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.8629914726452119,
+          "detector_support": 0.7777777777777778,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9242,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00028.jpeg",
+      "predicted_board": "3Nnr2/R2PkP2/4p3/8/8/4K3/8/3R4",
+      "scripts": {
+        "main": {
+          "confidence": 0.8662,
+          "best_tag": "aligned_box",
+          "detector_score": 0.914870419012254,
+          "detector_support": 0.8888888888888888,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.8662,
+          "best_tag": "aligned_box",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00029.jpeg",
+      "predicted_board": "krN5/1n6/2Q5/qN6/PpK5/1P6/8/R7",
+      "scripts": {
+        "main": {
+          "confidence": 0.9455,
+          "best_tag": "aligned_box",
+          "detector_score": 0.8612415228515178,
+          "detector_support": 0.6111111111111112,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9455,
+          "best_tag": "aligned_box",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00030.jpeg",
+      "predicted_board": "r2q2rk/bpp2p1p/p4PbQ/6N1/8/3P4/PP4PP/4RR1K",
+      "scripts": {
+        "main": {
+          "confidence": 0.9544,
+          "best_tag": "full",
+          "detector_score": 0.7949090455619856,
+          "detector_support": 0.9444444444444444,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9544,
+          "best_tag": "full",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00031.jpeg",
+      "predicted_board": "kbK5/pp6/1P6/8/8/8/8/R7",
+      "scripts": {
+        "main": {
+          "confidence": 0.8301,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.9062510555165344,
+          "detector_support": 0.9444444444444444,
+          "perspective_source": "best_effort_orientation",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.8301,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "best_effort_orientation",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00032.jpeg",
+      "predicted_board": "4r1k1/p1p2pp1/3b3p/8/2Bn1q2/2NQ2PP/Pr3P2/1R3RK1",
+      "scripts": {
+        "main": {
+          "confidence": 0.9121,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.8613100805564884,
+          "detector_support": 0.7777777777777777,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9121,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00033.jpeg",
+      "predicted_board": "r2q1rk1/ppp3pp/3b1p2/3p1n2/1nPP4/1P3N1P/PB3PP1/RN1Q1RK1",
+      "scripts": {
+        "main": {
+          "confidence": 0.8797,
+          "best_tag": "bright_board_square",
+          "detector_score": 0.8109884766409112,
+          "detector_support": 0.8333333333333333,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.8797,
+          "best_tag": "bright_board_square",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00034.jpeg",
+      "predicted_board": "6r1/K1P1B3/PP6/3p2p1/4q3/p1p5/kp1Q4/8",
+      "scripts": {
+        "main": {
+          "confidence": 0.9528,
+          "best_tag": "full",
+          "detector_score": 0.8326096046271854,
+          "detector_support": 1.0,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9528,
+          "best_tag": "full",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00035.jpeg",
+      "predicted_board": "8/6r1/1K3k2/1R6/5b1P/6P1/7p/8",
+      "scripts": {
+        "main": {
+          "confidence": 0.9145,
+          "best_tag": "aligned_box",
+          "detector_score": 0.8813218167174889,
+          "detector_support": 0.7222222222222222,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9145,
+          "best_tag": "aligned_box",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00036.jpeg",
+      "predicted_board": "3r1r2/pR3p2/1p2pN1k/2b5/2n2N1P/6R1/P2p2P1/3K4",
+      "scripts": {
+        "main": {
+          "confidence": 0.9275,
+          "best_tag": "aligned_box",
+          "detector_score": 0.9098421312966166,
+          "detector_support": 0.8333333333333333,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9275,
+          "best_tag": "aligned_box",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00037.jpeg",
+      "predicted_board": "5rk1/pp4pp/4p3/2R3Q1/3n4/2q4r/P1P2PPP/5RK1",
+      "scripts": {
+        "main": {
+          "confidence": 0.9459,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.8936103190797676,
+          "detector_support": 0.9444444444444444,
+          "perspective_source": "best_effort_orientation",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9459,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "best_effort_orientation",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00038.jpeg",
+      "predicted_board": "6Q1/p5p1/5rkp/2b1qp2/P7/5BPK/7P/5R2",
+      "scripts": {
+        "main": {
+          "confidence": 0.8851,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.9693790183930776,
+          "detector_support": 1.0,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.8851,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00039.jpeg",
+      "predicted_board": "2q1rb2/pR3pkr/3p2pN/2nPp1QP/1nB1P1b1/6N1/PBP3P1/5RK1",
+      "scripts": {
+        "main": {
+          "confidence": 0.9318,
+          "best_tag": "contour_quad",
+          "detector_score": 0.9677318663915743,
+          "detector_support": 0.9444444444444444,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9318,
+          "best_tag": "contour_quad",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00040.jpeg",
+      "predicted_board": "2r1b3/p1q1br2/1p2pNRk/4p3/4P3/2P5/P4PPP/1B4K1",
+      "scripts": {
+        "main": {
+          "confidence": 0.8216,
+          "best_tag": "contour_quad",
+          "detector_score": 0.8419119178021823,
+          "detector_support": 0.8333333333333333,
+          "perspective_source": "best_effort_orientation",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.8216,
+          "best_tag": "contour_quad",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "best_effort_orientation",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00041.jpeg",
+      "predicted_board": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R",
+      "scripts": {
+        "main": {
+          "confidence": 0.9511,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.7940085283933386,
+          "detector_support": 0.7222222222222222,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9511,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00042.jpeg",
+      "predicted_board": "8/p7/1b2k1p1/1P3p2/P1R3P1/8/r1B3K1/8",
+      "scripts": {
+        "main": {
+          "confidence": 0.9401,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.9357601585768457,
+          "detector_support": 1.0,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9401,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00043.jpeg",
+      "predicted_board": "k2q3r/2Q1b1p1/p1RrB3/1p2p3/5p2/8/PPP2P2/2K3R1",
+      "scripts": {
+        "main": {
+          "confidence": 0.8689,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.8787806755312193,
+          "detector_support": 0.6666666666666667,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.8689,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00044.jpeg",
+      "predicted_board": "r3r1k1/pp1n2Bp/5P2/2Q5/3pb3/3q2P1/P5BP/R4R1K",
+      "scripts": {
+        "main": {
+          "confidence": 0.9198,
+          "best_tag": "bright_board_square",
+          "detector_score": 0.9388633927314239,
+          "detector_support": 0.8888888888888888,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9198,
+          "best_tag": "bright_board_square",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00045.jpeg",
+      "predicted_board": "r1bqkb1r/5ppp/p1nppn2/1p2P3/8/2N1BN2/PPPQ1PPP/2KR1B1R",
+      "scripts": {
+        "main": {
+          "confidence": 0.9237,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.9359322967093195,
+          "detector_support": 0.9444444444444444,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9237,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00046.jpeg",
+      "predicted_board": "6k1/1b3pp1/2p3Np/1pq5/8/2N3nP/5PP1/Q4BK1",
+      "scripts": {
+        "main": {
+          "confidence": 0.9127,
+          "best_tag": "bright_board_square",
+          "detector_score": 0.9788663860509295,
+          "detector_support": 1.0,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9127,
+          "best_tag": "bright_board_square",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00047.jpeg",
+      "predicted_board": "1R1K4/k1n5/Np6/1P1n4/8/8/8/8",
+      "scripts": {
+        "main": {
+          "confidence": 0.894,
+          "best_tag": "bright_board_square",
+          "detector_score": 0.9078009953220918,
+          "detector_support": 0.8333333333333333,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.894,
+          "best_tag": "bright_board_square",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00048.jpeg",
+      "predicted_board": "2rq1rk1/4npbp/p1bpp1p1/1p6/4PP1Q/P1PP4/B2BN1PP/R4R1K",
+      "scripts": {
+        "main": {
+          "confidence": 0.949,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.895117781647943,
+          "detector_support": 0.9444444444444444,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.949,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "piece_distribution_fallback",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00049.jpeg",
+      "predicted_board": "4b3/4B3/4KP2/pk5p/7P/8/8/8",
+      "scripts": {
+        "main": {
+          "confidence": 0.9159,
+          "best_tag": "bright_board_square",
+          "detector_score": 0.8221308468603399,
+          "detector_support": 0.6666666666666666,
+          "perspective_source": "default",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9159,
+          "best_tag": "bright_board_square",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "default",
+          "value_case_fused": null
+        }
+      }
+    },
+    {
+      "image": "puzzle-00050.jpeg",
+      "predicted_board": "3r4/3kn2p/1p4pP/1p1B1pP1/1P1K1P2/P1P5/8/4R3",
+      "scripts": {
+        "main": {
+          "confidence": 0.9276,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.7952972219598493,
+          "detector_support": 0.8333333333333333,
+          "perspective_source": "weak_label_fallback",
+          "value_case_fused": false
+        },
+        "consolidated": {
+          "confidence": 0.9276,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "perspective_source": "weak_label_fallback",
+          "value_case_fused": null
+        }
+      }
+    }
+  ],
+  "pairwise_deltas": [
+    {
+      "image": "puzzle-00001.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00002.png",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00003.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00004.png",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00005.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00006.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00007.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00008.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00009.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00010.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00011.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00012.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00013.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00014.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00015.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00016.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00017.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00018.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00019.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00020.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00021.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00022.png",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00023.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00024.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00025.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00026.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00027.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00028.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00029.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00030.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00031.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00032.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00033.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00034.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00035.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00036.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00037.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00038.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00039.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00040.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00041.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00042.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00043.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00044.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00045.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00046.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00047.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00048.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00049.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    },
+    {
+      "image": "puzzle-00050.jpeg",
+      "left": "main",
+      "right": "consolidated",
+      "delta": 0.0
+    }
+  ]
+}

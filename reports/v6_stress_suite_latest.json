@@ -1,0 +1,37 @@
+{
+  "images": 120,
+  "primary_pass": 83,
+  "avg_confidence": 0.8537433630864446,
+  "categories": [
+    {
+      "category": "print_scan_reference",
+      "passed": 10,
+      "total": 12,
+      "avg_confidence": 0.939523684210144
+    },
+    {
+      "category": "square_reference",
+      "passed": 61,
+      "total": 78,
+      "avg_confidence": 0.8928243131555903
+    },
+    {
+      "category": "wide_ui_reference",
+      "passed": 3,
+      "total": 12,
+      "avg_confidence": 0.5762414193789785
+    },
+    {
+      "category": "tall_ui_reference",
+      "passed": 6,
+      "total": 15,
+      "avg_confidence": 0.7949154239458343
+    },
+    {
+      "category": "wood_neo_reference",
+      "passed": 3,
+      "total": 3,
+      "avg_confidence": 0.8986648473267754
+    }
+  ]
+}

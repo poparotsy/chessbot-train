@@ -19,6 +19,7 @@ import deep_diagnostic_v6 as deep_diag
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 TRAIN_DIR = SCRIPT_DIR.parent
+ARCHIVE_DIR = TRAIN_DIR / "archive" / "recognizer_legacy"
 DEFAULT_IMAGES_DIR = TRAIN_DIR / "images_4_test"
 DEFAULT_TRUTH_JSON = DEFAULT_IMAGES_DIR / "truth_verified.json"
 DEFAULT_SUITE_JSON = SCRIPT_DIR / "testdata" / "v6_fullguard_cases.json"
@@ -29,7 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-path", required=True, help="Checkpoint to evaluate.")
     parser.add_argument(
         "--recognizer-path",
-        default=str(TRAIN_DIR / "recognizer_v6_fullguard.py"),
+        default=str(ARCHIVE_DIR / "recognizer_v6_fullguard.py"),
         help="Recognizer module under test.",
     )
     parser.add_argument("--suite-json", default=str(DEFAULT_SUITE_JSON))

@@ -1,0 +1,40 @@
+{
+  "evaluator": "evaluate_v6_domain_suite",
+  "model_path": null,
+  "truth_json": "/Users/guru/workspace/current/chessbot/chessbot-train/images_4_test/truth_verified.json",
+  "suite_json": "/Users/guru/workspace/current/chessbot/chessbot-train/scripts/testdata/v6_domain_cases.json",
+  "images": 8,
+  "primary_pass": 8,
+  "avg_confidence": 0.8416133462451398,
+  "compare_full_fen": false,
+  "categories": [
+    {
+      "category": "wood_arrow",
+      "passed": 1,
+      "total": 1,
+      "avg_confidence": 0.9086200054734945,
+      "misses": []
+    },
+    {
+      "category": "tilted_dark_sparse",
+      "passed": 2,
+      "total": 2,
+      "avg_confidence": 0.9065698008053005,
+      "misses": []
+    },
+    {
+      "category": "shirt_print",
+      "passed": 3,
+      "total": 3,
+      "avg_confidence": 0.8387852595187724,
+      "misses": []
+    },
+    {
+      "category": "dark_anchor",
+      "passed": 2,
+      "total": 2,
+      "avg_confidence": 0.7473956921603531,
+      "misses": []
+    }
+  ]
+}
