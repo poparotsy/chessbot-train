@@ -1,0 +1,43 @@
+{
+  "images": 120,
+  "primary_pass": 69,
+  "avg_confidence": 0.8300988280912861,
+  "categories": [
+    {
+      "category": "edge_frame",
+      "passed": 1,
+      "total": 29,
+      "avg_confidence": 0.5701348056920387
+    },
+    {
+      "category": "mono_scan",
+      "passed": 24,
+      "total": 24,
+      "avg_confidence": 0.9590663178241812
+    },
+    {
+      "category": "wood_3d_arrow_clean",
+      "passed": 12,
+      "total": 22,
+      "avg_confidence": 0.8820242145395075
+    },
+    {
+      "category": "shirt_print_reference",
+      "passed": 15,
+      "total": 19,
+      "avg_confidence": 0.9331925057217871
+    },
+    {
+      "category": "book_page_reference",
+      "passed": 8,
+      "total": 14,
+      "avg_confidence": 0.8686169279473168
+    },
+    {
+      "category": "dark_anchor",
+      "passed": 9,
+      "total": 12,
+      "avg_confidence": 0.8970442548549423
+    }
+  ]
+}

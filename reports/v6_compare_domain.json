@@ -1,0 +1,569 @@
+{
+  "scripts": {
+    "legacy": {
+      "script": "/Users/guru/workspace/current/chessbot/chessbot-train/recognizer_v6_legacy.py",
+      "summary": {
+        "images": 8,
+        "board_pass": 6,
+        "full_pass": 6,
+        "avg_confidence": 0.781862
+      },
+      "categories": {
+        "shirt_print": {
+          "passed": 2,
+          "total": 3
+        },
+        "dark_anchor": {
+          "passed": 2,
+          "total": 2
+        },
+        "tilted_dark_sparse": {
+          "passed": 2,
+          "total": 2
+        },
+        "wood_arrow": {
+          "passed": 0,
+          "total": 1
+        }
+      }
+    },
+    "main": {
+      "script": "/Users/guru/workspace/current/chessbot/chessbot-train/recognizer_v6.py",
+      "summary": {
+        "images": 8,
+        "board_pass": 8,
+        "full_pass": 8,
+        "avg_confidence": 0.841613
+      },
+      "categories": {
+        "shirt_print": {
+          "passed": 3,
+          "total": 3
+        },
+        "dark_anchor": {
+          "passed": 2,
+          "total": 2
+        },
+        "tilted_dark_sparse": {
+          "passed": 2,
+          "total": 2
+        },
+        "wood_arrow": {
+          "passed": 1,
+          "total": 1
+        }
+      }
+    },
+    "consolidated": {
+      "script": "/Users/guru/workspace/current/chessbot/chessbot-train/temp/worksbench/recognizer_v6_candidate_consolidated2.py",
+      "summary": {
+        "images": 8,
+        "board_pass": 8,
+        "full_pass": 8,
+        "avg_confidence": 0.841613
+      },
+      "categories": {
+        "shirt_print": {
+          "passed": 3,
+          "total": 3
+        },
+        "dark_anchor": {
+          "passed": 2,
+          "total": 2
+        },
+        "tilted_dark_sparse": {
+          "passed": 2,
+          "total": 2
+        },
+        "wood_arrow": {
+          "passed": 1,
+          "total": 1
+        }
+      }
+    }
+  },
+  "images": [
+    {
+      "image": "puzzle-00003.jpeg",
+      "expected_board": "7R/8/8/8/6pq/7k/4Np1r/5KbQ",
+      "expected_full": "7R/8/8/8/6pq/7k/4Np1r/5KbQ w - - 0 1",
+      "categories": [
+        "shirt_print"
+      ],
+      "scripts": {
+        "legacy": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "7R/8/8/8/6pq/7k/4Np1r/5KbQ",
+          "predicted_full": "7R/8/8/8/6pq/7k/4Np1r/5KbQ w - - 0 1",
+          "confidence": 0.902,
+          "best_tag": "contour_robust",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "default"
+        },
+        "main": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "7R/8/8/8/6pq/7k/4Np1r/5KbQ",
+          "predicted_full": "7R/8/8/8/6pq/7k/4Np1r/5KbQ w - - 0 1",
+          "confidence": 0.8201,
+          "best_tag": "bright_board_square",
+          "detector_score": 0.9473370610216163,
+          "detector_support": 1.0,
+          "value_case_fused": false,
+          "perspective_source": "default"
+        },
+        "consolidated": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "7R/8/8/8/6pq/7k/4Np1r/5KbQ",
+          "predicted_full": "7R/8/8/8/6pq/7k/4Np1r/5KbQ w - - 0 1",
+          "confidence": 0.8201,
+          "best_tag": "bright_board_square",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "default"
+        }
+      },
+      "all_same_board": true,
+      "all_same_full": true
+    },
+    {
+      "image": "puzzle-00005.jpeg",
+      "expected_board": "r3k2r/pp3pp1/2p5/8/3Q3b/1B6/PPPP1PPq/R1B2RK1",
+      "expected_full": "r3k2r/pp3pp1/2p5/8/3Q3b/1B6/PPPP1PPq/R1B2RK1 w - - 0 1",
+      "categories": [
+        "dark_anchor"
+      ],
+      "scripts": {
+        "legacy": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "r3k2r/pp3pp1/2p5/8/3Q3b/1B6/PPPP1PPq/R1B2RK1",
+          "predicted_full": "r3k2r/pp3pp1/2p5/8/3Q3b/1B6/PPPP1PPq/R1B2RK1 w - - 0 1",
+          "confidence": 0.7626,
+          "best_tag": "full",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "piece_distribution_fallback"
+        },
+        "main": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "r3k2r/pp3pp1/2p5/8/3Q3b/1B6/PPPP1PPq/R1B2RK1",
+          "predicted_full": "r3k2r/pp3pp1/2p5/8/3Q3b/1B6/PPPP1PPq/R1B2RK1 w - - 0 1",
+          "confidence": 0.7661,
+          "best_tag": "bright_board_square",
+          "detector_score": 0.9741021282823992,
+          "detector_support": 0.9444444444444444,
+          "value_case_fused": false,
+          "perspective_source": "piece_distribution_fallback"
+        },
+        "consolidated": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "r3k2r/pp3pp1/2p5/8/3Q3b/1B6/PPPP1PPq/R1B2RK1",
+          "predicted_full": "r3k2r/pp3pp1/2p5/8/3Q3b/1B6/PPPP1PPq/R1B2RK1 w - - 0 1",
+          "confidence": 0.7661,
+          "best_tag": "bright_board_square",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "piece_distribution_fallback"
+        }
+      },
+      "all_same_board": true,
+      "all_same_full": true
+    },
+    {
+      "image": "puzzle-00017.jpeg",
+      "expected_board": "k4r2/p7/P6p/2p3p1/5q2/4pB2/1R6/1R2K3",
+      "expected_full": "k4r2/p7/P6p/2p3p1/5q2/4pB2/1R6/1R2K3 b - - 0 1",
+      "categories": [
+        "dark_anchor"
+      ],
+      "scripts": {
+        "legacy": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "k4r2/p7/P6p/2p3p1/5q2/4pB2/1R6/1R2K3",
+          "predicted_full": "k4r2/p7/P6p/2p3p1/5q2/4pB2/1R6/1R2K3 b - - 0 1",
+          "confidence": 0.6939,
+          "best_tag": "full",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "piece_distribution_fallback"
+        },
+        "main": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "k4r2/p7/P6p/2p3p1/5q2/4pB2/1R6/1R2K3",
+          "predicted_full": "k4r2/p7/P6p/2p3p1/5q2/4pB2/1R6/1R2K3 b - - 0 1",
+          "confidence": 0.7287,
+          "best_tag": "contour_quad",
+          "detector_score": 0.9643850370868001,
+          "detector_support": 1.0,
+          "value_case_fused": false,
+          "perspective_source": "piece_distribution_fallback"
+        },
+        "consolidated": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "k4r2/p7/P6p/2p3p1/5q2/4pB2/1R6/1R2K3",
+          "predicted_full": "k4r2/p7/P6p/2p3p1/5q2/4pB2/1R6/1R2K3 b - - 0 1",
+          "confidence": 0.7287,
+          "best_tag": "contour_quad",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "piece_distribution_fallback"
+        }
+      },
+      "all_same_board": true,
+      "all_same_full": true
+    },
+    {
+      "image": "puzzle-00021.jpeg",
+      "expected_board": "8/8/8/8/K7/8/pp1Q4/k7",
+      "expected_full": "8/8/8/8/K7/8/pp1Q4/k7 w - - 0 1",
+      "categories": [
+        "tilted_dark_sparse"
+      ],
+      "scripts": {
+        "legacy": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "8/8/8/8/K7/8/pp1Q4/k7",
+          "predicted_full": "8/8/8/8/K7/8/pp1Q4/k7 w - - 0 1",
+          "confidence": 0.8933,
+          "best_tag": "contour_legacy",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "default"
+        },
+        "main": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "8/8/8/8/K7/8/pp1Q4/k7",
+          "predicted_full": "8/8/8/8/K7/8/pp1Q4/k7 w - - 0 1",
+          "confidence": 0.8973,
+          "best_tag": "contour_quad",
+          "detector_score": 0.9255659014808265,
+          "detector_support": 1.0,
+          "value_case_fused": false,
+          "perspective_source": "default"
+        },
+        "consolidated": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "8/8/8/8/K7/8/pp1Q4/k7",
+          "predicted_full": "8/8/8/8/K7/8/pp1Q4/k7 w - - 0 1",
+          "confidence": 0.8973,
+          "best_tag": "contour_quad",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "default"
+        }
+      },
+      "all_same_board": true,
+      "all_same_full": true
+    },
+    {
+      "image": "puzzle-00026.jpeg",
+      "expected_board": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8",
+      "expected_full": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8 w - - 0 1",
+      "categories": [
+        "wood_arrow"
+      ],
+      "scripts": {
+        "legacy": {
+          "board_ok": false,
+          "full_ok": false,
+          "predicted_board": "n2b4/3P4/8/P7/K7/4Q3/8/8",
+          "predicted_full": "n2b4/3P4/8/P7/K7/4Q3/8/8 w - - 0 1",
+          "confidence": 0.6908,
+          "best_tag": "panel_split_left",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "board_labels"
+        },
+        "main": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8",
+          "predicted_full": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8 w - - 0 1",
+          "confidence": 0.9086,
+          "best_tag": "full",
+          "detector_score": 0.8223840461640659,
+          "detector_support": 1.0,
+          "value_case_fused": true,
+          "perspective_source": "board_labels"
+        },
+        "consolidated": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8",
+          "predicted_full": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8 w - - 0 1",
+          "confidence": 0.9086,
+          "best_tag": "full",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "board_labels"
+        }
+      },
+      "all_same_board": false,
+      "all_same_full": false
+    },
+    {
+      "image": "puzzle-00028.jpeg",
+      "expected_board": "3Nnr2/R2PkP2/4p3/8/8/4K3/8/3R4",
+      "expected_full": "3Nnr2/R2PkP2/4p3/8/8/4K3/8/3R4 w - - 0 1",
+      "categories": [
+        "shirt_print"
+      ],
+      "scripts": {
+        "legacy": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "3Nnr2/R2PkP2/4p3/8/8/4K3/8/3R4",
+          "predicted_full": "3Nnr2/R2PkP2/4p3/8/8/4K3/8/3R4 w - - 0 1",
+          "confidence": 0.9477,
+          "best_tag": "contour_legacy",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "default"
+        },
+        "main": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "3Nnr2/R2PkP2/4p3/8/8/4K3/8/3R4",
+          "predicted_full": "3Nnr2/R2PkP2/4p3/8/8/4K3/8/3R4 w - - 0 1",
+          "confidence": 0.8662,
+          "best_tag": "aligned_box",
+          "detector_score": 0.914870419012254,
+          "detector_support": 0.8888888888888888,
+          "value_case_fused": false,
+          "perspective_source": "default"
+        },
+        "consolidated": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "3Nnr2/R2PkP2/4p3/8/8/4K3/8/3R4",
+          "predicted_full": "3Nnr2/R2PkP2/4p3/8/8/4K3/8/3R4 w - - 0 1",
+          "confidence": 0.8662,
+          "best_tag": "aligned_box",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "default"
+        }
+      },
+      "all_same_board": true,
+      "all_same_full": true
+    },
+    {
+      "image": "puzzle-00031.jpeg",
+      "expected_board": "kbK5/pp6/1P6/8/8/8/8/R7",
+      "expected_full": "kbK5/pp6/1P6/8/8/8/8/R7 w - - 0 1",
+      "categories": [
+        "shirt_print"
+      ],
+      "scripts": {
+        "legacy": {
+          "board_ok": false,
+          "full_ok": false,
+          "predicted_board": "2K5/pp6/1P6/8/8/8/8/R7",
+          "predicted_full": "2K5/pp6/1P6/8/8/8/8/R7 w - - 0 1",
+          "confidence": 0.6477,
+          "best_tag": "gradient_projection_relaxed",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "piece_distribution_fallback"
+        },
+        "main": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "kbK5/pp6/1P6/8/8/8/8/R7",
+          "predicted_full": "kbK5/pp6/1P6/8/8/8/8/R7 w - - 0 1",
+          "confidence": 0.8301,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.9062510555165344,
+          "detector_support": 0.9444444444444444,
+          "value_case_fused": false,
+          "perspective_source": "best_effort_orientation"
+        },
+        "consolidated": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "kbK5/pp6/1P6/8/8/8/8/R7",
+          "predicted_full": "kbK5/pp6/1P6/8/8/8/8/R7 w - - 0 1",
+          "confidence": 0.8301,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "best_effort_orientation"
+        }
+      },
+      "all_same_board": false,
+      "all_same_full": false
+    },
+    {
+      "image": "puzzle-00049.jpeg",
+      "expected_board": "4b3/4B3/4KP2/pk5p/7P/8/8/8",
+      "expected_full": "4b3/4B3/4KP2/pk5p/7P/8/8/8 w - - 0 1",
+      "categories": [
+        "tilted_dark_sparse"
+      ],
+      "scripts": {
+        "legacy": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "4b3/4B3/4KP2/pk5p/7P/8/8/8",
+          "predicted_full": "4b3/4B3/4KP2/pk5p/7P/8/8/8 w - - 0 1",
+          "confidence": 0.717,
+          "best_tag": "full",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "default"
+        },
+        "main": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "4b3/4B3/4KP2/pk5p/7P/8/8/8",
+          "predicted_full": "4b3/4B3/4KP2/pk5p/7P/8/8/8 w - - 0 1",
+          "confidence": 0.9159,
+          "best_tag": "bright_board_square",
+          "detector_score": 0.8221308468603399,
+          "detector_support": 0.6666666666666666,
+          "value_case_fused": false,
+          "perspective_source": "default"
+        },
+        "consolidated": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "4b3/4B3/4KP2/pk5p/7P/8/8/8",
+          "predicted_full": "4b3/4B3/4KP2/pk5p/7P/8/8/8 w - - 0 1",
+          "confidence": 0.9159,
+          "best_tag": "bright_board_square",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "default"
+        }
+      },
+      "all_same_board": true,
+      "all_same_full": true
+    }
+  ],
+  "diffs": [
+    {
+      "image": "puzzle-00026.jpeg",
+      "expected_board": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8",
+      "expected_full": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8 w - - 0 1",
+      "categories": [
+        "wood_arrow"
+      ],
+      "scripts": {
+        "legacy": {
+          "board_ok": false,
+          "full_ok": false,
+          "predicted_board": "n2b4/3P4/8/P7/K7/4Q3/8/8",
+          "predicted_full": "n2b4/3P4/8/P7/K7/4Q3/8/8 w - - 0 1",
+          "confidence": 0.6908,
+          "best_tag": "panel_split_left",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "board_labels"
+        },
+        "main": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8",
+          "predicted_full": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8 w - - 0 1",
+          "confidence": 0.9086,
+          "best_tag": "full",
+          "detector_score": 0.8223840461640659,
+          "detector_support": 1.0,
+          "value_case_fused": true,
+          "perspective_source": "board_labels"
+        },
+        "consolidated": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8",
+          "predicted_full": "nrb5/k1P1R3/1p6/p7/K7/3Q4/8/8 w - - 0 1",
+          "confidence": 0.9086,
+          "best_tag": "full",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "board_labels"
+        }
+      },
+      "all_same_board": false,
+      "all_same_full": false
+    },
+    {
+      "image": "puzzle-00031.jpeg",
+      "expected_board": "kbK5/pp6/1P6/8/8/8/8/R7",
+      "expected_full": "kbK5/pp6/1P6/8/8/8/8/R7 w - - 0 1",
+      "categories": [
+        "shirt_print"
+      ],
+      "scripts": {
+        "legacy": {
+          "board_ok": false,
+          "full_ok": false,
+          "predicted_board": "2K5/pp6/1P6/8/8/8/8/R7",
+          "predicted_full": "2K5/pp6/1P6/8/8/8/8/R7 w - - 0 1",
+          "confidence": 0.6477,
+          "best_tag": "gradient_projection_relaxed",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "piece_distribution_fallback"
+        },
+        "main": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "kbK5/pp6/1P6/8/8/8/8/R7",
+          "predicted_full": "kbK5/pp6/1P6/8/8/8/8/R7 w - - 0 1",
+          "confidence": 0.8301,
+          "best_tag": "min_area_rect",
+          "detector_score": 0.9062510555165344,
+          "detector_support": 0.9444444444444444,
+          "value_case_fused": false,
+          "perspective_source": "best_effort_orientation"
+        },
+        "consolidated": {
+          "board_ok": true,
+          "full_ok": true,
+          "predicted_board": "kbK5/pp6/1P6/8/8/8/8/R7",
+          "predicted_full": "kbK5/pp6/1P6/8/8/8/8/R7 w - - 0 1",
+          "confidence": 0.8301,
+          "best_tag": "min_area_rect",
+          "detector_score": null,
+          "detector_support": null,
+          "value_case_fused": null,
+          "perspective_source": "best_effort_orientation"
+        }
+      },
+      "all_same_board": false,
+      "all_same_full": false
+    }
+  ]
+}

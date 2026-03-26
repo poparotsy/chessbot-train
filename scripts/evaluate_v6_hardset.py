@@ -109,6 +109,10 @@ def _recognizer_worker(image_path, model_path, board_perspective, debug, script_
                 "side_to_move_source": side_source,
                 "detected_perspective": detected_perspective,
                 "perspective_source": perspective_source,
+                "best_tag": result.get("best_tag"),
+                "detector_score": result.get("detector_score"),
+                "detector_support": result.get("detector_support"),
+                "value_case_fused": result.get("value_case_fused"),
             }
         )
     except Exception as exc:
@@ -241,6 +245,12 @@ def evaluate_hardset(
                 "board_ok": board_ok,
                 "full_ok": full_ok,
                 "side_to_move_source": payload.get("side_to_move_source"),
+                "best_tag": payload.get("best_tag"),
+                "detector_score": payload.get("detector_score"),
+                "detector_support": payload.get("detector_support"),
+                "value_case_fused": payload.get("value_case_fused"),
+                "detected_perspective": payload.get("detected_perspective"),
+                "perspective_source": payload.get("perspective_source"),
             }
         )
         per_image.append(record)
