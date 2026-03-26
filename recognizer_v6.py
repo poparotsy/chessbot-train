@@ -898,6 +898,53 @@ def infer_side_to_move_from_checks(fen_board):
     _side_to_move_cache[fen_board] = result
     return result
 
+def _should_try_inner_crop_rescue(img, board_fen):
+    width, height = img.size
+    if width < 256 or height < 256:
+        return False
+    aspect = width / max(float(height), 1.0)
+    if aspect < 0.9 or aspect > 1.1:
+        return False
+    return king_health(board_fen) < 2
+
+def _decode_best_candidate(img, model, device, board_perspective):
+    candidates = build_detector_candidates(img)
+    orientation_context = collect_orientation_context(candidates, board_perspective=board_perspective)
+    best = decode_candidate(
+        candidates[0],
+        model=model,
+        device=device,
+        board_perspective=board_perspective,
+        orientation_context=orientation_context,
+    )
+    return best, candidates, orientation_context
+
+def _try_inner_crop_rescue(img, model, device, board_perspective):
+    width, height = img.size
+    best_rescue = None
+    for ratio in (0.025, 0.035, 0.045, 0.055, 0.065):
+        margin_x = max(4, int(round(width * ratio)))
+        margin_y = max(4, int(round(height * ratio)))
+        crop_w = width - (margin_x * 2)
+        crop_h = height - (margin_y * 2)
+        if crop_w < 192 or crop_h < 192:
+            continue
+        crop = img.crop((margin_x, margin_y, width - margin_x, height - margin_y))
+        try:
+            decoded, _, _ = _decode_best_candidate(
+                crop,
+                model=model,
+                device=device,
+                board_perspective=board_perspective,
+            )
+        except Exception:
+            continue
+        if king_health(decoded[2]) < 2:
+            continue
+        if best_rescue is None or float(decoded[3]) > float(best_rescue[3]):
+            best_rescue = decoded
+    return best_rescue
+
 def parse_side_to_move_override(raw_value):
     token = str(raw_value).strip().lower()
     mapping = {
@@ -1608,15 +1655,16 @@ def predict_chess_position(image_path, model_path=None, board_perspective="auto"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model(model_path=model_path, device=device)
     img = Image.open(image_path).convert("RGB")
-    candidates = build_detector_candidates(img)
-    orientation_context = collect_orientation_context(candidates, board_perspective=board_perspective)
-    best = decode_candidate(
-        candidates[0],
+    best, _, _ = _decode_best_candidate(
+        img,
         model=model,
         device=device,
         board_perspective=board_perspective,
-        orientation_context=orientation_context,
     )
+    if _should_try_inner_crop_rescue(img, best[2]):
+        rescued = _try_inner_crop_rescue(img, model, device, board_perspective)
+        if rescued is not None:
+            best = rescued
     if side_to_move_override is not None:
         side_to_move = parse_side_to_move_override(side_to_move_override)
         side_source = "override_cli"
