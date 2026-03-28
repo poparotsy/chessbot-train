@@ -903,7 +903,7 @@ def _should_try_inner_crop_rescue(img, board_fen):
     if width < 256 or height < 256:
         return False
     aspect = width / max(float(height), 1.0)
-    if aspect < 0.9 or aspect > 1.1:
+    if aspect < 0.84 or aspect > 1.16:
         return False
     return king_health(board_fen) < 2
 
@@ -919,9 +919,115 @@ def _decode_best_candidate(img, model, device, board_perspective):
     )
     return best, candidates, orientation_context
 
+
+def _iter_square_grid_box_rescue_crops(img):
+    width, height = img.size
+    aspect = width / max(float(height), 1.0)
+    if aspect < 0.84 or aspect > 1.16:
+        return
+    full_meta = score_full_frame_board(img)
+    grid_box = full_meta.get("grid_box")
+    if grid_box is None:
+        return
+    x0, y0, x1, y1 = [float(v) for v in grid_box]
+    box_w = max(1.0, x1 - x0)
+    box_h = max(1.0, y1 - y0)
+    if min(box_w, box_h) < min(width, height) * 0.45:
+        return
+
+    side_base = min(float(min(width, height)), max(box_w, box_h))
+    center_x = 0.5 * (x0 + x1)
+    center_y = 0.5 * (y0 + y1)
+    seen = set()
+
+    for scale in (0.96, 1.0, 1.04, 1.08):
+        side = int(round(side_base * scale))
+        if side < 220:
+            continue
+        side = min(side, width, height)
+        max_x = max(0, width - side)
+        max_y = max(0, height - side)
+        base_x = max(0, min(int(round(center_x - (side / 2.0))), max_x))
+        base_y = max(0, min(int(round(center_y - (side / 2.0))), max_y))
+        x_offsets = {
+            base_x,
+            max(0, min(int(round(x0)), max_x)),
+            max(0, min(int(round(x1 - side)), max_x)),
+        }
+        y_offsets = {
+            base_y,
+            max(0, min(int(round(y0)), max_y)),
+            max(0, min(int(round(y1 - side)), max_y)),
+        }
+        pair_offsets = {(base_x, base_y)}
+        pair_offsets.update((px, base_y) for px in x_offsets)
+        pair_offsets.update((base_x, py) for py in y_offsets)
+        for px in sorted(x_offsets):
+            for py in sorted(y_offsets):
+                pair_offsets.add((px, py))
+        for px, py in sorted(pair_offsets):
+            key = (px, py, side)
+            if key in seen:
+                continue
+            seen.add(key)
+            crop = img.crop((px, py, px + side, py + side))
+            if crop.size == img.size:
+                continue
+            yield crop.resize(img.size, Image.LANCZOS)
+
+
+def _decode_direct_rescue_crop(crop, model, device, board_perspective):
+    fen, conf, piece_count = infer_fen_on_image_clean(
+        crop,
+        model,
+        device,
+        USE_SQUARE_DETECTION,
+    )
+    orientation_context = {
+        "label_perspective_result": None,
+        "label_details": {},
+        "labels_absent": True,
+        "labels_same": False,
+        "partial_label_scores": {"white": 0.0, "black": 0.0},
+    }
+    detected_perspective, perspective_source = resolve_candidate_orientation(
+        fen,
+        board_perspective=board_perspective,
+        orientation_context=orientation_context,
+    )
+    board_fen = rotate_fen_180(fen) if detected_perspective == "black" else fen
+    return (
+        "inner_grid_box",
+        "base",
+        board_fen,
+        float(conf),
+        int(piece_count),
+        detected_perspective,
+        perspective_source,
+        1.0,
+        True,
+        1.0,
+        1.0,
+    )
+
+
 def _try_inner_crop_rescue(img, model, device, board_perspective):
     width, height = img.size
     best_rescue = None
+    for crop in _iter_square_grid_box_rescue_crops(img) or ():
+        try:
+            decoded = _decode_direct_rescue_crop(
+                crop,
+                model=model,
+                device=device,
+                board_perspective=board_perspective,
+            )
+        except Exception:
+            continue
+        if king_health(decoded[2]) < 2:
+            continue
+        if best_rescue is None or float(decoded[3]) > float(best_rescue[3]):
+            best_rescue = decoded
     for ratio in (0.025, 0.035, 0.045, 0.055, 0.065):
         margin_x = max(4, int(round(width * ratio)))
         margin_y = max(4, int(round(height * ratio)))
@@ -1283,6 +1389,7 @@ def _collect_bright_board_proposals(img):
                         }
                     )
     return proposals
+
 
 def _score_proposal(img, proposal):
     corners = proposal["corners"]
