@@ -18,6 +18,7 @@ Fixes Applied:
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -94,6 +95,8 @@ FULL_CANDIDATE_STRONG_EVIDENCE_MIN = 0.50
 FULL_CANDIDATE_STRONG_SUPPORT_MIN = 0.95
 VALUE_CASE_ALT_MIN = 0.05
 VALUE_CASE_CONF_MIN = 0.55
+VALUE_CASE_SAT_MEAN_MAX = 72.0
+VALUE_CASE_SAT_P95_MAX = 168.0
 
 _model_cache = {}
 _plausibility_cache = {}
@@ -774,6 +777,24 @@ def king_health(fen_board):
         return 0
     return int(fen_board.count("K") == 1) + int(fen_board.count("k") == 1)
 
+
+def board_is_structurally_valid(fen_board):
+    rows = expand_fen_board(fen_board)
+    if len(rows) != 8 or any(len(r) != 8 for r in rows):
+        return False
+    if king_health(fen_board) < 2:
+        return False
+    if chess is None:
+        return True
+    for stm in ("w", "b"):
+        try:
+            board = chess.Board(f"{fen_board} {stm} - - 0 1")
+        except ValueError:
+            continue
+        if board.is_valid():
+            return True
+    return False
+
 def is_square_attacked(rows, target_r, target_c, by_white):
     if by_white:
         pawn_attackers = [("P", target_r + 1, target_c - 1), ("P", target_r + 1, target_c + 1)]
@@ -1209,16 +1230,53 @@ def crop_warp_to_detected_grid(img):
     width = max(1.0, x1 - x0)
     height = max(1.0, y1 - y0)
     coverage = (width * height) / float(img.size[0] * img.size[1])
+    aspect = img.size[0] / float(max(1, img.size[1]))
+    non_square = not (0.92 <= aspect <= 1.08)
     ratio = width / float(max(1.0, height))
-    if coverage < 0.55 or coverage > 0.995:
-        return None
-    if not (0.88 <= ratio <= 1.12):
-        return None
+    if not non_square:
+        if coverage < 0.55 or coverage > 0.995:
+            return None
+        if not (0.88 <= ratio <= 1.12):
+            return None
+    else:
+        if coverage < 0.45 or coverage > 0.995:
+            return None
+        margins = np.array(
+            [x0, y0, max(0.0, img.size[0] - x1), max(0.0, img.size[1] - y1)],
+            dtype=np.float32,
+        )
+        cell_est = min(img.size) / 8.0
+        if (
+            float(np.max(margins)) >= (cell_est * 0.90)
+            and float(np.min(margins)) <= (cell_est * 0.20)
+            and (
+                abs(float(margins[0] - margins[2])) >= (cell_est * 0.90)
+                or abs(float(margins[1] - margins[3])) >= (cell_est * 0.90)
+            )
+        ):
+            return None
     px0 = max(0, int(round(x0)))
     py0 = max(0, int(round(y0)))
     px1 = min(img.size[0], int(round(x1)))
     py1 = min(img.size[1], int(round(y1)))
-    if px1 - px0 < img.size[0] * 0.55 or py1 - py0 < img.size[1] * 0.55:
+    if non_square and coverage < 0.90:
+        expand_x = min(
+            int(round((width / 8.0) * 0.40)),
+            max(0, px0),
+            max(0, img.size[0] - px1),
+        )
+        expand_y = min(
+            int(round((height / 8.0) * 0.40)),
+            max(0, py0),
+            max(0, img.size[1] - py1),
+        )
+        if expand_x > 0 or expand_y > 0:
+            px0 = max(0, px0 - expand_x)
+            py0 = max(0, py0 - expand_y)
+            px1 = min(img.size[0], px1 + expand_x)
+            py1 = min(img.size[1], py1 + expand_y)
+    min_crop_ratio = 0.45 if non_square else 0.55
+    if px1 - px0 < img.size[0] * min_crop_ratio or py1 - py0 < img.size[1] * min_crop_ratio:
         return None
     cropped = img.crop((px0, py0, px1, py1))
     if cropped.size == img.size:
@@ -1390,10 +1448,307 @@ def _collect_bright_board_proposals(img):
                     )
     return proposals
 
+def _estimate_texture_band_box(img):
+    rgb = np.array(img.convert("RGB"))
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    blur = cv2.GaussianBlur(gray, (0, 0), 3.0)
+    resid = cv2.absdiff(gray, blur).astype(np.float32) / 255.0
+    row_energy = cv2.GaussianBlur(resid.mean(axis=1).reshape(-1, 1), (1, 15), 0).reshape(-1)
+    col_energy = cv2.GaussianBlur(resid.mean(axis=0).reshape(1, -1), (15, 1), 0).reshape(-1)
+
+    def _largest_band(values):
+        if values.size == 0:
+            return None
+        lo = float(np.quantile(values, 0.60))
+        hi = float(np.quantile(values, 0.90))
+        threshold = lo + (0.35 * max(0.0, hi - lo))
+        mask = values >= threshold
+        best = None
+        start = None
+        for idx, flag in enumerate(mask.tolist() + [False]):
+            if flag and start is None:
+                start = idx
+            elif not flag and start is not None:
+                end = idx
+                strength = float(values[start:end].mean()) * float(end - start)
+                if best is None or strength > best[2]:
+                    best = (start, end, strength)
+                start = None
+        return best
+
+    row_band = _largest_band(row_energy)
+    col_band = _largest_band(col_energy)
+    if row_band is None or col_band is None:
+        return None
+    y0, y1, _ = row_band
+    x0, x1, _ = col_band
+    if (y1 - y0) < (img.size[1] * 0.30) or (x1 - x0) < (img.size[0] * 0.30):
+        return None
+    return (float(x0), float(y0), float(x1), float(y1))
+
+def _collect_square_window_proposals(img):
+    width, height = img.size
+    aspect = width / float(max(1, height))
+    if 0.92 <= aspect <= 1.08:
+        return []
+
+    proposals = []
+    seen = set()
+    short_side = min(width, height)
+    side_scales = [1.0, 0.92, 0.84]
+    for scale in side_scales:
+        side = int(round(short_side * scale))
+        if side < 220:
+            continue
+        if width > height:
+            max_offset_x = max(0, width - side)
+            max_offset_y = max(0, height - side)
+            count_x = 5
+            x_offsets = np.linspace(0, max_offset_x, count_x)
+            if max_offset_y <= 4:
+                y_offsets = [0.0]
+            else:
+                cell = side / 8.0
+                y_offsets = {
+                    0.0,
+                    float(max(0, min(int(round(cell * 0.5)), max_offset_y))),
+                    float(max(0, min(int(round(cell * 1.5)), max_offset_y))),
+                    float(max_offset_y),
+                }
+            for offset_x in sorted(x_offsets):
+                for offset_y in sorted(y_offsets):
+                    x0 = int(round(offset_x))
+                    y0 = int(round(offset_y))
+                    corners = np.array(
+                        [[x0, y0], [x0 + side, y0], [x0 + side, y0 + side], [x0, y0 + side]],
+                        dtype=np.float32,
+                    )
+                    dedupe = ("square_window",) + _proposal_dedupe_key(corners, width, height)
+                    if dedupe in seen:
+                        continue
+                    seen.add(dedupe)
+                    proposals.append(
+                        {
+                            "tag": "square_window",
+                            "corners": corners,
+                            "metrics": compute_quad_metrics(corners, width, height),
+                        }
+                    )
+        else:
+            max_offset_x = max(0, width - side)
+            max_offset_y = max(0, height - side)
+            texture_box = _estimate_texture_band_box(img)
+            if texture_box is not None:
+                tx0, ty0, tx1, ty1 = texture_box
+                y_offsets = {
+                    float(max(0, min(int(round(ty0)), max_offset_y))),
+                    float(max(0, min(int(round(((ty0 + ty1) - side) / 2.0)), max_offset_y))),
+                    float(max(0, min(int(round(ty1 - side)), max_offset_y))),
+                }
+            else:
+                count_y = 4 if aspect > 0.64 else 5
+                y_offsets = np.linspace(0, max_offset_y, count_y)
+            if max_offset_x <= 4:
+                x_offsets = [0.0]
+            else:
+                cell = side / 8.0
+                if texture_box is not None:
+                    tx0, _, tx1, _ = texture_box
+                    x_offsets = {
+                        float(max(0, min(int(round(tx0)), max_offset_x))),
+                        float(max(0, min(int(round(((tx0 + tx1) - side) / 2.0)), max_offset_x))),
+                        float(max(0, min(int(round(tx1 - side)), max_offset_x))),
+                    }
+                else:
+                    x_offsets = {
+                        0.0,
+                        float(max(0, min(int(round(cell * 0.5)), max_offset_x))),
+                        float(max(0, min(int(round(cell * 1.5)), max_offset_x))),
+                        float(max_offset_x),
+                    }
+            for offset_y in sorted(y_offsets):
+                for offset_x in sorted(x_offsets):
+                    x0 = int(round(offset_x))
+                    y0 = int(round(offset_y))
+                    corners = np.array(
+                        [[x0, y0], [x0 + side, y0], [x0 + side, y0 + side], [x0, y0 + side]],
+                        dtype=np.float32,
+                    )
+                    dedupe = ("square_window",) + _proposal_dedupe_key(corners, width, height)
+                    if dedupe in seen:
+                        continue
+                    seen.add(dedupe)
+                    proposals.append(
+                        {
+                            "tag": "square_window",
+                            "corners": corners,
+                            "metrics": compute_quad_metrics(corners, width, height),
+                        }
+                    )
+    return proposals
+
+
+def _collect_grid_box_square_proposals(img, grid_box):
+    if grid_box is None:
+        return []
+    width, height = img.size
+    aspect = width / float(max(1, height))
+    non_square = not (0.92 <= aspect <= 1.08)
+    if not non_square:
+        return []
+    x0, y0, x1, y1 = [float(v) for v in grid_box]
+    box_w = max(1.0, x1 - x0)
+    box_h = max(1.0, y1 - y0)
+    cell_est = max(8.0, min(box_w, box_h) / 8.0)
+    if min(box_w, box_h) < min(width, height) * 0.45:
+        return []
+    center_x = 0.5 * (x0 + x1)
+    center_y = 0.5 * (y0 + y1)
+    if non_square:
+        side_bases = {
+            min(float(min(width, height)), math.sqrt(box_w * box_h)),
+        }
+        scales = (1.0, 1.08)
+    else:
+        side_bases = {
+            min(float(min(width, height)), max(box_w, box_h)),
+        }
+        scales = (0.96, 1.0, 1.04, 1.08)
+    proposals = []
+    seen = set()
+    for side_base in sorted(side_bases):
+        for scale in scales:
+            side = int(round(side_base * scale))
+            if side < 220:
+                continue
+            side = min(side, width, height)
+            max_x = max(0, width - side)
+            max_y = max(0, height - side)
+            base_x = max(0, min(int(round(center_x - (side / 2.0))), max_x))
+            base_y = max(0, min(int(round(center_y - (side / 2.0))), max_y))
+            x_offsets = {base_x}
+            y_offsets = {base_y}
+            if max_x > 0:
+                x_offsets.update(
+                    {
+                        max(0, min(int(round(x0)), max_x)),
+                        max(0, min(int(round(x1 - side)), max_x)),
+                    }
+                )
+            if max_y > 0:
+                y_offsets.update(
+                    {
+                        0,
+                        max_y,
+                        max(0, min(int(round(y0)), max_y)),
+                        max(0, min(int(round(y1 - side)), max_y)),
+                        }
+                    )
+            if non_square:
+                long_count = min(11, max(5, int(round((max(width, height) / float(max(1, side))) * 5))))
+                if width > height:
+                    x_offsets = set(float(v) for v in np.linspace(0, max_x, long_count))
+                    for step in (0.5, 1.0, 1.5, 2.0):
+                        delta = int(round(cell_est * step))
+                        x_offsets.update(
+                            {
+                                float(max(0, min(delta, max_x))),
+                                float(max(0, min(max_x - delta, max_x))),
+                                float(max(0, min(int(round(x0 + delta)), max_x))),
+                                float(max(0, min(int(round(x1 - side - delta)), max_x))),
+                            }
+                        )
+                    y_offsets = set(float(v) for v in np.linspace(0, max_y, 5))
+                    for step in (0.5, 1.0, 1.5, 2.0):
+                        delta = int(round(cell_est * step))
+                        y_offsets.update(
+                            {
+                                float(max(0, min(delta, max_y))),
+                                float(max(0, min(max_y - delta, max_y))),
+                            }
+                        )
+                else:
+                    y_offsets = set(float(v) for v in np.linspace(0, max_y, long_count))
+                    for step in (0.5, 1.0, 1.5, 2.0):
+                        delta = int(round(cell_est * step))
+                        y_offsets.update(
+                            {
+                                float(max(0, min(delta, max_y))),
+                                float(max(0, min(max_y - delta, max_y))),
+                                float(max(0, min(int(round(y0 + delta)), max_y))),
+                                float(max(0, min(int(round(y1 - side - delta)), max_y))),
+                            }
+                        )
+                    x_offsets = set(float(v) for v in np.linspace(0, max_x, 5))
+                    for step in (0.5, 1.0, 1.5, 2.0):
+                        delta = int(round(cell_est * step))
+                        x_offsets.update(
+                            {
+                                float(max(0, min(delta, max_x))),
+                                float(max(0, min(max_x - delta, max_x))),
+                            }
+                        )
+                if width > height:
+                    pair_offsets = set()
+                    for px in sorted(x_offsets):
+                        for py in sorted(y_offsets):
+                            pair_offsets.add((int(round(px)), int(round(py))))
+                else:
+                    pair_offsets = {
+                        (0, base_y),
+                        (0, max(0, min(int(round(y0)), max_y))),
+                        (0, max(0, min(int(round(y1 - side)), max_y))),
+                        (base_x, base_y),
+                        (base_x, max(0, min(int(round(y0)), max_y))),
+                        (base_x, max(0, min(int(round(y1 - side)), max_y))),
+                    }
+            else:
+                pair_offsets = {(base_x, base_y)}
+                pair_offsets.update((px, base_y) for px in x_offsets)
+                pair_offsets.update((base_x, py) for py in y_offsets)
+                if max_x > 0 and max_y > 0:
+                    anchor_x = sorted(
+                        {
+                            max(0, min(int(round(x0)), max_x)),
+                            max(0, min(int(round(x1 - side)), max_x)),
+                        }
+                    )
+                    anchor_y = sorted(
+                        {
+                            max(0, min(int(round(y0)), max_y)),
+                            max(0, min(int(round(y1 - side)), max_y)),
+                        }
+                    )
+                    for px in anchor_x:
+                        for py in anchor_y:
+                            pair_offsets.add((px, py))
+            for px, py in sorted(pair_offsets):
+                if px < 0 or py < 0:
+                    continue
+                corners = np.array(
+                    [[px, py], [px + side, py], [px + side, py + side], [px, py + side]],
+                    dtype=np.float32,
+                )
+                dedupe = ("grid_box_square",) + _proposal_dedupe_key(corners, width, height)
+                if dedupe in seen:
+                    continue
+                seen.add(dedupe)
+                proposals.append(
+                    {
+                        "tag": "grid_box_square",
+                        "corners": corners,
+                        "metrics": compute_quad_metrics(corners, width, height),
+                    }
+                )
+    return proposals
 
 def _score_proposal(img, proposal):
     corners = proposal["corners"]
     metrics = proposal["metrics"]
+    x0 = float(corners[:, 0].min())
+    y0 = float(corners[:, 1].min())
+    x1 = float(corners[:, 0].max())
+    y1 = float(corners[:, 1].max())
     span_x = float(corners[:, 0].max() - corners[:, 0].min()) / float(max(1, img.size[0]))
     span_y = float(corners[:, 1].max() - corners[:, 1].min()) / float(max(1, img.size[1]))
     min_span_ratio = float(min(span_x, span_y))
@@ -1425,10 +1780,30 @@ def _score_proposal(img, proposal):
     )
     if refined is not None and checker_score >= 0.65:
         score += 0.03
+    aspect = img.size[0] / float(max(1, img.size[1]))
     trusted = bool(is_warp_geometry_trustworthy(metrics) and evidence >= 0.34 and support_ratio >= 0.46)
+    if (
+        proposal["tag"] == "grid_box_square"
+        and not (0.92 <= aspect <= 1.08)
+        and trusted
+        and support_ratio >= 0.94
+        and margin_score >= 0.96
+    ):
+        score += 0.004
+    if (
+        proposal["tag"] in {"grid_box_square", "square_window"}
+        and support_ratio >= 0.97
+        and checker_score >= 0.93
+        and grid_ratio_score >= 0.80
+    ):
+        if img.size[0] > img.size[1] and y0 <= 1.0 and (img.size[1] - y1) >= max(8.0, (img.size[1] / 8.0) * 0.40):
+            score += 0.01
+        if img.size[1] > img.size[0] and x0 <= 1.0 and (img.size[0] - x1) >= max(8.0, (img.size[0] / 8.0) * 0.40):
+            score += 0.01
     return {
         "tag": proposal["tag"],
         "corners": corners,
+        "roi": scoring_img,
         "geometry": float(geometry),
         "evidence": evidence,
         "score": score,
@@ -1444,11 +1819,18 @@ def _score_proposal(img, proposal):
 def detect_board_grid(img, max_hypotheses=6):
     hypotheses = []
     full_meta = score_full_frame_board(img)
+    aspect = img.size[0] / float(max(1, img.size[1]))
+    non_square = not (0.92 <= aspect <= 1.08)
     contour_proposals = _collect_contour_proposals(img)
     for proposal in contour_proposals:
         hypotheses.append(_score_proposal(img, proposal))
     for proposal in _collect_bright_board_proposals(img):
         hypotheses.append(_score_proposal(img, proposal))
+    if non_square:
+        for proposal in _collect_square_window_proposals(img):
+            hypotheses.append(_score_proposal(img, proposal))
+        for proposal in _collect_grid_box_square_proposals(img, full_meta.get("grid_box")):
+            hypotheses.append(_score_proposal(img, proposal))
     if full_meta["grid_box"] is not None:
         x0, y0, x1, y1 = full_meta["grid_box"]
         width = max(1.0, x1 - x0)
@@ -1476,22 +1858,9 @@ def detect_board_grid(img, max_hypotheses=6):
             continue
         seen.add(key)
         deduped.append(row)
-        if len(deduped) >= max_hypotheses:
+        if len(deduped) >= max(max_hypotheses * 3, 18):
             break
-    if len(deduped) >= 2:
-        best_score = float(deduped[0]["score"])
-        ambiguous = [row for row in deduped if best_score - float(row["score"]) <= 0.05]
-        if len(ambiguous) >= 2:
-            ambiguous.sort(
-                key=lambda row: (
-                    (0.60 * float(row.get("checker_score", 0.0))) + (0.40 * float(row.get("evidence", 0.0))),
-                    float(row.get("support_ratio", 0.0)),
-                    float(row.get("score", 0.0)),
-                ),
-                reverse=True,
-            )
-            remainder = [row for row in deduped if best_score - float(row["score"]) > 0.05]
-            deduped = ambiguous + remainder
+    deduped = deduped[:max_hypotheses]
     return deduped
 
 # =============================================================================
@@ -1540,14 +1909,30 @@ def _material_score_order(candidates, *, epsilon=None):
 def _full_candidate_should_lead(img, full_meta, detector_candidates):
     ratio = img.size[0] / float(max(1, img.size[1]))
     best_detector_score = max((float(candidate[4]) for candidate in detector_candidates), default=-1.0)
+    full_checker = _checker_texture_score(img)
     strong_full = bool(
         FULL_CANDIDATE_RATIO_MIN <= ratio <= FULL_CANDIDATE_RATIO_MAX
         and float(full_meta.get("coverage", 0.0)) >= FULL_CANDIDATE_STRONG_COVERAGE_MIN
         and full_meta["evidence"] >= FULL_CANDIDATE_STRONG_EVIDENCE_MIN
         and full_meta["support_ratio"] >= FULL_CANDIDATE_STRONG_SUPPORT_MIN
     )
+    locked_square_full = bool(
+        FULL_CANDIDATE_RATIO_MIN <= ratio <= FULL_CANDIDATE_RATIO_MAX
+        and float(full_meta.get("coverage", 0.0)) >= 0.60
+        and full_meta["evidence"] >= 0.55
+        and full_meta["support_ratio"] >= 0.88
+    )
+    high_checker_full = bool(
+        FULL_CANDIDATE_RATIO_MIN <= ratio <= FULL_CANDIDATE_RATIO_MAX
+        and float(full_meta.get("coverage", 0.0)) >= 0.95
+        and full_meta["evidence"] >= 0.45
+        and full_meta["support_ratio"] >= 0.80
+        and float(full_checker) >= 0.90
+    )
     return bool(
         strong_full
+        or locked_square_full
+        or high_checker_full
         or (
             FULL_CANDIDATE_RATIO_MIN <= ratio <= FULL_CANDIDATE_RATIO_MAX
             and float(full_meta.get("coverage", 0.0)) >= FULL_CANDIDATE_COVERAGE_MIN
@@ -1569,13 +1954,17 @@ def build_detector_candidates(img):
     )
     if not USE_EDGE_DETECTION:
         return [full_candidate]
+    aspect = img.size[0] / float(max(1, img.size[1]))
+    non_square = not (0.92 <= aspect <= 1.08)
     detector_candidates = []
-    for row in detect_board_grid(img, max_hypotheses=6):
-        corners = row["corners"]
-        roi = perspective_transform(img, corners)
-        refined = crop_warp_to_detected_grid(roi)
-        if refined is not None:
-            roi = refined
+    for row in detect_board_grid(img, max_hypotheses=10 if non_square else 6):
+        roi = row.get("roi")
+        if roi is None:
+            corners = row["corners"]
+            roi = perspective_transform(img, corners)
+            refined = crop_warp_to_detected_grid(roi)
+            if refined is not None:
+                roi = refined
         detector_candidates.append(
             _candidate_tuple(
                 str(row["tag"]),
@@ -1586,7 +1975,7 @@ def build_detector_candidates(img):
                 row["support_ratio"],
             )
         )
-    candidates = _material_score_order(detector_candidates)[:4]
+    candidates = _material_score_order(detector_candidates)[:6 if non_square else 4]
     if not candidates:
         return [full_candidate]
     if _full_candidate_should_lead(img, full_meta, candidates):
@@ -1641,6 +2030,7 @@ def _fuse_value_case_labels(rgb_details, value_details):
 
 def decode_candidate(candidate, model, device, board_perspective, orientation_context):
     tag, candidate_img, warp_quality, warp_trusted, detector_score, detector_support = candidate
+    aspect = candidate_img.size[0] / float(max(1, candidate_img.size[1]))
     fen, conf, piece_count = infer_fen_on_image_clean(
         candidate_img,
         model,
@@ -1648,7 +2038,15 @@ def decode_candidate(candidate, model, device, board_perspective, orientation_co
         USE_SQUARE_DETECTION,
     )
     value_case_fused = False
-    if str(tag) == "full":
+    sat_stats = image_saturation_stats(candidate_img)
+    enable_value_case = bool(
+        str(tag) == "full"
+        or (
+            float(sat_stats.get("sat_mean", 255.0)) <= VALUE_CASE_SAT_MEAN_MAX
+            and float(sat_stats.get("sat_p95", 255.0)) <= VALUE_CASE_SAT_P95_MAX
+        )
+    )
+    if enable_value_case:
         rgb_fen, rgb_conf, rgb_piece_count, rgb_details = infer_fen_on_image_clean(
             candidate_img,
             model,
@@ -1697,6 +2095,8 @@ def decode_candidate(candidate, model, device, board_perspective, orientation_co
         perspective_source,
         warp_quality,
         warp_trusted,
+        float(detector_score),
+        float(detector_support),
     )
 
 def diagnostic_decode_candidate_with_details(
@@ -1709,6 +2109,8 @@ def diagnostic_decode_candidate_with_details(
     topk=5,
 ):
     tag, candidate_img, warp_quality, warp_trusted, detector_score, detector_support = candidate
+    aspect = candidate_img.size[0] / float(max(1, candidate_img.size[1]))
+    sat_stats = image_saturation_stats(candidate_img)
     fen, conf, piece_count, details = infer_fen_on_image_clean(
         candidate_img,
         model,
@@ -1717,6 +2119,27 @@ def diagnostic_decode_candidate_with_details(
         return_details=True,
         topk_k=max(3, int(topk)),
     )
+    value_case_fused = False
+    enable_value_case = bool(
+        str(tag) == "full"
+        or (
+            float(sat_stats.get("sat_mean", 255.0)) <= VALUE_CASE_SAT_MEAN_MAX
+            and float(sat_stats.get("sat_p95", 255.0)) <= VALUE_CASE_SAT_P95_MAX
+        )
+    )
+    if enable_value_case:
+        value_fen, value_conf, value_piece_count, value_details = infer_fen_on_image_clean(
+            _value_only_image(candidate_img),
+            model,
+            device,
+            USE_SQUARE_DETECTION,
+            return_details=True,
+            topk_k=max(3, int(topk)),
+        )
+        fused_fen, fused_piece_count, value_case_fused = _fuse_value_case_labels(details, value_details)
+        if value_case_fused:
+            fen = fused_fen
+            piece_count = int(fused_piece_count)
     detected_perspective, perspective_source = resolve_candidate_orientation(
         fen,
         board_perspective=board_perspective,
@@ -1747,27 +2170,41 @@ def diagnostic_decode_candidate_with_details(
         "warp_trusted": bool(warp_trusted),
         "tile_infos_by_square": tile_infos_by_square,
         "rescored_low_sat_sparse": False,
-        "sat_stats": image_saturation_stats(candidate_img),
+        "sat_stats": sat_stats,
         "candidate_img": candidate_img,
         "grid_score": float(detector_score),
         "detector_support": float(detector_support),
+        "value_case_fused": bool(value_case_fused),
     }
 
 def select_best_candidate(scored):
     if not scored:
         raise RuntimeError("No scored candidates")
+    for candidate in scored:
+        if board_is_structurally_valid(candidate[2]):
+            return candidate
+    for candidate in scored:
+        if king_health(candidate[2]) >= 2:
+            return candidate
     return scored[0]
 
 def predict_chess_position(image_path, model_path=None, board_perspective="auto", side_to_move_override=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model(model_path=model_path, device=device)
     img = Image.open(image_path).convert("RGB")
-    best, _, _ = _decode_best_candidate(
-        img,
-        model=model,
-        device=device,
-        board_perspective=board_perspective,
-    )
+    candidates = build_detector_candidates(img)
+    orientation_context = collect_orientation_context(candidates, board_perspective=board_perspective)
+    scored = [
+        decode_candidate(
+            candidate,
+            model=model,
+            device=device,
+            board_perspective=board_perspective,
+            orientation_context=orientation_context,
+        )
+        for candidate in candidates
+    ]
+    best = select_best_candidate(scored)
     if _should_try_inner_crop_rescue(img, best[2]):
         rescued = _try_inner_crop_rescue(img, model, device, board_perspective)
         if rescued is not None:

@@ -449,6 +449,8 @@ def analyze_model_on_image(
             row["perspective_source"],
             row["warp_quality"],
             row["warp_trusted"],
+            row.get("grid_score", row["warp_quality"]),
+            row.get("detector_support", 0.0),
         )
         for row in decoded
     ]
