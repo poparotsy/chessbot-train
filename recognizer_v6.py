@@ -291,51 +291,50 @@ def warp_geometry_quality(metrics):
     return float(0.35 * area + 0.30 * opp + 0.25 * asp + 0.10 * (1.0 - angle_span))
 
 def detect_grid_lines(img):
-    gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
-    edges = cv2.Canny(gray, 30, 100, apertureSize=3)
-    lines = cv2.HoughLinesP(
-        edges,
-        1,
-        np.pi / 180,
-        threshold=50,
-        minLineLength=img.size[0] // 3,
-        maxLineGap=20,
-    )
-    if lines is None:
-        return None
-    h_lines = []
+    w, h = img.size
+    _, gray = _gray_rgb(img)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    norm = clahe.apply(gray)
+    gx = np.abs(cv2.Sobel(norm, cv2.CV_32F, 1, 0, ksize=3))
+    gy = np.abs(cv2.Sobel(norm, cv2.CV_32F, 0, 1, ksize=3))
+    col_signal = _normalize_signal(np.mean(gx, axis=0))
+    row_signal = _normalize_signal(np.mean(gy, axis=1))
+
+    col_smooth = _smooth_1d(col_signal, max(5, w // 64 * 2 + 1))
+    row_smooth = _smooth_1d(row_signal, max(5, h // 64 * 2 + 1))
+
+    def snap_to_peak(signal_1d, pos, max_shift):
+        p = min(int(round(pos)), len(signal_1d) - 1)
+        lo = max(0, p - max_shift)
+        hi = min(len(signal_1d), p + max_shift + 1)
+        if hi <= lo:
+            return pos
+        window_max = lo + int(np.argmax(signal_1d[lo:hi]))
+        if signal_1d[window_max] > signal_1d[p] * 1.05 + 0.05:
+            return float(window_max)
+        return float(p)
+
+    x_step = w / 8.0
+    y_step = h / 8.0
+    max_shift_x = max(1, int(round(x_step * 0.18)))
+    max_shift_y = max(1, int(round(y_step * 0.18)))
+
     v_lines = []
-    for line in lines:
-        x1, y1, x2, y2 = line[0]
-        angle = np.abs(np.arctan2(y2 - y1, x2 - x1) * 180 / np.pi)
-        if angle < 15 or angle > 165:
-            h_lines.append((y1 + y2) // 2)
-        elif 75 < angle < 105:
-            v_lines.append((x1 + x2) // 2)
-    if not h_lines or not v_lines:
-        return None
-    def cluster_lines(values, threshold=10):
-        values = sorted(values)
-        clusters = []
-        current = [values[0]]
-        for value in values[1:]:
-            if value - current[-1] < threshold:
-                current.append(value)
-            else:
-                clusters.append(int(np.mean(current)))
-                current = [value]
-        clusters.append(int(np.mean(current)))
-        return clusters
-    h_lines = cluster_lines(h_lines)
-    v_lines = cluster_lines(v_lines)
-    if 7 <= len(h_lines) <= 11 and 7 <= len(v_lines) <= 11:
-        if len(h_lines) > 9:
-            h_lines = h_lines[:9]
-        if len(v_lines) > 9:
-            v_lines = v_lines[:9]
-        if len(h_lines) == 9 and len(v_lines) == 9:
-            return v_lines, h_lines
-    return None
+    for i in range(9):
+        snapped = snap_to_peak(col_smooth, i * x_step, max_shift_x)
+        v_lines.append(int(round(snapped)))
+
+    h_lines = []
+    for i in range(9):
+        snapped = snap_to_peak(row_smooth, i * y_step, max_shift_y)
+        h_lines.append(int(round(snapped)))
+
+    v_lines[0] = 0
+    v_lines[-1] = w
+    h_lines[0] = 0
+    h_lines[-1] = h
+
+    return v_lines, h_lines
 
 def _labels_to_fen(labels):
     rows = []
@@ -1181,6 +1180,7 @@ def _search_axis_grid(signal):
     high_step = min(int(round(n * 0.18)), n // 2)
     best = None
     radius = max(1.0, n / 256.0)
+
     for step in range(low_step, max(low_step + 1, high_step + 1)):
         max_start = n - 1 - (8 * step)
         if max_start < 0:
