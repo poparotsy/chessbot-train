@@ -619,6 +619,14 @@ def orientation_partial_label_scores(label_details):
             scores["black"] += right_conf * ORIENTATION_BEST_EFFORT_LABEL_SIDE_WEIGHT
     return scores
 
+
+def _is_trustworthy_partial_label(label_info):
+    if label_info is None:
+        return False
+    aspect = float(label_info.get("aspect", 99.0))
+    confidence = float(label_info.get("confidence", 0.0))
+    return bool(aspect <= 0.45 and confidence >= 0.58)
+
 def score_orientation_best_effort(fen, orientation_context):
     scores = dict(orientation_context.get("partial_label_scores") or {"white": 0.0, "black": 0.0})
     piece_margin = orientation_piece_margin(fen)
@@ -688,6 +696,19 @@ def resolve_candidate_orientation(fen, board_perspective, orientation_context):
     elif float(partial_scores.get("black", 0.0)) > float(partial_scores.get("white", 0.0)):
         partial_label_guess = "black"
     piece_guess = infer_board_perspective_from_piece_distribution(fen, threshold=0.0)
+    trusted_partial_label = (
+        _is_trustworthy_partial_label(left_label)
+        or _is_trustworthy_partial_label(right_label)
+    )
+    if (
+        has_partial_labels
+        and trusted_partial_label
+        and piece_margin >= ORIENTATION_BEST_EFFORT_MIN_PIECE_MARGIN
+        and partial_label_guess in {"white", "black"}
+        and piece_guess in {"white", "black"}
+        and partial_label_guess == piece_guess
+    ):
+        return partial_label_guess, "partial_label_piece_agreement"
     if (
         has_partial_labels
         and piece_margin >= ORIENTATION_BEST_EFFORT_MIN_PIECE_MARGIN
@@ -907,9 +928,10 @@ def _should_try_inner_crop_rescue(img, board_fen):
         return False
     return king_health(board_fen) < 2
 
-def _decode_best_candidate(img, model, device, board_perspective):
+def _decode_best_candidate(img, model, device, board_perspective, orientation_context=None):
     candidates = build_detector_candidates(img)
-    orientation_context = collect_orientation_context(candidates, board_perspective=board_perspective)
+    if orientation_context is None:
+        orientation_context = collect_orientation_context(candidates, board_perspective=board_perspective)
     best = decode_candidate(
         candidates[0],
         model=model,
@@ -976,20 +998,21 @@ def _iter_square_grid_box_rescue_crops(img):
             yield crop.resize(img.size, Image.LANCZOS)
 
 
-def _decode_direct_rescue_crop(crop, model, device, board_perspective):
+def _decode_direct_rescue_crop(crop, model, device, board_perspective, orientation_context=None):
     fen, conf, piece_count = infer_fen_on_image_clean(
         crop,
         model,
         device,
         USE_SQUARE_DETECTION,
     )
-    orientation_context = {
-        "label_perspective_result": None,
-        "label_details": {},
-        "labels_absent": True,
-        "labels_same": False,
-        "partial_label_scores": {"white": 0.0, "black": 0.0},
-    }
+    if orientation_context is None:
+        orientation_context = {
+            "label_perspective_result": None,
+            "label_details": {},
+            "labels_absent": True,
+            "labels_same": False,
+            "partial_label_scores": {"white": 0.0, "black": 0.0},
+        }
     detected_perspective, perspective_source = resolve_candidate_orientation(
         fen,
         board_perspective=board_perspective,
@@ -1011,7 +1034,7 @@ def _decode_direct_rescue_crop(crop, model, device, board_perspective):
     )
 
 
-def _try_inner_crop_rescue(img, model, device, board_perspective):
+def _try_inner_crop_rescue(img, model, device, board_perspective, orientation_context=None):
     width, height = img.size
     best_rescue = None
     for crop in _iter_square_grid_box_rescue_crops(img) or ():
@@ -1021,6 +1044,7 @@ def _try_inner_crop_rescue(img, model, device, board_perspective):
                 model=model,
                 device=device,
                 board_perspective=board_perspective,
+                orientation_context=orientation_context,
             )
         except Exception:
             continue
@@ -1042,6 +1066,7 @@ def _try_inner_crop_rescue(img, model, device, board_perspective):
                 model=model,
                 device=device,
                 board_perspective=board_perspective,
+                orientation_context=orientation_context,
             )
         except Exception:
             continue
@@ -1762,14 +1787,20 @@ def predict_chess_position(image_path, model_path=None, board_perspective="auto"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model(model_path=model_path, device=device)
     img = Image.open(image_path).convert("RGB")
-    best, _, _ = _decode_best_candidate(
+    best, _, orientation_context = _decode_best_candidate(
         img,
         model=model,
         device=device,
         board_perspective=board_perspective,
     )
     if _should_try_inner_crop_rescue(img, best[2]):
-        rescued = _try_inner_crop_rescue(img, model, device, board_perspective)
+        rescued = _try_inner_crop_rescue(
+            img,
+            model,
+            device,
+            board_perspective,
+            orientation_context=orientation_context,
+        )
         if rescued is not None:
             best = rescued
     if side_to_move_override is not None:

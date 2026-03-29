@@ -191,6 +191,52 @@ class TestOrientationHelpers(unittest.TestCase):
         self.assertEqual(perspective, "white")
         self.assertEqual(source, "default")
 
+    def test_resolve_candidate_orientation_partial_label_agreement_requires_slender_label(self):
+        raw_fen = "1KR1QR2/PPP3PP/3PBN2/B7/4pP2/p1nbbp2/1pp4p/1k1rq2r"
+        context = {
+            "label_perspective_result": None,
+            "label_details": {
+                "left": {"label": "h", "confidence": 0.699, "aspect": 0.6875},
+                "right": None,
+            },
+            "labels_absent": False,
+            "labels_same": False,
+            "partial_label_scores": {"white": 0.0, "black": 0.6640865384615385},
+        }
+        perspective, source = v6.resolve_candidate_orientation(
+            raw_fen,
+            board_perspective="auto",
+            orientation_context=context,
+        )
+        self.assertEqual(perspective, "white")
+        self.assertEqual(source, "default")
+
+    def test_decode_direct_rescue_crop_reuses_passed_orientation_context(self):
+        base_img = Image.new("RGB", (512, 512), (120, 120, 120))
+        context = {
+            "label_perspective_result": None,
+            "label_details": {
+                "left": {"label": "h", "confidence": 0.6167, "aspect": 0.2},
+                "right": None,
+            },
+            "labels_absent": False,
+            "labels_same": False,
+            "partial_label_scores": {"white": 0.0, "black": 0.5858},
+        }
+        with (
+            patch.object(v6, "infer_fen_on_image_clean", return_value=("1KR1QR2/PPP3PP/3PBN2/B7/4pP2/p1nbbp2/1pp4p/1k1rq2r", 0.9, 26)),
+            patch.object(v6, "resolve_candidate_orientation", wraps=v6.resolve_candidate_orientation),
+        ):
+            decoded = v6._decode_direct_rescue_crop(
+                base_img,
+                model=object(),
+                device=torch.device("cpu"),
+                board_perspective="auto",
+                orientation_context=context,
+            )
+        self.assertEqual(decoded[5], "black")
+        self.assertEqual(decoded[6], "partial_label_piece_agreement")
+
 
 class TestDecodeHelpers(unittest.TestCase):
     def test_decode_candidate_applies_orientation_to_full_candidate(self):
