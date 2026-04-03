@@ -24,50 +24,55 @@
       "original_filename": "enpassant.png",
       "truth_fen": "8/3k1q2/3p4/4pP2/3K1Q2/8/4B3/8 w - e6 0 1",
       "note": "Recognizer must preserve the unique en-passant square."
-    }
-  ],
-  "pending_cases": [
+    },
     {
       "blocker_id": "real-blocker-0004",
       "source_path": "temp/simple2.jpeg",
       "managed_path": "scripts/testdata/temp_blockers/real-blocker-0004.jpeg",
       "original_filename": "simple2.jpeg",
-      "note": "Real blocker pending truth capture."
+      "truth_fen": "1KR1QR2/PPP3PP/3PBN2/B7/4pP2/p1nbbp2/1pp4p/1k1rq2r w - - 0 1",
+      "note": "Locked from verified real blocker image."
     },
     {
       "blocker_id": "real-blocker-0005",
       "source_path": "temp/simple3.jpeg",
       "managed_path": "scripts/testdata/temp_blockers/real-blocker-0005.jpeg",
       "original_filename": "simple3.jpeg",
-      "note": "Real blocker pending truth capture."
+      "truth_fen": "1k5r/1r1B2p1/1PQ3p1/4pp2/R7/3q3P/5PP1/6K1 w - - 0 1",
+      "note": "Locked from verified real blocker image."
     },
     {
       "blocker_id": "real-blocker-0006",
       "source_path": "temp/simple4.jpeg",
       "managed_path": "scripts/testdata/temp_blockers/real-blocker-0006.jpeg",
       "original_filename": "simple4.jpeg",
-      "note": "Real blocker pending truth capture."
+      "truth_fen": "3r1rk1/p4ppp/1p3n2/2pp3q/1PP3b1/P2BP3/2QN1PPP/R4RK1 w - - 0 1",
+      "note": "Locked from verified real blocker image."
     },
     {
       "blocker_id": "real-blocker-0007",
       "source_path": "temp/simple7.jpeg",
       "managed_path": "scripts/testdata/temp_blockers/real-blocker-0007.jpeg",
       "original_filename": "simple7.jpeg",
-      "note": "Real blocker pending truth capture."
+      "truth_fen": "r1b3nr/ppqk1Bbp/2pp4/4P1B1/3n4/3P4/PPP2QPP/R4RK1 w - - 0 1",
+      "note": "Locked from verified real blocker image."
     },
     {
       "blocker_id": "real-blocker-0008",
       "source_path": "temp/simple9.jpeg",
       "managed_path": "scripts/testdata/temp_blockers/real-blocker-0008.jpeg",
       "original_filename": "simple9.jpeg",
-      "note": "Real blocker pending truth capture."
+      "truth_fen": "r1bq1r2/ppp2pkp/3p2nQ/2bN2N1/2B1P3/8/PPp3PP/R1B2R1K b - - 0 1",
+      "note": "Locked from verified real blocker image."
     },
     {
       "blocker_id": "real-blocker-0009",
       "source_path": "temp/simple19.jpeg",
       "managed_path": "scripts/testdata/temp_blockers/real-blocker-0009.jpeg",
       "original_filename": "simple19.jpeg",
-      "note": "Real blocker pending truth capture."
+      "truth_fen": "2R2bk1/5pp1/4pN1p/r2n4/p1R5/P2B1P1P/1rP3PK/8 b - - 0 1",
+      "note": "Locked from verified real blocker image."
     }
-  ]
+  ],
+  "pending_cases": []
 }
