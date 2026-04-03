@@ -17,6 +17,8 @@ Training, evaluation, and recognizer source-of-truth repo.
   - local source checkpoints
 - [`scripts`](/Users/guru/workspace/current/chessbot/chessbot-train/scripts)
   - evaluation, diagnostics, exports, utilities
+- [`docs/TEMP_BLOCKER_WORKFLOW.md`](/Users/guru/workspace/current/chessbot/chessbot-train/docs/TEMP_BLOCKER_WORKFLOW.md)
+  - temp inbox, blocker truth, and temp-canary gate workflow
 - [`archive/recognizer_legacy`](/Users/guru/workspace/current/chessbot/chessbot-train/archive/recognizer_legacy)
   - legacy recognizer variants and archived helper files
 - [`images_4_test`](/Users/guru/workspace/current/chessbot/chessbot-train/images_4_test)
