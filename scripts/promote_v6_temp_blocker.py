@@ -6,11 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import shutil
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 TRAIN_DIR = SCRIPT_DIR.parent
 DEFAULT_MANIFEST = TRAIN_DIR / "scripts" / "testdata" / "v6_temp_canaries.json"
+DEFAULT_MANAGED_DIR = TRAIN_DIR / "scripts" / "testdata" / "temp_blockers"
 
 
 def parse_args() -> argparse.Namespace:
@@ -21,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--status", choices=["locked", "pending"], default="pending")
     parser.add_argument("--blocker-id", default=None, help="Optional explicit blocker ID.")
     parser.add_argument("--manifest-json", default=str(DEFAULT_MANIFEST))
+    parser.add_argument("--managed-dir", default=str(DEFAULT_MANAGED_DIR))
     return parser.parse_args()
 
 
@@ -58,6 +61,7 @@ def _next_blocker_id(manifest: dict) -> str:
 def main() -> int:
     args = parse_args()
     manifest_path = Path(args.manifest_json)
+    managed_dir = Path(args.managed_dir)
     manifest = _load_manifest(manifest_path)
     source_path = str(args.source_path)
     image_path = TRAIN_DIR / source_path
@@ -69,10 +73,17 @@ def main() -> int:
     blocker_id = args.blocker_id or _next_blocker_id(manifest)
     locked_cases = [row for row in manifest.get("locked_cases", []) if row.get("source_path") != source_path and row.get("blocker_id") != blocker_id]
     pending_cases = [row for row in manifest.get("pending_cases", []) if row.get("source_path") != source_path and row.get("blocker_id") != blocker_id]
+    managed_dir.mkdir(parents=True, exist_ok=True)
+    suffix = image_path.suffix.lower() or ".png"
+    managed_path = managed_dir / f"{blocker_id}{suffix}"
+    shutil.copy2(image_path, managed_path)
+    rel_managed_path = managed_path.relative_to(TRAIN_DIR).as_posix()
 
     entry = {
         "blocker_id": blocker_id,
         "source_path": source_path,
+        "managed_path": rel_managed_path,
+        "original_filename": image_path.name,
         "note": args.note,
     }
     if args.status == "locked":

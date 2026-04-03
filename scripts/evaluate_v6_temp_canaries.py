@@ -57,6 +57,7 @@ def _normalize_locked_cases(raw_cases: list[dict]) -> list[dict]:
             {
                 "blocker_id": blocker_id,
                 "source_path": str(row["source_path"]),
+                "managed_path": str(row.get("managed_path", row["source_path"])),
                 "truth_fen": str(row["truth_fen"]),
                 "note": str(row.get("note", "")),
             }
@@ -76,6 +77,7 @@ def _normalize_pending_cases(raw_cases: list[dict]) -> list[dict]:
             {
                 "blocker_id": blocker_id,
                 "source_path": str(row["source_path"]),
+                "managed_path": str(row.get("managed_path", row["source_path"])),
                 "note": str(row.get("note", "")),
             }
         )
@@ -93,7 +95,7 @@ def main() -> int:
     total_conf = 0.0
     count_conf = 0
     for idx, row in enumerate(locked_cases, start=1):
-        image_path = TRAIN_DIR / row["source_path"]
+        image_path = TRAIN_DIR / row["managed_path"]
         payload, elapsed = eval_v6.run_recognizer_once(
             image_path=image_path,
             model_path=args.model_path,
@@ -105,9 +107,10 @@ def main() -> int:
         )
         result = {
             "blocker_id": row["blocker_id"],
-            "source_path": row["source_path"],
-            "truth_fen": row["truth_fen"],
-            "note": row["note"],
+                "source_path": row["source_path"],
+                "managed_path": row["managed_path"],
+                "truth_fen": row["truth_fen"],
+                "note": row["note"],
             "elapsed_sec": round(float(elapsed), 4),
             "success": bool(payload.get("success", False)),
         }
@@ -161,7 +164,7 @@ def main() -> int:
 
     pending_results = []
     for row in pending_cases:
-        image_path = TRAIN_DIR / row["source_path"]
+        image_path = TRAIN_DIR / row["managed_path"]
         payload, elapsed = eval_v6.run_recognizer_once(
             image_path=image_path,
             model_path=args.model_path,
@@ -175,6 +178,7 @@ def main() -> int:
             {
                 "blocker_id": row["blocker_id"],
                 "source_path": row["source_path"],
+                "managed_path": row["managed_path"],
                 "note": row["note"],
                 "elapsed_sec": round(float(elapsed), 4),
                 "success": bool(payload.get("success", False)),

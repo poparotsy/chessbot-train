@@ -8,6 +8,7 @@ This workflow exists so a random dropped image does not stay a random file forev
 Each blocker must end up with:
 
 - a stable blocker ID
+- a stable managed image path
 - a real `truth_fen`
 - a gate result in the temp blocker evaluator
 
@@ -17,6 +18,8 @@ Each blocker must end up with:
   - `/Users/guru/workspace/current/chessbot/chessbot-train/temp`
 - canonical manifest:
   - `/Users/guru/workspace/current/chessbot/chessbot-train/scripts/testdata/v6_temp_canaries.json`
+- managed blocker images:
+  - `/Users/guru/workspace/current/chessbot/chessbot-train/scripts/testdata/temp_blockers`
 - evaluator:
   - `/Users/guru/workspace/current/chessbot/chessbot-train/scripts/evaluate_v6_temp_canaries.py`
 - intake/promote tool:
@@ -34,6 +37,7 @@ python3 scripts/promote_v6_temp_blocker.py --source-path temp/<file> --status pe
 ```
 
 This assigns or preserves a stable blocker ID and records the inbox file in the manifest.
+It also copies the image into the managed blocker store using a stable filename based on blocker ID.
 
 3. Verify the real board position from the image itself.
 
@@ -60,6 +64,7 @@ python3 scripts/evaluate_v6_temp_canaries.py --script recognizer_v6.py
   - the blocker is a required gate case
 - `pending`
   - the image is tracked
+  - a managed blocker copy exists
   - current recognizer output is reported
   - it is not yet a truth-enforced gate case
 

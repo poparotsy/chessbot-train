@@ -61,6 +61,8 @@ class TestDomainSuiteData(unittest.TestCase):
                 self.assertNotIn(blocker_id, ids)
                 ids.add(blocker_id)
                 self.assertTrue((TRAIN_DIR / row["source_path"]).exists())
+                self.assertTrue((TRAIN_DIR / row["managed_path"]).exists())
+                self.assertTrue(row["original_filename"])
 
         for row in manifest["locked_cases"]:
             self.assertTrue(row["truth_fen"])
