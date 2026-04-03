@@ -1,0 +1,55 @@
+{
+  "note": "Canonical temp blocker manifest. temp/ is the inbox, blocker_id is the stable identity, and locked cases must stay green before merge.",
+  "locked_cases": [
+    {
+      "blocker_id": "real-blocker-0001",
+      "source_path": "temp/simple.png",
+      "truth_fen": "5k2/1Q2p3/3p4/8/6q1/6p1/8/6K1 w - - 0 1",
+      "note": "Square framed board with margin/border rescue."
+    },
+    {
+      "blocker_id": "real-blocker-0002",
+      "source_path": "temp/simple.jpeg",
+      "truth_fen": "r1b2r1k/4bpp1/p1qppn2/8/1p2P2P/2NBBP2/PPPQ4/2K3RR w - - 0 1",
+      "note": "Clean square board canary for dark framed screenshot handling."
+    },
+    {
+      "blocker_id": "real-blocker-0003",
+      "source_path": "temp/enpassant.png",
+      "truth_fen": "8/3k1q2/3p4/4pP2/3K1Q2/8/4B3/8 w - e6 0 1",
+      "note": "Recognizer must preserve the unique en-passant square."
+    }
+  ],
+  "pending_cases": [
+    {
+      "blocker_id": "real-blocker-0004",
+      "source_path": "temp/simple2.jpeg",
+      "note": "Real blocker pending truth capture."
+    },
+    {
+      "blocker_id": "real-blocker-0005",
+      "source_path": "temp/simple3.jpeg",
+      "note": "Real blocker pending truth capture."
+    },
+    {
+      "blocker_id": "real-blocker-0006",
+      "source_path": "temp/simple4.jpeg",
+      "note": "Real blocker pending truth capture."
+    },
+    {
+      "blocker_id": "real-blocker-0007",
+      "source_path": "temp/simple7.jpeg",
+      "note": "Real blocker pending truth capture."
+    },
+    {
+      "blocker_id": "real-blocker-0008",
+      "source_path": "temp/simple9.jpeg",
+      "note": "Real blocker pending truth capture."
+    },
+    {
+      "blocker_id": "real-blocker-0009",
+      "source_path": "temp/simple19.jpeg",
+      "note": "Real blocker pending truth capture."
+    }
+  ]
+}

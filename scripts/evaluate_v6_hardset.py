@@ -73,7 +73,7 @@ def load_truth(path: Path) -> Dict[str, str]:
     return data
 
 
-def _recognizer_worker(image_path, model_path, board_perspective, debug, script_path, queue):
+def _recognizer_worker(image_path, model_path, board_perspective, debug, script_path, preserve_full_fen, queue):
     try:
         rec = _load_recognizer_module(script_path)
         rec.DEBUG_MODE = bool(debug)
@@ -86,6 +86,7 @@ def _recognizer_worker(image_path, model_path, board_perspective, debug, script_
                 board_perspective=board_perspective,
             )
             board_fen = result["board_fen"]
+            predicted_full_fen = str(result.get("fen") or "")
             conf = float(result["confidence"])
             side_to_move = result["side_to_move"]
             side_source = result["side_to_move_source"]
@@ -103,7 +104,7 @@ def _recognizer_worker(image_path, model_path, board_perspective, debug, script_
         queue.put(
             {
                 "success": True,
-                "fen": f"{board_fen} {side_to_move} - - 0 1",
+                "fen": predicted_full_fen if preserve_full_fen and predicted_full_fen else f"{board_fen} {side_to_move} - - 0 1",
                 "confidence": float(conf),
                 "side_to_move": side_to_move,
                 "side_to_move_source": side_source,
@@ -126,13 +127,14 @@ def run_recognizer_once(
     timeout_sec: float,
     debug: bool,
     script_path: str = str(RECOGNIZER_SCRIPT),
+    preserve_full_fen: bool = False,
 ) -> Tuple[dict, float]:
     start = time.perf_counter()
     ctx = mp.get_context("spawn")
     queue = ctx.Queue(maxsize=1)
     proc = ctx.Process(
         target=_recognizer_worker,
-        args=(str(image_path), model_path, board_perspective, bool(debug), str(script_path), queue),
+        args=(str(image_path), model_path, board_perspective, bool(debug), str(script_path), bool(preserve_full_fen), queue),
     )
     proc.daemon = True
     proc.start()

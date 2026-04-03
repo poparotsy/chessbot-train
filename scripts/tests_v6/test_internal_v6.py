@@ -47,6 +47,24 @@ class TestDomainSuiteData(unittest.TestCase):
             for name in names:
                 self.assertIn(name, truth)
 
+    def test_temp_blocker_manifest_is_well_formed(self):
+        manifest_path = SCRIPTS_DIR / "testdata" / "v6_temp_canaries.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertIn("locked_cases", manifest)
+        self.assertIn("pending_cases", manifest)
+
+        ids = set()
+        for bucket in ("locked_cases", "pending_cases"):
+            self.assertTrue(isinstance(manifest[bucket], list))
+            for row in manifest[bucket]:
+                blocker_id = row["blocker_id"]
+                self.assertNotIn(blocker_id, ids)
+                ids.add(blocker_id)
+                self.assertTrue((TRAIN_DIR / row["source_path"]).exists())
+
+        for row in manifest["locked_cases"]:
+            self.assertTrue(row["truth_fen"])
+
 
 class TestSideToMoveAliases(unittest.TestCase):
     def test_side_to_move_aliases(self):
