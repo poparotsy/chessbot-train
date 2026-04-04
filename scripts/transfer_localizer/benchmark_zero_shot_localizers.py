@@ -13,6 +13,7 @@ import shutil
 import sys
 import tempfile
 import time
+import warnings
 from pathlib import Path
 
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
@@ -43,6 +44,11 @@ DEFAULT_MODELS = [
 ]
 
 disable_progress_bars()
+warnings.filterwarnings(
+    "ignore",
+    message=r".*Use `text_labels` instead to retrieve string object names.*",
+    category=FutureWarning,
+)
 
 
 def _log(message: str, quiet: bool = False, prefix: str | None = None) -> None:
@@ -486,10 +492,11 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
     _log(f"report_json={reports_dir / f'{run_name}.json'}", args.quiet, log_prefix)
     _log(f"quick_pass={report['quick_pass_count']}/{quick_count}", args.quiet, log_prefix)
     _log(f"quick_retire={str(report['quick_retire']).lower()}", args.quiet, log_prefix)
-    _log(f"synthetic_box_iou_mean={report['synthetic_box_iou_mean']:.4f}", args.quiet, log_prefix)
-    _log(f"synthetic_oracle_warp_rate={report['synthetic_oracle_warp_success_rate']:.4f}", args.quiet, log_prefix)
-    _log(f"blocker_pass={report['blocker_pass_count']}", args.quiet, log_prefix)
-    _log(f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f}", args.quiet, log_prefix)
+    if not args.quick_only:
+        _log(f"synthetic_box_iou_mean={report['synthetic_box_iou_mean']:.4f}", args.quiet, log_prefix)
+        _log(f"synthetic_oracle_warp_rate={report['synthetic_oracle_warp_success_rate']:.4f}", args.quiet, log_prefix)
+        _log(f"blocker_pass={report['blocker_pass_count']}", args.quiet, log_prefix)
+        _log(f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f}", args.quiet, log_prefix)
     _log(f"median_sec={report['median_inference_seconds']:.4f}", args.quiet, log_prefix)
     return report
 
