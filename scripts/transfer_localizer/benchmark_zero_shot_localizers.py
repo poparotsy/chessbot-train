@@ -31,9 +31,12 @@ DEFAULT_MODELS = [
 ]
 
 
-def _log(message: str, quiet: bool = False) -> None:
+def _log(message: str, quiet: bool = False, prefix: str | None = None) -> None:
     if not quiet:
-        print(message, flush=True)
+        if prefix:
+            print(f"[{prefix}] {message}", flush=True)
+        else:
+            print(message, flush=True)
 
 
 def parse_args() -> argparse.Namespace:
@@ -132,8 +135,9 @@ def _detect_boxes(image: Image.Image, model_id: str, processor, model, device: s
         target_sizes=[image.size[::-1]],
     )[0]
     elapsed = time.perf_counter() - start
+    label_values = results.get("text_labels", results.get("labels", []))
     rows = []
-    for box, score, label in zip(results["boxes"], results["scores"], results["labels"]):
+    for box, score, label in zip(results["boxes"], results["scores"], label_values):
         if isinstance(label, list):
             label = ", ".join(label)
         rows.append(
@@ -177,12 +181,13 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
     reports_dir = ensure_dir(Path(args.reports_dir))
     viz_dir = ensure_dir(Path(args.viz_dir) / run_name)
     rows = _load_rows(data_root / "manifests" / "all.jsonl")
-    _log("=== ZERO-SHOT LOCALIZER BENCHMARK ===", args.quiet)
-    _log(f"run_name={run_name}", args.quiet)
-    _log(f"model_id={model_id}", args.quiet)
-    _log(f"device={args.device}", args.quiet)
+    log_prefix = run_name
+    _log("=== ZERO-SHOT LOCALIZER BENCHMARK ===", args.quiet, log_prefix)
+    _log(f"run_name={run_name}", args.quiet, log_prefix)
+    _log(f"model_id={model_id}", args.quiet, log_prefix)
+    _log(f"device={args.device}", args.quiet, log_prefix)
     processor, model = _load_model_and_processor(model_id, args.device)
-    _log(f"images={len(rows)}", args.quiet)
+    _log(f"images={len(rows)}", args.quiet, log_prefix)
 
     inference_times = []
     detection_count = 0
@@ -210,7 +215,7 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
         if best is None:
             failed_ids.append(row["id"])
             results.append({"id": row["id"], "success": False, "error": "no_detections"})
-            _log(f"[{idx:03d}/{len(rows)}] {row['id']} NO_DETECTIONS", args.quiet)
+            _log(f"[{idx:03d}/{len(rows)}] {row['id']} NO_DETECTIONS", args.quiet, log_prefix)
             continue
 
         pred_box = [float(v) for v in best["box"]]
@@ -262,6 +267,7 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
                 f"[{idx:03d}/{len(rows)}] {row['id']} blocker_{status.lower()} "
                 f"score={record['score']:.4f}",
                 args.quiet,
+                log_prefix,
             )
         elif idx == 1 or idx % 10 == 0 or idx == len(rows):
             status = "OK" if refine.get("success") else "FAIL"
@@ -269,6 +275,7 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
                 f"[{idx:03d}/{len(rows)}] {row['id']} synthetic_{status.lower()} "
                 f"score={record['score']:.4f}",
                 args.quiet,
+                log_prefix,
             )
 
     synthetic_count = sum(1 for row in rows if row["source_type"] == "synthetic")
@@ -289,11 +296,11 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
         "results": results,
     }
     write_json(reports_dir / f"{run_name}.json", report)
-    _log("=== RUN COMPLETE ===", args.quiet)
-    _log(f"report_json={reports_dir / f'{run_name}.json'}", args.quiet)
-    _log(f"blocker_pass={report['blocker_pass_count']}", args.quiet)
-    _log(f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f}", args.quiet)
-    _log(f"median_sec={report['median_inference_seconds']:.4f}", args.quiet)
+    _log("=== RUN COMPLETE ===", args.quiet, log_prefix)
+    _log(f"report_json={reports_dir / f'{run_name}.json'}", args.quiet, log_prefix)
+    _log(f"blocker_pass={report['blocker_pass_count']}", args.quiet, log_prefix)
+    _log(f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f}", args.quiet, log_prefix)
+    _log(f"median_sec={report['median_inference_seconds']:.4f}", args.quiet, log_prefix)
     return report
 
 
