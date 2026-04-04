@@ -17,6 +17,10 @@ DEFAULT_STRESS_DIR = TRAIN_DIR / "generated" / "v6_stress_suite"
 DEFAULT_BLOCKER_MANIFEST = TRAIN_DIR / "scripts" / "testdata" / "v6_temp_canaries.json"
 
 
+def _log(message: str) -> None:
+    print(message, flush=True)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Export Kaggle-ready eval payload for zero-shot localizer benchmarking.")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
@@ -35,7 +39,9 @@ def _ensure_stress_suite(stress_dir: Path) -> None:
     truth_path = stress_dir / "truth.json"
     images_dir = stress_dir / "images"
     if manifest_path.exists() and truth_path.exists() and images_dir.exists():
+        _log(f"stress_suite={stress_dir}")
         return
+    _log("=== BUILDING V6 STRESS SUITE ===")
     script_path = TRAIN_DIR / "scripts" / "generate_v6_stress_suite.py"
     cmd = [
         sys.executable,
@@ -48,11 +54,14 @@ def _ensure_stress_suite(stress_dir: Path) -> None:
         str(stress_dir),
     ]
     subprocess.run(cmd, check=True, cwd=str(TRAIN_DIR))
+    _log(f"stress_suite={stress_dir}")
 
 
 def main() -> int:
     args = parse_args()
     output_dir = Path(args.output_dir)
+    _log("=== EXPORTING LOCALIZER PAYLOAD ===")
+    _log(f"output_dir={output_dir}")
     images_dir = ensure_dir(output_dir / "images")
     manifests_dir = ensure_dir(output_dir / "manifests")
 
@@ -61,7 +70,9 @@ def main() -> int:
     stress_manifest = load_json(stress_dir / "manifest.json")
     stress_truth = load_json(stress_dir / "truth.json")
     synthetic_rows = []
-    for item in stress_manifest["items"]:
+    synthetic_items = stress_manifest["items"]
+    _log(f"synthetic_images={len(synthetic_items)}")
+    for idx, item in enumerate(synthetic_items, start=1):
         file_name = str(item["file"])
         src = stress_dir / "images" / file_name
         dst = images_dir / file_name
@@ -85,10 +96,14 @@ def main() -> int:
                 "original_filename": file_name,
             }
         )
+        if idx == 1 or idx % 20 == 0 or idx == len(synthetic_items):
+            _log(f"synthetic_progress={idx}/{len(synthetic_items)}")
 
     blocker_manifest = load_json(Path(args.blocker_manifest))
     blocker_rows = []
-    for item in blocker_manifest.get("locked_cases", []):
+    locked_cases = blocker_manifest.get("locked_cases", [])
+    _log(f"locked_blockers={len(locked_cases)}")
+    for idx, item in enumerate(locked_cases, start=1):
         src = TRAIN_DIR / item["managed_path"]
         suffix = src.suffix.lower()
         file_name = f"{item['blocker_id']}{suffix}"
@@ -109,8 +124,10 @@ def main() -> int:
                 "original_filename": str(item["original_filename"]),
             }
         )
+        _log(f"blocker_progress={idx}/{len(locked_cases)} {item['blocker_id']}")
 
     all_rows = synthetic_rows + blocker_rows
+    _log("=== WRITING MANIFESTS ===")
     write_jsonl(manifests_dir / "synthetic.jsonl", synthetic_rows)
     write_jsonl(manifests_dir / "real_blockers.jsonl", blocker_rows)
     write_jsonl(manifests_dir / "all.jsonl", all_rows)
@@ -124,10 +141,9 @@ def main() -> int:
         },
     )
 
-    print(f"output_dir={output_dir}")
-    print(f"synthetic_count={len(synthetic_rows)}")
-    print(f"real_blocker_count={len(blocker_rows)}")
-    print(f"all_manifest={manifests_dir / 'all.jsonl'}")
+    _log(f"synthetic_count={len(synthetic_rows)}")
+    _log(f"real_blocker_count={len(blocker_rows)}")
+    _log(f"all_manifest={manifests_dir / 'all.jsonl'}")
     return 0
 
 

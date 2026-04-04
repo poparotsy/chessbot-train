@@ -30,6 +30,11 @@ DEFAULT_MODELS = [
 ]
 
 
+def _log(message: str, quiet: bool = False) -> None:
+    if not quiet:
+        print(message, flush=True)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Benchmark zero-shot board localizers against the Kaggle payload.")
     parser.add_argument("--data-root", default=str(DEFAULT_DATA_ROOT))
@@ -43,6 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--text-threshold", type=float, default=0.15)
     parser.add_argument("--board-perspective", choices=["auto", "white", "black"], default="auto")
     parser.add_argument("--write-viz", action="store_true")
+    parser.add_argument("--quiet", action="store_true")
     return parser.parse_args()
 
 
@@ -169,7 +175,12 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
     reports_dir = ensure_dir(Path(args.reports_dir))
     viz_dir = ensure_dir(Path(args.viz_dir) / run_name)
     rows = _load_rows(data_root / "manifests" / "all.jsonl")
+    _log("=== ZERO-SHOT LOCALIZER BENCHMARK ===", args.quiet)
+    _log(f"run_name={run_name}", args.quiet)
+    _log(f"model_id={model_id}", args.quiet)
+    _log(f"device={args.device}", args.quiet)
     processor, model = _load_model_and_processor(model_id, args.device)
+    _log(f"images={len(rows)}", args.quiet)
 
     inference_times = []
     detection_count = 0
@@ -178,7 +189,7 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
     failed_ids = []
     results = []
 
-    for row in rows:
+    for idx, row in enumerate(rows, start=1):
         image_path = data_root / row["image_path"]
         image = Image.open(image_path).convert("RGB")
         detections = _detect_boxes(
@@ -197,6 +208,7 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
         if best is None:
             failed_ids.append(row["id"])
             results.append({"id": row["id"], "success": False, "error": "no_detections"})
+            _log(f"[{idx:03d}/{len(rows)}] {row['id']} NO_DETECTIONS", args.quiet)
             continue
 
         pred_box = [float(v) for v in best["box"]]
@@ -242,6 +254,20 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
             )
 
         results.append(record)
+        if row["source_type"] == "real_blocker":
+            status = "PASS" if record.get("blocker_pass") else "FAIL"
+            _log(
+                f"[{idx:03d}/{len(rows)}] {row['id']} blocker_{status.lower()} "
+                f"score={record['score']:.4f}",
+                args.quiet,
+            )
+        elif idx == 1 or idx % 10 == 0 or idx == len(rows):
+            status = "OK" if refine.get("success") else "FAIL"
+            _log(
+                f"[{idx:03d}/{len(rows)}] {row['id']} synthetic_{status.lower()} "
+                f"score={record['score']:.4f}",
+                args.quiet,
+            )
 
     synthetic_count = sum(1 for row in rows if row["source_type"] == "synthetic")
     blocker_count = sum(1 for row in rows if row["source_type"] == "real_blocker")
@@ -261,6 +287,11 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
         "results": results,
     }
     write_json(reports_dir / f"{run_name}.json", report)
+    _log("=== RUN COMPLETE ===", args.quiet)
+    _log(f"report_json={reports_dir / f'{run_name}.json'}", args.quiet)
+    _log(f"blocker_pass={report['blocker_pass_count']}", args.quiet)
+    _log(f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f}", args.quiet)
+    _log(f"median_sec={report['median_inference_seconds']:.4f}", args.quiet)
     return report
 
 
@@ -292,10 +323,12 @@ def main() -> int:
         print(
             f"{run_name}: blocker_pass={report['blocker_pass_count']} "
             f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f} "
-            f"median_sec={report['median_inference_seconds']:.4f}"
+            f"median_sec={report['median_inference_seconds']:.4f}",
+            flush=True,
         )
 
     write_json(Path(args.reports_dir) / "summary.json", {"runs": summaries})
+    _log(f"summary_json={Path(args.reports_dir) / 'summary.json'}", args.quiet)
     return 0
 
 
