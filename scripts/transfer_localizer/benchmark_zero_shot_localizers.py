@@ -64,8 +64,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--text-threshold", type=float, default=0.15)
     parser.add_argument("--board-perspective", choices=["auto", "white", "black"], default="auto")
     parser.add_argument("--write-viz", action="store_true")
+    parser.add_argument("--write-crops", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--serial-models", action="store_true", help="Run models one after another even if multiple GPUs are available.")
+    parser.add_argument("--quick-only", action="store_true", help="Run only the quick images_4_test sanity set.")
+    parser.add_argument("--detector-only", action="store_true", help="Score raw detector boxes/crops only and skip recognizer refinement.")
     return parser.parse_args()
 
 
@@ -219,7 +222,7 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
     reports_dir = ensure_dir(Path(args.reports_dir))
     viz_dir = ensure_dir(Path(args.viz_dir) / run_name)
     quick_rows = _load_quick_rows(Path(args.quick_images_dir), Path(args.quick_suite_json))
-    rows = quick_rows + _load_rows(data_root / "manifests" / "all.jsonl")
+    rows = quick_rows if args.quick_only else quick_rows + _load_rows(data_root / "manifests" / "all.jsonl")
     log_prefix = run_name
     _log("=== ZERO-SHOT LOCALIZER BENCHMARK ===", args.quiet, log_prefix)
     _log(f"run_name={run_name}", args.quiet, log_prefix)
@@ -272,7 +275,7 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
         if not bool(best.get("accepted", False)):
             rejected_detection_count += 1
         crop_box, _ = square_crop_from_bbox(pred_box, image.width, image.height, pad_ratio=0.12)
-        refine = _run_deterministic_refinement(image_path, crop_box, args.board_perspective)
+        refine = {"success": False, "skipped": True} if args.detector_only else _run_deterministic_refinement(image_path, crop_box, args.board_perspective)
         truth_box = _truth_box_for_row(row)
         box_iou = None
         oracle_refine = None
@@ -297,13 +300,21 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
             "label": best["label"],
             "accepted": bool(best.get("accepted", False)),
             "refine_success": bool(refine.get("success", False)),
+            "detector_only": bool(args.detector_only),
         }
 
         if row["source_type"] == "synthetic":
-            if refine.get("success"):
+            if not args.detector_only and refine.get("success"):
                 synthetic_warp_success += 1
-            record["oracle_refine_success"] = bool(oracle_refine and oracle_refine.get("success", False))
-            if refine.get("success"):
+            record["oracle_refine_success"] = bool(oracle_refine and oracle_refine.get("success", False)) if not args.detector_only else None
+            if args.detector_only:
+                if box_iou is not None and box_iou >= 0.5:
+                    record["failure_stage"] = None
+                elif box_iou is not None:
+                    record["failure_stage"] = "bad_box"
+                else:
+                    record["failure_stage"] = "no_box_truth"
+            elif refine.get("success"):
                 record["failure_stage"] = None
             elif oracle_refine and oracle_refine.get("success", False):
                 record["failure_stage"] = "predicted_crop_downstream_fail"
@@ -315,7 +326,15 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
             if row["source_type"] == "real_blocker":
                 blocker_detected_count += 1
             record["truth_fen"] = row["truth_fen"]
-            if refine.get("success") and str(refine.get("fen") or "") == str(row["truth_fen"]):
+            if args.detector_only:
+                if row["source_type"] == "quick_suite":
+                    quick_pass += 1 if bool(best.get("accepted", False)) else 0
+                    record["quick_pass"] = bool(best.get("accepted", False))
+                else:
+                    blocker_pass += 1 if bool(best.get("accepted", False)) else 0
+                    record["blocker_pass"] = bool(best.get("accepted", False))
+                record["failure_stage"] = None if bool(best.get("accepted", False)) else "bad_box"
+            elif refine.get("success") and str(refine.get("fen") or "") == str(row["truth_fen"]):
                 if row["source_type"] == "quick_suite":
                     quick_pass += 1
                     record["quick_pass"] = True
@@ -332,7 +351,10 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
             if row["source_type"] == "quick_suite":
                 quick_detected_count += 1
 
-        if not refine.get("success", False):
+        if args.detector_only:
+            if not bool(best.get("accepted", False)):
+                failed_ids.append(row["id"])
+        elif not refine.get("success", False):
             failed_ids.append(row["id"])
             record["error"] = refine.get("error")
         elif row["source_type"] == "real_blocker" and not record["blocker_pass"]:
@@ -349,6 +371,9 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
                 crop_box=crop_box,
                 title=f"{run_name} {row['id']}",
             )
+        if args.write_crops:
+            crop_dir = ensure_dir(viz_dir / "crops")
+            image.crop(tuple(crop_box)).save(crop_dir / f"{row['id']}.png")
 
         results.append(record)
         if row["source_type"] == "quick_suite":
@@ -394,6 +419,7 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
         "quick_detected_count": quick_detected_count,
         "quick_detected_rate": (float(quick_detected_count) / float(quick_count)) if quick_count else 0.0,
         "quick_retire": bool(quick_count and quick_pass < quick_count),
+        "detector_only": bool(args.detector_only),
         "synthetic_box_iou_mean": mean_or_zero(synthetic_box_ious),
         "synthetic_box_iou_pass_count": synthetic_box_iou_pass_count,
         "synthetic_box_iou_pass_rate": (float(synthetic_box_iou_pass_count) / float(synthetic_count)) if synthetic_count else 0.0,
