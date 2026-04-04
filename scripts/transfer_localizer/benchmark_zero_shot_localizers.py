@@ -7,6 +7,7 @@ import argparse
 import importlib.util
 import json
 import os
+import signal
 import subprocess
 import shutil
 import sys
@@ -19,9 +20,11 @@ os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 os.environ.setdefault("TRANSFORMERS_NO_FLAX", "1")
 os.environ.setdefault("USE_TF", "0")
 os.environ.setdefault("USE_FLAX", "0")
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 
 import torch
 from PIL import Image
+from huggingface_hub.utils import disable_progress_bars
 from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor, Owlv2ForObjectDetection, Owlv2Processor
 
 from common import TRAIN_DIR, bbox_iou, choose_best_candidate, ensure_dir, mean_or_zero, median_or_zero, now_iso, overlay_boxes, square_crop_from_bbox, write_json
@@ -38,6 +41,8 @@ DEFAULT_MODELS = [
     "IDEA-Research/grounding-dino-tiny",
     "IDEA-Research/grounding-dino-base",
 ]
+
+disable_progress_bars()
 
 
 def _log(message: str, quiet: bool = False, prefix: str | None = None) -> None:
@@ -118,13 +123,16 @@ def _queries_for_model(model_id: str) -> list[str]:
     return ["a chessboard", "a chess board"]
 
 
-def _load_model_and_processor(model_id: str, device: str):
+def _load_model_and_processor(model_id: str, device: str, quiet: bool = False, prefix: str | None = None):
     model_id_l = model_id.lower()
+    _log("loading_processor", quiet, prefix)
     if "owlv2" in model_id_l:
         processor = Owlv2Processor.from_pretrained(model_id)
+        _log("loading_model", quiet, prefix)
         model = Owlv2ForObjectDetection.from_pretrained(model_id)
     else:
         processor = AutoProcessor.from_pretrained(model_id)
+        _log("loading_model", quiet, prefix)
         model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id)
     return processor, model.to(device)
 
@@ -260,7 +268,7 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
     _log(f"model_id={model_id}", args.quiet, log_prefix)
     _log(f"device={args.device}", args.quiet, log_prefix)
     try:
-        processor, model = _load_model_and_processor(model_id, args.device)
+        processor, model = _load_model_and_processor(model_id, args.device, args.quiet, log_prefix)
     except Exception as exc:
         report = _unsupported_model_report(model_id, run_name, str(exc))
         write_json(reports_dir / f"{run_name}.json", report)
@@ -497,6 +505,27 @@ def _supports_parallel_gpu_runs(args: argparse.Namespace, runs: list[tuple[str, 
     )
 
 
+def _terminate_pending_processes(pending: list[tuple[subprocess.Popen[str], int, str, str, Path]], quiet: bool) -> None:
+    for proc, _gpu_id, _model_id, run_name, _report_path in pending:
+        if proc.poll() is not None:
+            continue
+        _log(f"interrupting run_name={run_name}", quiet)
+        try:
+            proc.send_signal(signal.SIGINT)
+        except Exception:
+            pass
+    deadline = time.time() + 5.0
+    for proc, _gpu_id, _model_id, run_name, _report_path in pending:
+        if proc.poll() is not None:
+            continue
+        timeout = max(0.0, deadline - time.time())
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _log(f"killing run_name={run_name}", quiet)
+            proc.kill()
+
+
 def _launch_parallel_model_runs(args: argparse.Namespace, runs: list[tuple[str, str]]) -> list[dict]:
     reports_dir = ensure_dir(Path(args.reports_dir))
     available_gpu_ids = list(range(torch.cuda.device_count()))
@@ -506,75 +535,89 @@ def _launch_parallel_model_runs(args: argparse.Namespace, runs: list[tuple[str, 
 
     _log(f"parallel_gpu_slots={len(available_gpu_ids)}", args.quiet)
 
-    while queued or pending:
-        while available_gpu_ids and queued:
-            gpu_id = available_gpu_ids.pop(0)
-            model_id, run_name = queued.pop(0)
-            report_path = reports_dir / f"{run_name}.json"
-            cmd = [
-                sys.executable,
-                str(Path(__file__).resolve()),
-                "--data-root",
-                str(args.data_root),
-                "--reports-dir",
-                str(args.reports_dir),
-                "--viz-dir",
-                str(args.viz_dir),
-                "--model-id",
-                model_id,
-                "--run-name",
-                run_name,
-                "--device",
-                "cuda",
-                "--threshold",
-                str(args.threshold),
-                "--text-threshold",
-                str(args.text_threshold),
-                "--board-perspective",
-                str(args.board_perspective),
-            ]
-            if args.write_viz:
-                cmd.append("--write-viz")
-            if args.quiet:
-                cmd.append("--quiet")
+    try:
+        while queued or pending:
+            while available_gpu_ids and queued:
+                gpu_id = available_gpu_ids.pop(0)
+                model_id, run_name = queued.pop(0)
+                report_path = reports_dir / f"{run_name}.json"
+                cmd = [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "--data-root",
+                    str(args.data_root),
+                    "--reports-dir",
+                    str(args.reports_dir),
+                    "--viz-dir",
+                    str(args.viz_dir),
+                    "--quick-images-dir",
+                    str(args.quick_images_dir),
+                    "--quick-suite-json",
+                    str(args.quick_suite_json),
+                    "--model-id",
+                    model_id,
+                    "--run-name",
+                    run_name,
+                    "--device",
+                    "cuda",
+                    "--threshold",
+                    str(args.threshold),
+                    "--text-threshold",
+                    str(args.text_threshold),
+                    "--board-perspective",
+                    str(args.board_perspective),
+                ]
+                if args.write_viz:
+                    cmd.append("--write-viz")
+                if args.write_crops:
+                    cmd.append("--write-crops")
+                if args.quiet:
+                    cmd.append("--quiet")
+                if args.quick_only:
+                    cmd.append("--quick-only")
+                if args.detector_only:
+                    cmd.append("--detector-only")
 
-            env = os.environ.copy()
-            env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-            _log(f"launch run_name={run_name} gpu={gpu_id}", args.quiet)
-            proc = subprocess.Popen(cmd, cwd=str(TRAIN_DIR), env=env, text=True)
-            pending.append((proc, gpu_id, model_id, run_name, report_path))
+                env = os.environ.copy()
+                env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+                _log(f"launch run_name={run_name} gpu={gpu_id}", args.quiet)
+                proc = subprocess.Popen(cmd, cwd=str(TRAIN_DIR), env=env, text=True)
+                pending.append((proc, gpu_id, model_id, run_name, report_path))
 
-        still_pending: list[tuple[subprocess.Popen[str], int, str, str, Path]] = []
-        for proc, gpu_id, model_id, run_name, report_path in pending:
-            exit_code = proc.poll()
-            if exit_code is None:
-                still_pending.append((proc, gpu_id, model_id, run_name, report_path))
-                continue
-            available_gpu_ids.append(gpu_id)
-            available_gpu_ids.sort()
-            if exit_code != 0:
-                raise SystemExit(exit_code)
-            report = json.loads(report_path.read_text(encoding="utf-8"))
-            summaries.append(
-                {
-                    "run_name": run_name,
-                    "model_id": model_id,
-                    "status": report.get("status", "ok"),
-                    "blocker_pass_count": report["blocker_pass_count"],
-                    "synthetic_downstream_warp_success_rate": report["synthetic_downstream_warp_success_rate"],
-                    "median_inference_seconds": report["median_inference_seconds"],
-                    "report_json": str(report_path),
-                }
-            )
-            print(
-                f"{run_name}: status={report.get('status', 'ok')} blocker_pass={report['blocker_pass_count']} "
-                f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f} "
-                f"median_sec={report['median_inference_seconds']:.4f}",
-                flush=True,
-            )
-        pending = still_pending
-        if pending:
-            time.sleep(1.0)
+            still_pending: list[tuple[subprocess.Popen[str], int, str, str, Path]] = []
+            for proc, gpu_id, model_id, run_name, report_path in pending:
+                exit_code = proc.poll()
+                if exit_code is None:
+                    still_pending.append((proc, gpu_id, model_id, run_name, report_path))
+                    continue
+                available_gpu_ids.append(gpu_id)
+                available_gpu_ids.sort()
+                if exit_code != 0:
+                    raise SystemExit(exit_code)
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                summaries.append(
+                    {
+                        "run_name": run_name,
+                        "model_id": model_id,
+                        "status": report.get("status", "ok"),
+                        "blocker_pass_count": report["blocker_pass_count"],
+                        "synthetic_downstream_warp_success_rate": report["synthetic_downstream_warp_success_rate"],
+                        "median_inference_seconds": report["median_inference_seconds"],
+                        "report_json": str(report_path),
+                    }
+                )
+                print(
+                    f"{run_name}: status={report.get('status', 'ok')} blocker_pass={report['blocker_pass_count']} "
+                    f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f} "
+                    f"median_sec={report['median_inference_seconds']:.4f}",
+                    flush=True,
+                )
+            pending = still_pending
+            if pending:
+                time.sleep(1.0)
+    except KeyboardInterrupt:
+        _terminate_pending_processes(pending, args.quiet)
+        raise SystemExit(130)
 
     return summaries
 
@@ -591,29 +634,33 @@ def main() -> int:
             raise SystemExit("--model-id or --all-models is required")
         runs.append((args.model_id, args.run_name or args.model_id.split("/")[-1]))
 
-    if _supports_parallel_gpu_runs(args, runs):
-        summaries = _launch_parallel_model_runs(args, runs)
-    else:
-        summaries = []
-        for model_id, run_name in runs:
-            report = benchmark_model(args, model_id=model_id, run_name=run_name)
-            summaries.append(
-                {
-                    "run_name": run_name,
-                    "model_id": model_id,
-                    "status": report.get("status", "ok"),
-                    "blocker_pass_count": report["blocker_pass_count"],
-                    "synthetic_downstream_warp_success_rate": report["synthetic_downstream_warp_success_rate"],
-                    "median_inference_seconds": report["median_inference_seconds"],
-                    "report_json": str(Path(args.reports_dir) / f"{run_name}.json"),
-                }
-            )
-            print(
-                f"{run_name}: status={report.get('status', 'ok')} blocker_pass={report['blocker_pass_count']} "
-                f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f} "
-                f"median_sec={report['median_inference_seconds']:.4f}",
-                flush=True,
-            )
+    try:
+        if _supports_parallel_gpu_runs(args, runs):
+            summaries = _launch_parallel_model_runs(args, runs)
+        else:
+            summaries = []
+            for model_id, run_name in runs:
+                report = benchmark_model(args, model_id=model_id, run_name=run_name)
+                summaries.append(
+                    {
+                        "run_name": run_name,
+                        "model_id": model_id,
+                        "status": report.get("status", "ok"),
+                        "blocker_pass_count": report["blocker_pass_count"],
+                        "synthetic_downstream_warp_success_rate": report["synthetic_downstream_warp_success_rate"],
+                        "median_inference_seconds": report["median_inference_seconds"],
+                        "report_json": str(Path(args.reports_dir) / f"{run_name}.json"),
+                    }
+                )
+                print(
+                    f"{run_name}: status={report.get('status', 'ok')} blocker_pass={report['blocker_pass_count']} "
+                    f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f} "
+                    f"median_sec={report['median_inference_seconds']:.4f}",
+                    flush=True,
+                )
+    except KeyboardInterrupt:
+        _log("interrupted", args.quiet)
+        raise SystemExit(130)
 
     write_json(Path(args.reports_dir) / "summary.json", {"runs": summaries})
     _log(f"summary_json={Path(args.reports_dir) / 'summary.json'}", args.quiet)
