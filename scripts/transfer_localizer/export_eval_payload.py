@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from common import TRAIN_DIR, ensure_dir, load_json, now_iso, write_json, write_jsonl
@@ -28,6 +30,26 @@ def _copy_file(src: Path, dst: Path) -> None:
     shutil.copy2(src, dst)
 
 
+def _ensure_stress_suite(stress_dir: Path) -> None:
+    manifest_path = stress_dir / "manifest.json"
+    truth_path = stress_dir / "truth.json"
+    images_dir = stress_dir / "images"
+    if manifest_path.exists() and truth_path.exists() and images_dir.exists():
+        return
+    script_path = TRAIN_DIR / "scripts" / "generate_v6_stress_suite.py"
+    cmd = [
+        sys.executable,
+        str(script_path),
+        "--count",
+        "120",
+        "--seed",
+        "1337",
+        "--output-dir",
+        str(stress_dir),
+    ]
+    subprocess.run(cmd, check=True, cwd=str(TRAIN_DIR))
+
+
 def main() -> int:
     args = parse_args()
     output_dir = Path(args.output_dir)
@@ -35,6 +57,7 @@ def main() -> int:
     manifests_dir = ensure_dir(output_dir / "manifests")
 
     stress_dir = Path(args.stress_dir)
+    _ensure_stress_suite(stress_dir)
     stress_manifest = load_json(stress_dir / "manifest.json")
     stress_truth = load_json(stress_dir / "truth.json")
     synthetic_rows = []
