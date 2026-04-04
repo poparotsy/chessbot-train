@@ -4,17 +4,21 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-from common import TRAIN_DIR, ensure_dir, load_json, now_iso, write_json, write_jsonl
+from PIL import Image
+
+from common import TRAIN_DIR, corners_to_bbox, ensure_dir, load_json, now_iso, order_corners, write_json, write_jsonl
 
 
 DEFAULT_OUTPUT_DIR = TRAIN_DIR / "generated" / "transfer_localizer_v1"
 DEFAULT_STRESS_DIR = TRAIN_DIR / "generated" / "v6_stress_suite"
 DEFAULT_BLOCKER_MANIFEST = TRAIN_DIR / "scripts" / "testdata" / "v6_temp_canaries.json"
+DEFAULT_TEMPLATE_DIR = TRAIN_DIR / "images_4_test"
 
 
 def _log(message: str) -> None:
@@ -36,12 +40,47 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--stress-dir", default=str(DEFAULT_STRESS_DIR))
     parser.add_argument("--blocker-manifest", default=str(DEFAULT_BLOCKER_MANIFEST))
+    parser.add_argument("--template-dir", default=str(DEFAULT_TEMPLATE_DIR))
     return parser.parse_args()
 
 
 def _copy_file(src: Path, dst: Path) -> None:
     ensure_dir(dst.parent)
     shutil.copy2(src, dst)
+
+
+def _load_recognizer_module():
+    script = TRAIN_DIR / "recognizer_v6.py"
+    module_name = f"transfer_localizer_export_recognizer_{abs(hash(str(script.resolve())))}"
+    spec = importlib.util.spec_from_file_location(module_name, script)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load recognizer from {script}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _build_template_truth_map(template_dir: Path, required_names: set[str]) -> dict[str, dict]:
+    rec = _load_recognizer_module()
+    truth_map: dict[str, dict] = {}
+    usable_paths = [template_dir / name for name in sorted(required_names)]
+    _log(f"template_truth_candidates={len(usable_paths)}")
+    for idx, path in enumerate(usable_paths, start=1):
+        if not path.exists():
+            raise RuntimeError(f"missing template file {path.name}")
+        img = Image.open(path).convert("RGB")
+        proposals = rec.detect_board_grid(img, max_hypotheses=1)
+        if not proposals:
+            raise RuntimeError(f"no board proposal for template {path.name}")
+        ordered = order_corners(proposals[0]["corners"])
+        truth_map[path.name] = {
+            "corners_px": ordered,
+            "bbox_xyxy": corners_to_bbox(ordered),
+        }
+        if idx == 1 or idx % 10 == 0 or idx == len(usable_paths):
+            _log(f"template_truth_progress={idx}/{len(usable_paths)}")
+    return truth_map
 
 
 def _ensure_stress_suite(stress_dir: Path) -> None:
@@ -82,6 +121,8 @@ def main() -> int:
     _ensure_stress_suite(stress_dir)
     stress_manifest = load_json(stress_dir / "manifest.json")
     stress_truth = load_json(stress_dir / "truth.json")
+    required_template_names = {str(item["source_template"]) for item in stress_manifest["items"]}
+    template_truth_map = _build_template_truth_map(Path(args.template_dir), required_template_names)
     synthetic_rows = []
     synthetic_items = stress_manifest["items"]
     _log(f"synthetic_images={len(synthetic_items)}")
@@ -91,6 +132,8 @@ def main() -> int:
         src = stress_dir / "images" / file_name
         dst = images_dir / file_name
         _copy_file(src, dst)
+        template_name = str(item["source_template"])
+        template_truth = template_truth_map[template_name]
         synthetic_rows.append(
             {
                 "id": f"synthetic-{file_name.rsplit('.', 1)[0]}",
@@ -99,9 +142,9 @@ def main() -> int:
                 "source_type": "synthetic",
                 "source_id": file_name,
                 "truth_fen": str(stress_truth[file_name]),
-                "synthetic_template": str(item["source_template"]),
-                "synthetic_template_corners_px": None,
-                "synthetic_template_bbox_xyxy": None,
+                "synthetic_template": template_name,
+                "synthetic_template_corners_px": template_truth["corners_px"],
+                "synthetic_template_bbox_xyxy": template_truth["bbox_xyxy"],
                 "synthetic_source_size": item.get("source_size"),
                 "synthetic_detector_tag": item.get("detector_tag"),
                 "synthetic_detector_score": item.get("detector_score"),

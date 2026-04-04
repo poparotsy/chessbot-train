@@ -18,16 +18,20 @@ import torch
 from PIL import Image
 from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor, Owlv2ForObjectDetection, Owlv2Processor
 
-from common import TRAIN_DIR, choose_best_candidate, ensure_dir, mean_or_zero, median_or_zero, now_iso, overlay_boxes, square_crop_from_bbox, write_json
+from common import TRAIN_DIR, bbox_iou, choose_best_candidate, ensure_dir, mean_or_zero, median_or_zero, now_iso, overlay_boxes, square_crop_from_bbox, write_json
 
 
 DEFAULT_DATA_ROOT = TRAIN_DIR / "generated" / "transfer_localizer_v1"
 DEFAULT_REPORTS_DIR = TRAIN_DIR / "reports" / "transfer_localizer_v1"
 DEFAULT_VIZ_DIR = TRAIN_DIR / "generated" / "transfer_localizer_v1" / "viz"
+DEFAULT_QUICK_IMAGES_DIR = TRAIN_DIR / "images_4_test"
+DEFAULT_QUICK_SUITE_JSON = TRAIN_DIR / "scripts" / "testdata" / "v6_quick_cases.json"
 DEFAULT_MODELS = [
     "google/owlv2-base-patch16-ensemble",
+    "google/owlv2-large-patch14-ensemble",
     "IDEA-Research/grounding-dino-tiny",
     "IDEA-Research/grounding-dino-base",
+    "openmmlab-community/mm_grounding_dino_large_all",
 ]
 
 
@@ -44,6 +48,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-root", default=str(DEFAULT_DATA_ROOT))
     parser.add_argument("--reports-dir", default=str(DEFAULT_REPORTS_DIR))
     parser.add_argument("--viz-dir", default=str(DEFAULT_VIZ_DIR))
+    parser.add_argument("--quick-images-dir", default=str(DEFAULT_QUICK_IMAGES_DIR))
+    parser.add_argument("--quick-suite-json", default=str(DEFAULT_QUICK_SUITE_JSON))
     parser.add_argument("--model-id", default=None)
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--all-models", action="store_true")
@@ -64,6 +70,25 @@ def _load_rows(path: Path) -> list[dict]:
             line = line.strip()
             if line:
                 rows.append(json.loads(line))
+    return rows
+
+
+def _load_quick_rows(images_dir: Path, truth_json: Path) -> list[dict]:
+    truth = json.loads(truth_json.read_text(encoding="utf-8"))
+    rows = []
+    for name, fen in truth.items():
+        rows.append(
+            {
+                "id": f"quick-{name.rsplit('.', 1)[0]}",
+                "image_path": str((images_dir / name).resolve()),
+                "source_type": "quick_suite",
+                "source_id": name,
+                "truth_fen": fen,
+                "blocker_id": None,
+                "original_filename": name,
+                "synthetic_template_bbox_xyxy": None,
+            }
+        )
     return rows
 
 
@@ -176,11 +201,19 @@ def _run_deterministic_refinement(image_path: Path, crop_box: list[int], board_p
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def _truth_box_for_row(row: dict) -> list[float] | None:
+    truth_box = row.get("synthetic_template_bbox_xyxy")
+    if truth_box is None:
+        return None
+    return [float(v) for v in truth_box]
+
+
 def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> dict:
     data_root = Path(args.data_root)
     reports_dir = ensure_dir(Path(args.reports_dir))
     viz_dir = ensure_dir(Path(args.viz_dir) / run_name)
-    rows = _load_rows(data_root / "manifests" / "all.jsonl")
+    quick_rows = _load_quick_rows(Path(args.quick_images_dir), Path(args.quick_suite_json))
+    rows = quick_rows + _load_rows(data_root / "manifests" / "all.jsonl")
     log_prefix = run_name
     _log("=== ZERO-SHOT LOCALIZER BENCHMARK ===", args.quiet, log_prefix)
     _log(f"run_name={run_name}", args.quiet, log_prefix)
@@ -191,13 +224,23 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
 
     inference_times = []
     detection_count = 0
+    no_detection_count = 0
+    rejected_detection_count = 0
+    synthetic_box_ious = []
+    synthetic_box_iou_pass_count = 0
     synthetic_warp_success = 0
+    synthetic_oracle_warp_success = 0
+    quick_pass = 0
+    quick_detected_count = 0
     blocker_pass = 0
+    blocker_detected_count = 0
     failed_ids = []
     results = []
 
     for idx, row in enumerate(rows, start=1):
         image_path = data_root / row["image_path"]
+        if row["source_type"] == "quick_suite":
+            image_path = Path(row["image_path"])
         image = Image.open(image_path).convert("RGB")
         detections = _detect_boxes(
             image=image,
@@ -214,19 +257,36 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
         best = choose_best_candidate(detections, image.width, image.height)
         if best is None:
             failed_ids.append(row["id"])
-            results.append({"id": row["id"], "success": False, "error": "no_detections"})
-            _log(f"[{idx:03d}/{len(rows)}] {row['id']} NO_DETECTIONS", args.quiet, log_prefix)
+            no_detection_count += 1
+            results.append({"id": row["id"], "success": False, "error": "no_detections", "failure_stage": "no_box"})
+            _log(f"[{idx:03d}/{len(rows)}] {row['id']} no_box", args.quiet, log_prefix)
             continue
 
         pred_box = [float(v) for v in best["box"]]
+        if not bool(best.get("accepted", False)):
+            rejected_detection_count += 1
         crop_box, _ = square_crop_from_bbox(pred_box, image.width, image.height, pad_ratio=0.12)
         refine = _run_deterministic_refinement(image_path, crop_box, args.board_perspective)
+        truth_box = _truth_box_for_row(row)
+        box_iou = None
+        oracle_refine = None
+        if truth_box is not None:
+            box_iou = float(bbox_iou(pred_box, truth_box))
+            synthetic_box_ious.append(box_iou)
+            if box_iou >= 0.5:
+                synthetic_box_iou_pass_count += 1
+            oracle_crop_box, _ = square_crop_from_bbox(truth_box, image.width, image.height, pad_ratio=0.12)
+            oracle_refine = _run_deterministic_refinement(image_path, oracle_crop_box, args.board_perspective)
+            if oracle_refine.get("success"):
+                synthetic_oracle_warp_success += 1
 
         record = {
             "id": row["id"],
             "source_type": row["source_type"],
             "box": pred_box,
             "crop_box": crop_box,
+            "truth_box": truth_box,
+            "box_iou": box_iou,
             "score": float(best["score"]),
             "label": best["label"],
             "accepted": bool(best.get("accepted", False)),
@@ -236,36 +296,68 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
         if row["source_type"] == "synthetic":
             if refine.get("success"):
                 synthetic_warp_success += 1
+            record["oracle_refine_success"] = bool(oracle_refine and oracle_refine.get("success", False))
+            if refine.get("success"):
+                record["failure_stage"] = None
+            elif oracle_refine and oracle_refine.get("success", False):
+                record["failure_stage"] = "predicted_crop_downstream_fail"
+            elif box_iou is not None and box_iou < 0.5:
+                record["failure_stage"] = "bad_box"
+            else:
+                record["failure_stage"] = "downstream_fail"
         else:
+            if row["source_type"] == "real_blocker":
+                blocker_detected_count += 1
             record["truth_fen"] = row["truth_fen"]
             if refine.get("success") and str(refine.get("fen") or "") == str(row["truth_fen"]):
-                blocker_pass += 1
-                record["blocker_pass"] = True
+                if row["source_type"] == "quick_suite":
+                    quick_pass += 1
+                    record["quick_pass"] = True
+                else:
+                    blocker_pass += 1
+                    record["blocker_pass"] = True
+                record["failure_stage"] = None
             else:
-                record["blocker_pass"] = False
+                if row["source_type"] == "quick_suite":
+                    record["quick_pass"] = False
+                else:
+                    record["blocker_pass"] = False
+                record["failure_stage"] = "downstream_fail"
+            if row["source_type"] == "quick_suite":
+                quick_detected_count += 1
 
         if not refine.get("success", False):
             failed_ids.append(row["id"])
             record["error"] = refine.get("error")
         elif row["source_type"] == "real_blocker" and not record["blocker_pass"]:
             failed_ids.append(row["id"])
+        elif row["source_type"] == "quick_suite" and not record["quick_pass"]:
+            failed_ids.append(row["id"])
 
         if args.write_viz:
             overlay_boxes(
                 image_path=image_path,
                 out_path=viz_dir / f"{row['id']}.png",
-                truth_box=None,
+                truth_box=truth_box,
                 pred_box=pred_box,
                 crop_box=crop_box,
                 title=f"{run_name} {row['id']}",
             )
 
         results.append(record)
-        if row["source_type"] == "real_blocker":
+        if row["source_type"] == "quick_suite":
+            status = "PASS" if record.get("quick_pass") else "FAIL"
+            _log(
+                f"[{idx:03d}/{len(rows)}] {row['id']} quick_{status.lower()} "
+                f"stage={record['failure_stage'] or 'pass'} score={record['score']:.4f}",
+                args.quiet,
+                log_prefix,
+            )
+        elif row["source_type"] == "real_blocker":
             status = "PASS" if record.get("blocker_pass") else "FAIL"
             _log(
                 f"[{idx:03d}/{len(rows)}] {row['id']} blocker_{status.lower()} "
-                f"score={record['score']:.4f}",
+                f"stage={record['failure_stage'] or 'pass'} score={record['score']:.4f}",
                 args.quiet,
                 log_prefix,
             )
@@ -273,11 +365,14 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
             status = "OK" if refine.get("success") else "FAIL"
             _log(
                 f"[{idx:03d}/{len(rows)}] {row['id']} synthetic_{status.lower()} "
-                f"score={record['score']:.4f}",
+                f"stage={record['failure_stage'] or 'pass'} "
+                f"iou={record['box_iou']:.3f} score={record['score']:.4f}" if record['box_iou'] is not None
+                else f"[{idx:03d}/{len(rows)}] {row['id']} synthetic_{status.lower()} stage={record['failure_stage'] or 'pass'} score={record['score']:.4f}",
                 args.quiet,
                 log_prefix,
             )
 
+    quick_count = sum(1 for row in rows if row["source_type"] == "quick_suite")
     synthetic_count = sum(1 for row in rows if row["source_type"] == "synthetic")
     blocker_count = sum(1 for row in rows if row["source_type"] == "real_blocker")
     report = {
@@ -286,9 +381,21 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
         "run_name": run_name,
         "image_count": len(rows),
         "detection_count": detection_count,
-        "synthetic_box_iou_mean": None,
+        "no_detection_count": no_detection_count,
+        "rejected_detection_count": rejected_detection_count,
+        "quick_pass_count": quick_pass,
+        "quick_pass_rate": (float(quick_pass) / float(quick_count)) if quick_count else 0.0,
+        "quick_detected_count": quick_detected_count,
+        "quick_detected_rate": (float(quick_detected_count) / float(quick_count)) if quick_count else 0.0,
+        "quick_retire": bool(quick_count and quick_pass < quick_count),
+        "synthetic_box_iou_mean": mean_or_zero(synthetic_box_ious),
+        "synthetic_box_iou_pass_count": synthetic_box_iou_pass_count,
+        "synthetic_box_iou_pass_rate": (float(synthetic_box_iou_pass_count) / float(synthetic_count)) if synthetic_count else 0.0,
         "synthetic_downstream_warp_success_count": synthetic_warp_success,
         "synthetic_downstream_warp_success_rate": (float(synthetic_warp_success) / float(synthetic_count)) if synthetic_count else 0.0,
+        "synthetic_oracle_warp_success_count": synthetic_oracle_warp_success,
+        "synthetic_oracle_warp_success_rate": (float(synthetic_oracle_warp_success) / float(synthetic_count)) if synthetic_count else 0.0,
+        "blocker_detected_count": blocker_detected_count,
         "blocker_pass_count": blocker_pass,
         "blocker_pass_rate": (float(blocker_pass) / float(blocker_count)) if blocker_count else 0.0,
         "median_inference_seconds": median_or_zero(inference_times),
@@ -298,6 +405,10 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
     write_json(reports_dir / f"{run_name}.json", report)
     _log("=== RUN COMPLETE ===", args.quiet, log_prefix)
     _log(f"report_json={reports_dir / f'{run_name}.json'}", args.quiet, log_prefix)
+    _log(f"quick_pass={report['quick_pass_count']}/{quick_count}", args.quiet, log_prefix)
+    _log(f"quick_retire={str(report['quick_retire']).lower()}", args.quiet, log_prefix)
+    _log(f"synthetic_box_iou_mean={report['synthetic_box_iou_mean']:.4f}", args.quiet, log_prefix)
+    _log(f"synthetic_oracle_warp_rate={report['synthetic_oracle_warp_success_rate']:.4f}", args.quiet, log_prefix)
     _log(f"blocker_pass={report['blocker_pass_count']}", args.quiet, log_prefix)
     _log(f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f}", args.quiet, log_prefix)
     _log(f"median_sec={report['median_inference_seconds']:.4f}", args.quiet, log_prefix)
