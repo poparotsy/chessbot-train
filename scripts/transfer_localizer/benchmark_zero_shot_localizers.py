@@ -37,7 +37,6 @@ DEFAULT_MODELS = [
     "google/owlv2-large-patch14-ensemble",
     "IDEA-Research/grounding-dino-tiny",
     "IDEA-Research/grounding-dino-base",
-    "openmmlab-community/mm_grounding_dino_large_all",
 ]
 
 
@@ -128,6 +127,38 @@ def _load_model_and_processor(model_id: str, device: str):
         processor = AutoProcessor.from_pretrained(model_id)
         model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id)
     return processor, model.to(device)
+
+
+def _unsupported_model_report(model_id: str, run_name: str, reason: str) -> dict:
+    return {
+        "generated_at": now_iso(),
+        "model_id": model_id,
+        "run_name": run_name,
+        "status": "unsupported_model",
+        "reason": reason,
+        "image_count": 0,
+        "detection_count": 0,
+        "no_detection_count": 0,
+        "rejected_detection_count": 0,
+        "quick_pass_count": 0,
+        "quick_pass_rate": 0.0,
+        "quick_detected_count": 0,
+        "quick_detected_rate": 0.0,
+        "quick_retire": True,
+        "synthetic_box_iou_mean": 0.0,
+        "synthetic_box_iou_pass_count": 0,
+        "synthetic_box_iou_pass_rate": 0.0,
+        "synthetic_downstream_warp_success_count": 0,
+        "synthetic_downstream_warp_success_rate": 0.0,
+        "synthetic_oracle_warp_success_count": 0,
+        "synthetic_oracle_warp_success_rate": 0.0,
+        "blocker_detected_count": 0,
+        "blocker_pass_count": 0,
+        "blocker_pass_rate": 0.0,
+        "median_inference_seconds": 0.0,
+        "failed_ids": [],
+        "results": [],
+    }
 
 
 def _detect_boxes(image: Image.Image, model_id: str, processor, model, device: str, threshold: float, text_threshold: float) -> list[dict]:
@@ -228,7 +259,15 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
     _log(f"run_name={run_name}", args.quiet, log_prefix)
     _log(f"model_id={model_id}", args.quiet, log_prefix)
     _log(f"device={args.device}", args.quiet, log_prefix)
-    processor, model = _load_model_and_processor(model_id, args.device)
+    try:
+        processor, model = _load_model_and_processor(model_id, args.device)
+    except Exception as exc:
+        report = _unsupported_model_report(model_id, run_name, str(exc))
+        write_json(reports_dir / f"{run_name}.json", report)
+        _log("=== RUN SKIPPED ===", args.quiet, log_prefix)
+        _log(f"reason=unsupported_model", args.quiet, log_prefix)
+        _log(f"report_json={reports_dir / f'{run_name}.json'}", args.quiet, log_prefix)
+        return report
     _log(f"images={len(rows)}", args.quiet, log_prefix)
 
     inference_times = []
@@ -520,6 +559,7 @@ def _launch_parallel_model_runs(args: argparse.Namespace, runs: list[tuple[str, 
                 {
                     "run_name": run_name,
                     "model_id": model_id,
+                    "status": report.get("status", "ok"),
                     "blocker_pass_count": report["blocker_pass_count"],
                     "synthetic_downstream_warp_success_rate": report["synthetic_downstream_warp_success_rate"],
                     "median_inference_seconds": report["median_inference_seconds"],
@@ -527,7 +567,7 @@ def _launch_parallel_model_runs(args: argparse.Namespace, runs: list[tuple[str, 
                 }
             )
             print(
-                f"{run_name}: blocker_pass={report['blocker_pass_count']} "
+                f"{run_name}: status={report.get('status', 'ok')} blocker_pass={report['blocker_pass_count']} "
                 f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f} "
                 f"median_sec={report['median_inference_seconds']:.4f}",
                 flush=True,
@@ -561,6 +601,7 @@ def main() -> int:
                 {
                     "run_name": run_name,
                     "model_id": model_id,
+                    "status": report.get("status", "ok"),
                     "blocker_pass_count": report["blocker_pass_count"],
                     "synthetic_downstream_warp_success_rate": report["synthetic_downstream_warp_success_rate"],
                     "median_inference_seconds": report["median_inference_seconds"],
@@ -568,7 +609,7 @@ def main() -> int:
                 }
             )
             print(
-                f"{run_name}: blocker_pass={report['blocker_pass_count']} "
+                f"{run_name}: status={report.get('status', 'ok')} blocker_pass={report['blocker_pass_count']} "
                 f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f} "
                 f"median_sec={report['median_inference_seconds']:.4f}",
                 flush=True,
