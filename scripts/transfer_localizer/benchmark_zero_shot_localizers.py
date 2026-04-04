@@ -175,6 +175,24 @@ def _unsupported_model_report(model_id: str, run_name: str, reason: str) -> dict
     }
 
 
+def _print_run_summary(report: dict, quick_only: bool) -> None:
+    if quick_only:
+        print(
+            f"{report['run_name']}: status={report.get('status', 'ok')} "
+            f"quick_pass={report['quick_pass_count']}/{report.get('quick_count', 0)} "
+            f"quick_retire={str(report.get('quick_retire', False)).lower()} "
+            f"median_sec={report['median_inference_seconds']:.4f}",
+            flush=True,
+        )
+        return
+    print(
+        f"{report['run_name']}: status={report.get('status', 'ok')} blocker_pass={report['blocker_pass_count']} "
+        f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f} "
+        f"median_sec={report['median_inference_seconds']:.4f}",
+        flush=True,
+    )
+
+
 def _detect_boxes(image: Image.Image, model_id: str, processor, model, device: str, threshold: float, text_threshold: float) -> list[dict]:
     text_labels = [_queries_for_model(model_id)]
     start = time.perf_counter()
@@ -464,6 +482,7 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
         "model_id": model_id,
         "run_name": run_name,
         "image_count": len(rows),
+        "quick_count": quick_count,
         "detection_count": detection_count,
         "no_detection_count": no_detection_count,
         "rejected_detection_count": rejected_detection_count,
@@ -613,12 +632,7 @@ def _launch_parallel_model_runs(args: argparse.Namespace, runs: list[tuple[str, 
                         "report_json": str(report_path),
                     }
                 )
-                print(
-                    f"{run_name}: status={report.get('status', 'ok')} blocker_pass={report['blocker_pass_count']} "
-                    f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f} "
-                    f"median_sec={report['median_inference_seconds']:.4f}",
-                    flush=True,
-                )
+                _print_run_summary(report, args.quick_only)
             pending = still_pending
             if pending:
                 time.sleep(1.0)
@@ -659,12 +673,7 @@ def main() -> int:
                         "report_json": str(Path(args.reports_dir) / f"{run_name}.json"),
                     }
                 )
-                print(
-                    f"{run_name}: status={report.get('status', 'ok')} blocker_pass={report['blocker_pass_count']} "
-                    f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f} "
-                    f"median_sec={report['median_inference_seconds']:.4f}",
-                    flush=True,
-                )
+                _print_run_summary(report, args.quick_only)
     except KeyboardInterrupt:
         _log("interrupted", args.quiet)
         raise SystemExit(130)
