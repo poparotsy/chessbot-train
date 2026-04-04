@@ -41,6 +41,10 @@ DARK_PROFILE_NAMES = ["dark_anchor_clean", "broadcast_dark_sparse"]
 NEUTRAL_PROFILE_NAMES = ["clean", "dark_anchor_clean", "digital_overlay_clean", "wood_3d_arrow_clean"]
 
 
+def _log(message: str) -> None:
+    print(message, flush=True)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a realistic v6 stress suite from images_4_test templates.")
     parser.add_argument("--count", type=int, default=120)
@@ -72,7 +76,14 @@ def _template_category(img: Image.Image, name: str) -> str:
 
 def _load_template_entries(template_dir: Path):
     entries = []
-    for path in sorted(template_dir.iterdir()):
+    candidate_paths = sorted(template_dir.iterdir())
+    usable_candidates = [
+        path
+        for path in candidate_paths
+        if path.name != "truth_verified.json" and path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+    ]
+    _log(f"template_candidates={len(usable_candidates)}")
+    for idx, path in enumerate(usable_candidates, start=1):
         if path.name == "truth_verified.json" or not path.is_file():
             continue
         if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
@@ -95,6 +106,8 @@ def _load_template_entries(template_dir: Path):
                 "category": _template_category(img, path.name),
             }
         )
+        if idx == 1 or idx % 10 == 0 or idx == len(usable_candidates):
+            _log(f"template_progress={idx}/{len(usable_candidates)}")
     if not entries:
         raise SystemExit(f"No usable templates found in {template_dir}")
     return entries
@@ -247,8 +260,13 @@ def _build_template_plan(entries, count: int, seed: int):
 
 def main() -> int:
     args = parse_args()
+    _log("=== GENERATING V6 STRESS SUITE ===")
+    _log(f"output_dir={args.output_dir}")
+    _log(f"count={int(args.count)}")
+    _log(f"seed={int(args.seed)}")
     template_entries = _load_template_entries(args.template_dir)
     template_plan = _build_template_plan(template_entries, int(args.count), int(args.seed))
+    _log(f"usable_templates={len(template_entries)}")
 
     output_dir = args.output_dir
     images_dir = output_dir / "images"
@@ -294,6 +312,8 @@ def main() -> int:
                 "label_pov": render_meta.get("label_pov"),
             }
         )
+        if idx == 1 or idx % 20 == 0 or idx == len(template_plan):
+            _log(f"stress_progress={idx}/{len(template_plan)} file={file_name}")
 
     truth_path = output_dir / "truth.json"
     categories_path = output_dir / "categories.json"
@@ -314,10 +334,11 @@ def main() -> int:
         ),
         encoding="utf-8",
     )
-    print(f"images_dir={images_dir}")
-    print(f"truth_json={truth_path}")
-    print(f"categories_json={categories_path}")
-    print(f"manifest_json={manifest_path}")
+    _log("=== V6 STRESS SUITE COMPLETE ===")
+    _log(f"images_dir={images_dir}")
+    _log(f"truth_json={truth_path}")
+    _log(f"categories_json={categories_path}")
+    _log(f"manifest_json={manifest_path}")
     return 0
 
 
