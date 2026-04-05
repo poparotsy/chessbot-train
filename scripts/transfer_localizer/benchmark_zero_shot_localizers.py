@@ -66,9 +66,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--viz-dir", default=str(DEFAULT_VIZ_DIR))
     parser.add_argument("--quick-images-dir", default=str(DEFAULT_QUICK_IMAGES_DIR))
     parser.add_argument("--quick-suite-json", default=str(DEFAULT_QUICK_SUITE_JSON))
-    parser.add_argument("--model-id", default=None)
+    parser.add_argument("--model-id", action="append", default=None)
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--all-models", action="store_true")
+    parser.add_argument("--compare-json", default=None, help="Optional comparison JSON output path.")
+    parser.add_argument("--compare-md", default=None, help="Optional comparison Markdown output path.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--threshold", type=float, default=0.15)
     parser.add_argument("--text-threshold", type=float, default=0.15)
@@ -195,6 +197,76 @@ def _print_run_summary(report: dict, quick_only: bool) -> None:
         f"median_sec={report['median_inference_seconds']:.4f}",
         flush=True,
     )
+
+
+def _compare_sort_key(row: dict, quick_only: bool):
+    if quick_only:
+        return (
+            int(row.get("quick_pass_count", 0)),
+            float(row.get("quick_pass_rate", 0.0)),
+            -float(row.get("median_inference_seconds", 0.0)),
+        )
+    return (
+        int(row.get("blocker_pass_count", 0)),
+        float(row.get("synthetic_downstream_warp_success_rate", 0.0)),
+        int(row.get("quick_pass_count", 0)),
+        float(row.get("synthetic_box_iou_mean", 0.0)),
+        -float(row.get("median_inference_seconds", 0.0)),
+    )
+
+
+def _build_compare_payload(runs: list[dict], quick_only: bool) -> dict:
+    ranked = sorted(runs, key=lambda row: _compare_sort_key(row, quick_only), reverse=True)
+    winner = ranked[0] if ranked else None
+    return {
+        "generated_at": now_iso(),
+        "quick_only": bool(quick_only),
+        "winner": None if winner is None else {
+            "run_name": winner["run_name"],
+            "model_id": winner["model_id"],
+            "status": winner.get("status", "ok"),
+        },
+        "runs": ranked,
+    }
+
+
+def _compare_markdown(compare_payload: dict) -> str:
+    lines = [
+        "# Transfer Localizer Model Comparison",
+        "",
+        f"- generated_at: `{compare_payload['generated_at']}`",
+        f"- quick_only: `{str(compare_payload['quick_only']).lower()}`",
+    ]
+    winner = compare_payload.get("winner")
+    if winner:
+        lines.append(f"- winner: `{winner['run_name']}` (`{winner['model_id']}`)")
+    lines.extend(
+        [
+            "",
+            "| rank | run | model | status | quick | blocker_detected | blocker_pass | synth_iou | synth_warp | median_sec |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for idx, row in enumerate(compare_payload.get("runs", []), start=1):
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    str(idx),
+                    str(row.get("run_name")),
+                    str(row.get("model_id")),
+                    str(row.get("status", "ok")),
+                    f"{int(row.get('quick_pass_count', 0))}/{int(row.get('quick_count', 0))}",
+                    str(int(row.get("blocker_detected_count", 0))),
+                    str(int(row.get("blocker_pass_count", 0))),
+                    f"{float(row.get('synthetic_box_iou_mean', 0.0)):.4f}",
+                    f"{float(row.get('synthetic_downstream_warp_success_rate', 0.0)):.4f}",
+                    f"{float(row.get('median_inference_seconds', 0.0)):.4f}",
+                ]
+            )
+            + " |"
+        )
+    return "\n".join(lines) + "\n"
 
 
 def _detect_boxes(image: Image.Image, model_id: str, processor, model, device: str, threshold: float, text_threshold: float) -> list[dict]:
@@ -633,7 +705,12 @@ def _launch_parallel_model_runs(args: argparse.Namespace, runs: list[tuple[str, 
                         "run_name": run_name,
                         "model_id": model_id,
                         "status": report.get("status", "ok"),
+                        "quick_count": report.get("quick_count", 0),
+                        "quick_pass_count": report.get("quick_pass_count", 0),
+                        "quick_pass_rate": report.get("quick_pass_rate", 0.0),
+                        "blocker_detected_count": report.get("blocker_detected_count", 0),
                         "blocker_pass_count": report["blocker_pass_count"],
+                        "synthetic_box_iou_mean": report.get("synthetic_box_iou_mean", 0.0),
                         "synthetic_downstream_warp_success_rate": report["synthetic_downstream_warp_success_rate"],
                         "median_inference_seconds": report["median_inference_seconds"],
                         "report_json": str(report_path),
@@ -660,7 +737,12 @@ def main() -> int:
     else:
         if not args.model_id:
             raise SystemExit("--model-id or --all-models is required")
-        runs.append((args.model_id, args.run_name or args.model_id.split("/")[-1]))
+        if len(args.model_id) == 1:
+            model_id = args.model_id[0]
+            runs.append((model_id, args.run_name or model_id.split("/")[-1]))
+        else:
+            for model_id in args.model_id:
+                runs.append((model_id, model_id.split("/")[-1]))
 
     try:
         if _supports_parallel_gpu_runs(args, runs):
@@ -674,7 +756,12 @@ def main() -> int:
                         "run_name": run_name,
                         "model_id": model_id,
                         "status": report.get("status", "ok"),
+                        "quick_count": report.get("quick_count", 0),
+                        "quick_pass_count": report.get("quick_pass_count", 0),
+                        "quick_pass_rate": report.get("quick_pass_rate", 0.0),
+                        "blocker_detected_count": report.get("blocker_detected_count", 0),
                         "blocker_pass_count": report["blocker_pass_count"],
+                        "synthetic_box_iou_mean": report.get("synthetic_box_iou_mean", 0.0),
                         "synthetic_downstream_warp_success_rate": report["synthetic_downstream_warp_success_rate"],
                         "median_inference_seconds": report["median_inference_seconds"],
                         "report_json": str(Path(args.reports_dir) / f"{run_name}.json"),
@@ -685,8 +772,14 @@ def main() -> int:
         _log("interrupted", args.quiet)
         raise SystemExit(130)
 
-    write_json(Path(args.reports_dir) / "summary.json", {"runs": summaries})
-    _log(f"summary_json={Path(args.reports_dir) / 'summary.json'}", args.quiet)
+    compare_payload = _build_compare_payload(summaries, args.quick_only)
+    compare_json_path = Path(args.compare_json) if args.compare_json else Path(args.reports_dir) / "summary.json"
+    compare_md_path = Path(args.compare_md) if args.compare_md else Path(args.reports_dir) / "summary.md"
+    write_json(compare_json_path, compare_payload)
+    compare_md_path.parent.mkdir(parents=True, exist_ok=True)
+    compare_md_path.write_text(_compare_markdown(compare_payload), encoding="utf-8")
+    _log(f"summary_json={compare_json_path}", args.quiet)
+    _log(f"summary_md={compare_md_path}", args.quiet)
     return 0
 
 
