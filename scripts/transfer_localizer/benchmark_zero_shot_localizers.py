@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -27,6 +28,7 @@ import torch
 from PIL import Image
 from huggingface_hub.utils import disable_progress_bars
 from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor, Owlv2ForObjectDetection, Owlv2Processor
+from transformers.utils import logging as transformers_logging
 
 from common import TRAIN_DIR, bbox_iou, choose_best_candidate, ensure_dir, mean_or_zero, median_or_zero, now_iso, overlay_boxes, square_crop_from_bbox, write_json
 
@@ -57,10 +59,17 @@ DEFAULT_MODELS = [
 ]
 
 disable_progress_bars()
+transformers_logging.set_verbosity_error()
+logging.getLogger("huggingface_hub.utils._headers").setLevel(logging.ERROR)
 warnings.filterwarnings(
     "ignore",
     message=r".*Use `text_labels` instead to retrieve string object names.*",
     category=FutureWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r".*loaded as a fast processor by default.*",
+    category=UserWarning,
 )
 
 
@@ -155,8 +164,10 @@ def _load_model_and_processor(model_id: str, device: str, quiet: bool = False, p
     _log("loading_processor", quiet, prefix)
     if "owlv2" in model_id_l:
         processor = Owlv2Processor.from_pretrained(model_id)
+    elif "owlvit" in model_id_l:
+        processor = AutoProcessor.from_pretrained(model_id, use_fast=False)
         _log("loading_model", quiet, prefix)
-        model = Owlv2ForObjectDetection.from_pretrained(model_id)
+        model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id)
     else:
         processor = AutoProcessor.from_pretrained(model_id)
         _log("loading_model", quiet, prefix)
@@ -289,7 +300,8 @@ def _compare_markdown(compare_payload: dict) -> str:
 
 
 def _detect_boxes(image: Image.Image, model_id: str, processor, model, device: str, threshold: float, text_threshold: float) -> list[dict]:
-    text_labels = [_queries_for_model(model_id)]
+    query_labels = _queries_for_model(model_id)
+    text_labels = [query_labels]
     start = time.perf_counter()
     if "owlv2" in model_id.lower():
         inputs = processor(text=text_labels, images=image, return_tensors="pt")
@@ -305,6 +317,31 @@ def _detect_boxes(image: Image.Image, model_id: str, processor, model, device: s
         elapsed = time.perf_counter() - start
         rows = []
         for box, score, label in zip(results["boxes"], results["scores"], results["text_labels"]):
+            rows.append(
+                {
+                    "box": [float(x) for x in box.tolist()],
+                    "score": float(score.item()),
+                    "label": str(label),
+                    "elapsed_sec": float(elapsed),
+                }
+            )
+        return rows
+
+    if "owlvit" in model_id.lower():
+        inputs = processor(text=text_labels, images=image, return_tensors="pt")
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        with torch.no_grad():
+            outputs = model(**inputs)
+        results = processor.post_process_object_detection(
+            outputs=outputs,
+            threshold=threshold,
+            target_sizes=torch.tensor([(image.height, image.width)], device=device),
+        )[0]
+        elapsed = time.perf_counter() - start
+        rows = []
+        for box, score, label_idx in zip(results["boxes"], results["scores"], results["labels"]):
+            idx = int(label_idx.item()) if hasattr(label_idx, "item") else int(label_idx)
+            label = query_labels[idx] if 0 <= idx < len(query_labels) else str(idx)
             rows.append(
                 {
                     "box": [float(x) for x in box.tolist()],
