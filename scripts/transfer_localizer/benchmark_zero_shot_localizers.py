@@ -36,11 +36,24 @@ DEFAULT_REPORTS_DIR = TRAIN_DIR / "reports" / "transfer_localizer_v1"
 DEFAULT_VIZ_DIR = TRAIN_DIR / "generated" / "transfer_localizer_v1" / "viz"
 DEFAULT_QUICK_IMAGES_DIR = TRAIN_DIR / "images_4_test"
 DEFAULT_QUICK_SUITE_JSON = TRAIN_DIR / "scripts" / "testdata" / "v6_quick_cases.json"
+MODEL_RUN_NAMES = {
+    "google/owlv2-base-patch16-ensemble": "owlv2-base-ens",
+    "google/owlv2-base-patch16": "owlv2-base",
+    "google/owlv2-large-patch14-ensemble": "owlv2-large-ens",
+    "google/owlvit-base-patch32": "owlvit-base32",
+    "IDEA-Research/grounding-dino-tiny": "grounding-dino-tiny",
+    "IDEA-Research/grounding-dino-base": "grounding-dino-base",
+    "iSEE-Laboratory/llmdet_base": "llmdet-base",
+    "iSEE-Laboratory/llmdet_large": "llmdet-large",
+}
 DEFAULT_MODELS = [
-    "google/owlv2-base-patch16-ensemble",
-    "google/owlv2-large-patch14-ensemble",
     "IDEA-Research/grounding-dino-tiny",
     "IDEA-Research/grounding-dino-base",
+    "google/owlv2-base-patch16-ensemble",
+    "google/owlv2-base-patch16",
+    "google/owlvit-base-patch32",
+    "iSEE-Laboratory/llmdet_base",
+    "google/owlv2-large-patch14-ensemble",
 ]
 
 disable_progress_bars()
@@ -129,6 +142,12 @@ def _queries_for_model(model_id: str) -> list[str]:
     if "owlv2" in model_id.lower():
         return ["a photo of a chessboard", "a photo of a chess board"]
     return ["a chessboard", "a chess board"]
+
+
+def _run_name_for_model(model_id: str) -> str:
+    if model_id in MODEL_RUN_NAMES:
+        return MODEL_RUN_NAMES[model_id]
+    return model_id.split("/")[-1].replace("_", "-")
 
 
 def _load_model_and_processor(model_id: str, device: str, quiet: bool = False, prefix: str | None = None):
@@ -601,8 +620,7 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
 
 def _supports_parallel_gpu_runs(args: argparse.Namespace, runs: list[tuple[str, str]]) -> bool:
     return (
-        args.all_models
-        and not args.serial_models
+        not args.serial_models
         and len(runs) > 1
         and str(args.device).strip().lower() == "cuda"
         and torch.cuda.is_available()
@@ -732,17 +750,16 @@ def main() -> int:
     runs = []
     if args.all_models:
         for model_id in DEFAULT_MODELS:
-            name = model_id.split("/")[-1].replace("-patch16-ensemble", "")
-            runs.append((model_id, name))
+            runs.append((model_id, _run_name_for_model(model_id)))
     else:
         if not args.model_id:
             raise SystemExit("--model-id or --all-models is required")
         if len(args.model_id) == 1:
             model_id = args.model_id[0]
-            runs.append((model_id, args.run_name or model_id.split("/")[-1]))
+            runs.append((model_id, args.run_name or _run_name_for_model(model_id)))
         else:
             for model_id in args.model_id:
-                runs.append((model_id, model_id.split("/")[-1]))
+                runs.append((model_id, _run_name_for_model(model_id)))
 
     try:
         if _supports_parallel_gpu_runs(args, runs):
