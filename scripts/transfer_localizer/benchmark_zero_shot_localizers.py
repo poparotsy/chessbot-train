@@ -186,7 +186,11 @@ def _print_run_summary(report: dict, quick_only: bool) -> None:
         )
         return
     print(
-        f"{report['run_name']}: status={report.get('status', 'ok')} blocker_pass={report['blocker_pass_count']} "
+        f"{report['run_name']}: status={report.get('status', 'ok')} "
+        f"quick_pass={report['quick_pass_count']}/{report.get('quick_count', 0)} "
+        f"blocker_detected={report['blocker_detected_count']} "
+        f"blocker_pass={report['blocker_pass_count']} "
+        f"synthetic_box_iou={report['synthetic_box_iou_mean']:.4f} "
         f"synthetic_warp_rate={report['synthetic_downstream_warp_success_rate']:.4f} "
         f"median_sec={report['median_inference_seconds']:.4f}",
         flush=True,
@@ -346,7 +350,9 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
         if not bool(best.get("accepted", False)):
             rejected_detection_count += 1
         crop_box, _ = square_crop_from_bbox(pred_box, image.width, image.height, pad_ratio=0.12)
-        refine = {"success": False, "skipped": True} if args.detector_only else _run_deterministic_refinement(image_path, crop_box, args.board_perspective)
+        quick_detector_stage = row["source_type"] == "quick_suite"
+        run_refine = not args.detector_only and not quick_detector_stage
+        refine = {"success": False, "skipped": True} if not run_refine else _run_deterministic_refinement(image_path, crop_box, args.board_perspective)
         truth_box = _truth_box_for_row(row)
         box_iou = None
         oracle_refine = None
@@ -397,7 +403,7 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
             if row["source_type"] == "real_blocker":
                 blocker_detected_count += 1
             record["truth_fen"] = row["truth_fen"]
-            if args.detector_only:
+            if args.detector_only or quick_detector_stage:
                 if row["source_type"] == "quick_suite":
                     quick_pass += 1 if bool(best.get("accepted", False)) else 0
                     record["quick_pass"] = bool(best.get("accepted", False))
@@ -422,7 +428,7 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
             if row["source_type"] == "quick_suite":
                 quick_detected_count += 1
 
-        if args.detector_only:
+        if args.detector_only or quick_detector_stage:
             if not bool(best.get("accepted", False)):
                 failed_ids.append(row["id"])
         elif not refine.get("success", False):
@@ -512,6 +518,7 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
     _log(f"quick_pass={report['quick_pass_count']}/{quick_count}", args.quiet, log_prefix)
     _log(f"quick_retire={str(report['quick_retire']).lower()}", args.quiet, log_prefix)
     if not args.quick_only:
+        _log(f"blocker_detected={report['blocker_detected_count']}", args.quiet, log_prefix)
         _log(f"synthetic_box_iou_mean={report['synthetic_box_iou_mean']:.4f}", args.quiet, log_prefix)
         _log(f"synthetic_oracle_warp_rate={report['synthetic_oracle_warp_success_rate']:.4f}", args.quiet, log_prefix)
         _log(f"blocker_pass={report['blocker_pass_count']}", args.quiet, log_prefix)
