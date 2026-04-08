@@ -109,6 +109,8 @@ BASE_CONFIG = {
 }
 
 PROFILE_OVERRIDES = {
+    # v6_targeted_recovery_v14 recipe — uses default profile overrides
+    "v6_targeted_recovery_v14": {},
     "clean": {
         "LABELS_PROB": 0.75,
         "TRIM_CAPTURE_PROB": 0.18,
@@ -988,6 +990,18 @@ PROFILE_RECIPES = {
         ("wood_3d_arrow_clean", 0.04),
         ("diagtransfer_hatched", 0.02),
         ("digital_overlay_clean", 0.02),
+    ],
+    "v6_targeted_recovery_v14": [
+        # Balanced render profiles — covers ALL stress suite failure conditions
+        ("clean", 0.22),              # UP from 0.06 — 25% fail rate on clean profiles
+        ("dark_anchor_clean", 0.20),  # DOWN from 0.50 — was over-represented
+        ("shirt_print_reference", 0.16),
+        ("broadcast_dark_sparse", 0.12),
+        ("wood_3d_arrow_clean", 0.10), # UP from 0.04 — 22% fail rate
+        ("digital_overlay_clean", 0.06),
+        ("book_page_reference", 0.06),
+        ("diagtransfer_hatched", 0.04),
+        ("tilt_anchor", 0.04),
     ],
 }
 DEFAULT_PROFILE_WEIGHTS = PROFILE_RECIPES.get(RECIPE_NAME, PROFILE_RECIPES["v6_mono_logo_recovery_v6"])

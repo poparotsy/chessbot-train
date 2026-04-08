@@ -291,50 +291,11 @@ def warp_geometry_quality(metrics):
     return float(0.35 * area + 0.30 * opp + 0.25 * asp + 0.10 * (1.0 - angle_span))
 
 def detect_grid_lines(img):
+    """Detect 9x9 grid lines. Returns equispaced positions across full image."""
     w, h = img.size
-    _, gray = _gray_rgb(img)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    norm = clahe.apply(gray)
-    gx = np.abs(cv2.Sobel(norm, cv2.CV_32F, 1, 0, ksize=3))
-    gy = np.abs(cv2.Sobel(norm, cv2.CV_32F, 0, 1, ksize=3))
-    col_signal = _normalize_signal(np.mean(gx, axis=0))
-    row_signal = _normalize_signal(np.mean(gy, axis=1))
-
-    col_smooth = _smooth_1d(col_signal, max(5, w // 64 * 2 + 1))
-    row_smooth = _smooth_1d(row_signal, max(5, h // 64 * 2 + 1))
-
-    def snap_to_peak(signal_1d, pos, max_shift):
-        p = min(int(round(pos)), len(signal_1d) - 1)
-        lo = max(0, p - max_shift)
-        hi = min(len(signal_1d), p + max_shift + 1)
-        if hi <= lo:
-            return pos
-        window_max = lo + int(np.argmax(signal_1d[lo:hi]))
-        if signal_1d[window_max] > signal_1d[p] * 1.05 + 0.05:
-            return float(window_max)
-        return float(p)
-
-    x_step = w / 8.0
-    y_step = h / 8.0
-    max_shift_x = max(1, int(round(x_step * 0.18)))
-    max_shift_y = max(1, int(round(y_step * 0.18)))
-
-    v_lines = []
-    for i in range(9):
-        snapped = snap_to_peak(col_smooth, i * x_step, max_shift_x)
-        v_lines.append(int(round(snapped)))
-
-    h_lines = []
-    for i in range(9):
-        snapped = snap_to_peak(row_smooth, i * y_step, max_shift_y)
-        h_lines.append(int(round(snapped)))
-
-    v_lines[0] = 0
-    v_lines[-1] = w
-    h_lines[0] = 0
-    h_lines[-1] = h
-
-    return v_lines, h_lines
+    xe = np.linspace(0, w, 9).astype(int)
+    ye = np.linspace(0, h, 9).astype(int)
+    return xe, ye
 
 def _labels_to_fen(labels):
     rows = []
@@ -702,6 +663,14 @@ def resolve_candidate_orientation(fen, board_perspective, orientation_context):
         black_score = float(best_effort["scores"]["black"])
         if abs(white_score - black_score) >= ORIENTATION_BEST_EFFORT_MIN_MARGIN:
             return ("black", "best_effort_orientation") if black_score > white_score else ("white", "best_effort_orientation")
+
+    # --- Tier 5: plausibility fallback — try both orientations, pick more plausible ---
+    white_plaus = board_plausibility_score(fen)
+    black_plaus = board_plausibility_score(rotate_fen_180(fen))
+    if black_plaus > white_plaus + 1.0:
+        return "black", "plausibility_fallback"
+    if white_plaus > black_plaus + 1.0:
+        return "white", "plausibility_fallback"
 
     return "white", "default"
 
@@ -2416,6 +2385,13 @@ def _clahe_gray_image(img):
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray)
     return Image.fromarray(np.repeat(clahe[:, :, None], 3, axis=2))
 
+def _aggressive_clahe_image(img):
+    """More aggressive CLAHE for dark boards — higher clip limit, smaller tiles."""
+    arr = np.array(img.convert("RGB"))
+    gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(4, 4)).apply(gray)
+    return Image.fromarray(np.repeat(clahe[:, :, None], 3, axis=2))
+
 
 def _topk_prob(tile_info, label):
     for alt_label, alt_prob in tile_info.get("topk", []):
@@ -2494,6 +2470,19 @@ def decode_candidate(candidate, model, device, board_perspective, orientation_co
             fen = clahe_fen
             conf = float(clahe_conf)
             piece_count = int(clahe_piece_count)
+    # Dark board rescue: if value is low and piece count is suspiciously low,
+    # try CLAHE with more aggressive contrast enhancement
+    if piece_count < 8 and float(sat_stats.get("val_mean", 255.0)) < 120:
+        clahe_fen2, clahe_conf2, clahe_piece_count2 = infer_fen_on_image_clean(
+            _aggressive_clahe_image(candidate_img),
+            model,
+            device,
+            USE_SQUARE_DETECTION,
+        )
+        if int(clahe_piece_count2) > int(piece_count) and float(clahe_conf2) >= float(conf) - 0.05:
+            fen = clahe_fen2
+            conf = float(clahe_conf2)
+            piece_count = int(clahe_piece_count2)
     detected_perspective, perspective_source = resolve_candidate_orientation(
         fen,
         board_perspective=board_perspective,
@@ -2583,6 +2572,22 @@ def diagnostic_decode_candidate_with_details(
             conf = clahe_conf
             piece_count = int(clahe_piece_count)
             details = clahe_details
+    # Dark board rescue
+    sat_stats_diag = image_saturation_stats(candidate_img)
+    if piece_count < 8 and float(sat_stats_diag.get("val_mean", 255.0)) < 120:
+        aggr_fen, aggr_conf, aggr_piece_count, aggr_details = infer_fen_on_image_clean(
+            _aggressive_clahe_image(candidate_img),
+            model,
+            device,
+            USE_SQUARE_DETECTION,
+            return_details=True,
+            topk_k=max(3, int(topk)),
+        )
+        if int(aggr_piece_count) > int(piece_count) and float(aggr_conf) >= float(conf) - 0.05:
+            fen = aggr_fen
+            conf = aggr_conf
+            piece_count = int(aggr_piece_count)
+            details = aggr_details
     detected_perspective, perspective_source = resolve_candidate_orientation(
         fen,
         board_perspective=board_perspective,
@@ -2625,8 +2630,15 @@ def select_best_candidate(scored):
         raise RuntimeError("No scored candidates")
     def _selection_key(candidate):
         board_fen = candidate[2]
+        piece_count = int(candidate[4])
+        # Structural sanity: valid boards need 2 kings, plausible piece count
+        # Normal chess: 2-32 pieces. >36 is almost certainly a bad crop.
+        piece_ok = 0
+        if 2 <= piece_count <= 36:
+            piece_ok = 1
         return (
             1 if board_is_structurally_valid(board_fen) else 0,
+            piece_ok,
             int(king_health(board_fen)),
             float(candidate[3]),
             int(candidate[4]),
