@@ -839,7 +839,7 @@ PROFILE_OVERRIDES = {
 
 # Deterministic data recipe (not ad-hoc random drift):
 # fixed per-chunk quotas that are auditable and repeatable.
-RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_targeted_recovery_v13")
+RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_targeted_recovery_v14")
 PROFILE_RECIPES = {
     "v6_targeted_v1": [
         ("clean", 0.30),
