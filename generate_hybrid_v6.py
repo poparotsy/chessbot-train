@@ -1,4 +1,4 @@
-import os, io, random, json
+import os, io, random, json, signal, sys
 from functools import lru_cache
 
 try:
@@ -10,6 +10,13 @@ except ModuleNotFoundError as exc:
 
 import torch, numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageFont
+
+_interrupted = False
+def _signal_handler(sig, frame):
+    global _interrupted
+    print("\n⚡ Interrupt received — saving manifest and exiting gracefully...")
+    _interrupted = True
+signal.signal(signal.SIGINT, _signal_handler)
 
 # THE GLOBAL LABEL LAW (Aligned with audit_dataset.py)
 FEN_CHARS = "1PNBRQKpnbrqk" 
@@ -2582,13 +2589,20 @@ if __name__ == "__main__":
     chunk_mix_counts = {}
     chunk_order = [f"val_{i}" for i in range(CHUNKS_VAL)] + [f"train_{i}" for i in range(CHUNKS_TRAIN)]
     for name in chunk_order:
+        if _interrupted:
+            print(f"⚡ Interrupted before {name} — saving manifest for completed chunks...")
+            break
         all_x, all_y = [], []
         profile_plan, profile_counts = build_profile_plan(BOARDS_PER_CHUNK, DEFAULT_PROFILE_WEIGHTS)
         for profile in profile_plan:
+            if _interrupted:
+                break
             b = random_training_board(profile=profile)
             t, l = render_board(b.fen().split()[0], profile=profile)
             all_x.extend(t)
             all_y.extend(l)
+        if not all_x:
+            continue
         chunk_path = os.path.join(OUTPUT_DIR, f"{name}.pt")
         atomic_torch_save(
             {"x": torch.from_numpy(np.stack(all_x)), "y": torch.tensor(all_y)},
