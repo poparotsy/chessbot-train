@@ -19,10 +19,14 @@ import evaluate_v6_hardset as eval_v6
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Rank v6-compatible model files on hardset.")
+    parser = argparse.ArgumentParser(description="Rank v6-compatible model files on hardset + stress suite.")
     parser.add_argument("--models-glob", default="models/*.pt", help="Glob for model/checkpoint files.")
     parser.add_argument("--images-dir", default=str(TRAIN_DIR / "images_4_test"))
     parser.add_argument("--truth-json", default=str(TRAIN_DIR / "images_4_test" / "truth_verified.json"))
+    parser.add_argument("--stress-images", default=str(TRAIN_DIR / "generated/v6_stress_suite/images"),
+                        help="Stress suite image directory.")
+    parser.add_argument("--stress-truth", default=str(TRAIN_DIR / "generated/v6_stress_suite/truth.json"),
+                        help="Stress suite truth JSON.")
     parser.add_argument(
         "--script",
         default=str(TRAIN_DIR / "recognizer_v6.py"),
@@ -41,6 +45,7 @@ def parse_args() -> argparse.Namespace:
         help="Score against full FEN (default: board-only).",
     )
     parser.add_argument("--with-debug", action="store_true", help="Print failure details per model.")
+    parser.add_argument("--skip-stress", action="store_true", help="Skip stress suite evaluation.")
     return parser.parse_args()
 
 
@@ -100,6 +105,7 @@ def main() -> int:
             print(f"{model_file} -> ERROR: {err}")
             continue
         try:
+            # Hardset evaluation
             summary = eval_v6.evaluate_hardset(
                 truth=truth,
                 images_dir=images_dir,
@@ -113,9 +119,36 @@ def main() -> int:
                 write_reports=False,
                 show_progress=True,
             )
-            passed = int(summary["full_pass"] if args.compare_full_fen else summary["board_pass"])
-            total = int(summary["images"])
-            avg_conf = float(summary.get("avg_confidence", 0.0))
+            hardset_pass = int(summary["full_pass"] if args.compare_full_fen else summary["board_pass"])
+            hardset_total = int(summary["images"])
+            hardset_conf = float(summary.get("avg_confidence", 0.0))
+
+            # Stress suite evaluation
+            stress_pass = 0
+            stress_total = 0
+            stress_conf = 0.0
+            if not args.skip_stress:
+                stress_truth = eval_v6.load_truth(Path(args.stress_truth))
+                stress_summary = eval_v6.evaluate_hardset(
+                    truth=stress_truth,
+                    images_dir=Path(args.stress_images),
+                    model_path=str(state_path),
+                    board_perspective=args.board_perspective,
+                    timeout_sec=float(args.timeout_sec),
+                    recognizer_script=args.script,
+                    compare_full_fen=bool(args.compare_full_fen),
+                    debug=False,
+                    reports_dir=None,
+                    write_reports=False,
+                    show_progress=True,
+                )
+                stress_pass = int(stress_summary["full_pass"] if args.compare_full_fen else stress_summary["board_pass"])
+                stress_total = int(stress_summary["images"])
+                stress_conf = float(stress_summary.get("avg_confidence", 0.0))
+
+            passed = hardset_pass + stress_pass
+            total = hardset_total + stress_total
+            avg_conf = (hardset_conf * hardset_total + stress_conf * stress_total) / max(1, total)
             failures = [row for row in summary.get("results", []) if not row.get("board_ok", False)]
             if args.compare_full_fen:
                 failures = [row for row in summary.get("results", []) if not row.get("full_ok", False)]
@@ -123,6 +156,10 @@ def main() -> int:
             reports.append(
                 {
                     "model": str(model_file),
+                    "hardset_passed": hardset_pass,
+                    "hardset_total": hardset_total,
+                    "stress_passed": stress_pass,
+                    "stress_total": stress_total,
                     "passed": passed,
                     "total": total,
                     "avg_confidence": avg_conf,
@@ -130,7 +167,10 @@ def main() -> int:
                     "summary": summary,
                 }
             )
-            print(f"{model_file} -> {passed}/{total} (avg_conf={avg_conf:.4f})")
+            label = f"{hardset_pass}/{hardset_total} hardset"
+            if not args.skip_stress:
+                label += f", {stress_pass}/{stress_total} stress"
+            print(f"{model_file} -> {label} (avg_conf={avg_conf:.4f})")
             if misses:
                 print(f"  misses: {', '.join(misses)}")
             if args.with_debug:

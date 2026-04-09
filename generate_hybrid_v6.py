@@ -1,4 +1,4 @@
-import os, io, random, json
+import os, io, random, json, signal, sys
 from functools import lru_cache
 
 try:
@@ -10,6 +10,13 @@ except ModuleNotFoundError as exc:
 
 import torch, numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageFont
+
+_interrupted = False
+def _signal_handler(sig, frame):
+    global _interrupted
+    print("\n⚡ Interrupt received — saving manifest and exiting gracefully...")
+    _interrupted = True
+signal.signal(signal.SIGINT, _signal_handler)
 
 # THE GLOBAL LABEL LAW (Aligned with audit_dataset.py)
 FEN_CHARS = "1PNBRQKpnbrqk" 
@@ -53,7 +60,7 @@ SEED = env_int("SEED", 1337)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BOARD_THEMES_DIR = os.path.join(BASE_DIR, "board_themes")
 PIECE_SETS_DIR = os.path.join(BASE_DIR, "piece_sets")
-OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6_targeted_recovery_v13"))
+OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6_targeted_recovery_v15"))
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Keep broad/default profiles on the established, general-purpose piece pool.
@@ -109,6 +116,38 @@ BASE_CONFIG = {
 }
 
 PROFILE_OVERRIDES = {
+    # v6_targeted_recovery_v14 recipe — uses default profile overrides
+    "v6_targeted_recovery_v14": {},
+    # v6_targeted_recovery_v15 — targets 6 small-error stress images
+    "v6_targeted_recovery_v15": {},
+    # stress_tile_recovery — targets specific failing board theme + piece set combos
+    "stress_tile_recovery": {
+        "BOARD_THEME_NAMES": [
+            "wood3.jpg", "dark_wood.png", "chalk_old.png",
+            "watercolor_paper_clean.png", "green-plastic.png", "stone.png",
+        ],
+        "PIECE_SET_NAMES": [
+            "club", "governor", "cburnett", "merida", "staunty", "celtic",
+        ],
+        "LABELS_PROB": 0.75,
+        "TRIM_CAPTURE_PROB": 0.18,
+        "ARTIFACT_EMPTY_TILE_PROB": 0.10,
+        "HIGHLIGHT_BOARD_PROB": 0.45,
+        "ARROW_BOARD_PROB": 0.40,
+        "TACTICAL_MARKER_PROB": 0.50,
+        "WATERMARK_BOARD_PROB": 0.22,
+        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.28,
+        "HARD_EDGE_ROOK_PROB": 0.18,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.12,
+        "SPARSE_BOARD_PROB": 0.20,
+        "SCREENSHOT_CLUTTER_PROB": 0.12,
+        "DETECTOR_BANNER_PROB": 0.05,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.06,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.10,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.06,
+        "MIN_PLIES": 8,
+        "MAX_PLIES": 70,
+    },
     "clean": {
         "LABELS_PROB": 0.75,
         "TRIM_CAPTURE_PROB": 0.18,
@@ -837,7 +876,7 @@ PROFILE_OVERRIDES = {
 
 # Deterministic data recipe (not ad-hoc random drift):
 # fixed per-chunk quotas that are auditable and repeatable.
-RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_targeted_recovery_v13")
+RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_targeted_recovery_v15")
 PROFILE_RECIPES = {
     "v6_targeted_v1": [
         ("clean", 0.30),
@@ -988,6 +1027,39 @@ PROFILE_RECIPES = {
         ("wood_3d_arrow_clean", 0.04),
         ("diagtransfer_hatched", 0.02),
         ("digital_overlay_clean", 0.02),
+    ],
+    "v6_targeted_recovery_v14": [
+        # Balanced render profiles — covers ALL stress suite failure conditions
+        ("clean", 0.22),              # UP from 0.06 — 25% fail rate on clean profiles
+        ("dark_anchor_clean", 0.20),  # DOWN from 0.50 — was over-represented
+        ("shirt_print_reference", 0.16),
+        ("broadcast_dark_sparse", 0.12),
+        ("wood_3d_arrow_clean", 0.10), # UP from 0.04 — 22% fail rate
+        ("digital_overlay_clean", 0.06),
+        ("book_page_reference", 0.06),
+        ("diagtransfer_hatched", 0.04),
+        ("tilt_anchor", 0.04),
+    ],
+    "v6_targeted_recovery_v15": [
+        # Target 6 small-error stress images (1-3 tile errors each)
+        ("stress_tile_recovery", 0.60), # 60% — exact failing board themes + piece sets
+        ("clean", 0.15),                # 15% — general clean boards
+        ("wood_3d_arrow_clean", 0.10),
+        ("shirt_print_reference", 0.08),
+        ("digital_overlay_clean", 0.07),
+    ],
+    "v6_targeted_recovery_v16": [
+        # Target 6 catastrophic grid-detection failures (5-45 tile errors)
+        # These are grid alignment issues — needs better grid detection, not training
+        # Placeholder for future grid detection improvements
+        ("clean", 0.20),
+        ("dark_anchor_clean", 0.20),
+        ("broadcast_dark_sparse", 0.15),
+        ("wood_3d_arrow_clean", 0.15),
+        ("digital_overlay_clean", 0.10),
+        ("shirt_print_reference", 0.10),
+        ("book_page_reference", 0.05),
+        ("tilt_anchor", 0.05),
     ],
 }
 DEFAULT_PROFILE_WEIGHTS = PROFILE_RECIPES.get(RECIPE_NAME, PROFILE_RECIPES["v6_mono_logo_recovery_v6"])
@@ -2568,13 +2640,20 @@ if __name__ == "__main__":
     chunk_mix_counts = {}
     chunk_order = [f"val_{i}" for i in range(CHUNKS_VAL)] + [f"train_{i}" for i in range(CHUNKS_TRAIN)]
     for name in chunk_order:
+        if _interrupted:
+            print(f"⚡ Interrupted before {name} — saving manifest for completed chunks...")
+            break
         all_x, all_y = [], []
         profile_plan, profile_counts = build_profile_plan(BOARDS_PER_CHUNK, DEFAULT_PROFILE_WEIGHTS)
         for profile in profile_plan:
+            if _interrupted:
+                break
             b = random_training_board(profile=profile)
             t, l = render_board(b.fen().split()[0], profile=profile)
             all_x.extend(t)
             all_y.extend(l)
+        if not all_x:
+            continue
         chunk_path = os.path.join(OUTPUT_DIR, f"{name}.pt")
         atomic_torch_save(
             {"x": torch.from_numpy(np.stack(all_x)), "y": torch.tensor(all_y)},

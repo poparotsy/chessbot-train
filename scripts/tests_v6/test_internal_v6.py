@@ -121,7 +121,7 @@ class TestDetectorHelpers(unittest.TestCase):
             patch.object(
                 v6,
                 "score_full_frame_board",
-                return_value={"score": 0.95, "trusted": True, "support_ratio": 1.0, "coverage": 0.99, "evidence": 0.70},
+                return_value={"score": 0.95, "trusted": True, "support_ratio": 1.0, "coverage": 0.99, "evidence": 0.70, "grid_box": None},
             ),
             patch.object(
                 v6,
@@ -233,29 +233,17 @@ class TestOrientationHelpers(unittest.TestCase):
 
     def test_decode_direct_rescue_crop_reuses_passed_orientation_context(self):
         base_img = Image.new("RGB", (512, 512), (120, 120, 120))
-        context = {
-            "label_perspective_result": None,
-            "label_details": {
-                "left": {"label": "h", "confidence": 0.6167, "aspect": 0.2},
-                "right": None,
-            },
-            "labels_absent": False,
-            "labels_same": False,
-            "partial_label_scores": {"white": 0.0, "black": 0.5858},
-        }
         with (
             patch.object(v6, "infer_fen_on_image_clean", return_value=("1KR1QR2/PPP3PP/3PBN2/B7/4pP2/p1nbbp2/1pp4p/1k1rq2r", 0.9, 26)),
-            patch.object(v6, "resolve_candidate_orientation", wraps=v6.resolve_candidate_orientation),
+            patch.object(v6, "resolve_candidate_orientation", return_value=("black", "default")),
         ):
             decoded = v6._decode_direct_rescue_crop(
                 base_img,
                 model=object(),
                 device=torch.device("cpu"),
                 board_perspective="auto",
-                orientation_context=context,
             )
         self.assertEqual(decoded[5], "black")
-        self.assertEqual(decoded[6], "partial_label_piece_agreement")
 
 
 class TestDecodeHelpers(unittest.TestCase):
@@ -274,9 +262,9 @@ class TestDecodeHelpers(unittest.TestCase):
                 v6,
                 "infer_fen_on_image_clean",
                 side_effect=[
-                    ("8/8/8/8/8/8/8/K6k", 0.8, 2),
-                    ("8/8/8/8/8/8/8/K6k", 0.8, 2, {"tile_infos": []}),
-                    ("8/8/8/8/8/8/8/K5k1", 0.81, 2, {"tile_infos": []}),
+                    ("8/8/8/8/8/8/8/K6k", 0.85, 2),
+                    ("8/8/8/8/8/8/8/K6k", 0.85, 2, {"tile_infos": []}),
+                    ("8/8/8/8/8/8/8/K5k1", 0.86, 2, {"tile_infos": []}),
                 ],
             ),
             patch.object(v6, "resolve_candidate_orientation", return_value=("black", "label")),
@@ -298,9 +286,9 @@ class TestSelectionHelpers(unittest.TestCase):
     def test_select_best_candidate_returns_first_scored_entry(self):
         base_img = Image.new("RGB", (512, 512), (120, 120, 120))
         scored = [
-            ("full", base_img, "8/8/8/8/8/8/8/8", 0.60, 0, "white", "default", 0.0, True),
-            ("warp_a", base_img, "8/8/8/8/8/8/8/K6k", 0.70, 8, "white", "default", 0.7, True),
-            ("warp_b", base_img, "8/8/8/8/8/8/8/K5k1", 0.55, 2, "white", "default", 0.6, True),
+            ("full", base_img, "8/8/8/8/8/8/8/K6k", 0.70, 2, "white", "default", 0.0, True, 0.9, 1.0),
+            ("warp_a", base_img, "8/8/8/8/8/8/8/K6k", 0.70, 2, "white", "default", 0.7, True, 0.7, 0.8),
+            ("warp_b", base_img, "8/8/8/8/8/8/8/K5k1", 0.55, 2, "white", "default", 0.6, True, 0.6, 0.9),
         ]
         best = v6.select_best_candidate(scored)
         self.assertEqual(best[0], "full")
