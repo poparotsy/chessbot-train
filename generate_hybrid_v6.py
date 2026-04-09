@@ -118,6 +118,36 @@ BASE_CONFIG = {
 PROFILE_OVERRIDES = {
     # v6_targeted_recovery_v14 recipe — uses default profile overrides
     "v6_targeted_recovery_v14": {},
+    # v6_targeted_recovery_v15 — targets 6 small-error stress images
+    "v6_targeted_recovery_v15": {},
+    # stress_tile_recovery — targets specific failing board theme + piece set combos
+    "stress_tile_recovery": {
+        "BOARD_THEME_NAMES": [
+            "wood3.jpg", "dark_wood.png", "chalk_old.png",
+            "watercolor_paper_clean.png", "green-plastic.png", "stone.png",
+        ],
+        "PIECE_SET_NAMES": [
+            "club", "governor", "print_shirt_photo", "merida", "staunty", "celtic",
+        ],
+        "LABELS_PROB": 0.75,
+        "TRIM_CAPTURE_PROB": 0.18,
+        "ARTIFACT_EMPTY_TILE_PROB": 0.10,
+        "HIGHLIGHT_BOARD_PROB": 0.45,
+        "ARROW_BOARD_PROB": 0.40,
+        "TACTICAL_MARKER_PROB": 0.50,
+        "WATERMARK_BOARD_PROB": 0.22,
+        "WATERMARK_FULL_KING_WORDMARK_PROB": 0.28,
+        "HARD_EDGE_ROOK_PROB": 0.18,
+        "HARD_FILE_EDGE_ROOK_PROB": 0.12,
+        "SPARSE_BOARD_PROB": 0.20,
+        "SCREENSHOT_CLUTTER_PROB": 0.12,
+        "DETECTOR_BANNER_PROB": 0.05,
+        "DETECTOR_PARTIAL_BOARD_PROB": 0.06,
+        "DETECTOR_MONO_LOW_CONTRAST_PROB": 0.10,
+        "DETECTOR_HEAVY_TRIM_PROB": 0.06,
+        "MIN_PLIES": 8,
+        "MAX_PLIES": 70,
+    },
     "clean": {
         "LABELS_PROB": 0.75,
         "TRIM_CAPTURE_PROB": 0.18,
@@ -1011,16 +1041,25 @@ PROFILE_RECIPES = {
         ("tilt_anchor", 0.04),
     ],
     "v6_targeted_recovery_v15": [
-        # Target remaining 12 failures — 7/12 from clean render on hard board themes
-        ("clean", 0.30),              # UP from 0.22 — chalk_old, stone, bases, blue3, dash
-        ("dark_anchor_clean", 0.15),  # DOWN from 0.20
-        ("shirt_print_reference", 0.14),
-        ("broadcast_dark_sparse", 0.12),
+        # Target 6 small-error stress images (1-3 tile errors each)
+        ("stress_tile_recovery", 0.60), # 60% — exact failing board themes + piece sets
+        ("clean", 0.15),                # 15% — general clean boards
         ("wood_3d_arrow_clean", 0.10),
-        ("digital_overlay_clean", 0.08), # UP from 0.06 — olive, green-plastic failures
+        ("shirt_print_reference", 0.08),
+        ("digital_overlay_clean", 0.07),
+    ],
+    "v6_targeted_recovery_v16": [
+        # Target 6 catastrophic grid-detection failures (5-45 tile errors)
+        # These are grid alignment issues — needs better grid detection, not training
+        # Placeholder for future grid detection improvements
+        ("clean", 0.20),
+        ("dark_anchor_clean", 0.20),
+        ("broadcast_dark_sparse", 0.15),
+        ("wood_3d_arrow_clean", 0.15),
+        ("digital_overlay_clean", 0.10),
+        ("shirt_print_reference", 0.10),
         ("book_page_reference", 0.05),
-        ("diagtransfer_hatched", 0.03),
-        ("tilt_anchor", 0.03),
+        ("tilt_anchor", 0.05),
     ],
 }
 DEFAULT_PROFILE_WEIGHTS = PROFILE_RECIPES.get(RECIPE_NAME, PROFILE_RECIPES["v6_mono_logo_recovery_v6"])
