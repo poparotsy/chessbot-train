@@ -127,7 +127,7 @@ PROFILE_OVERRIDES = {
             "watercolor_paper_clean.png", "green-plastic.png", "stone.png",
         ],
         "PIECE_SET_NAMES": [
-            "club", "governor", "print_shirt_photo", "merida", "staunty", "celtic",
+            "club", "governor", "cburnett", "merida", "staunty", "celtic",
         ],
         "LABELS_PROB": 0.75,
         "TRIM_CAPTURE_PROB": 0.18,
