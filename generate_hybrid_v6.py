@@ -60,7 +60,7 @@ SEED = env_int("SEED", 1337)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BOARD_THEMES_DIR = os.path.join(BASE_DIR, "board_themes")
 PIECE_SETS_DIR = os.path.join(BASE_DIR, "piece_sets")
-OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6_targeted_recovery_v14"))
+OUTPUT_DIR = os.path.join(BASE_DIR, env_str("OUTPUT_DIR", "tensors_v6_targeted_recovery_v15"))
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Keep broad/default profiles on the established, general-purpose piece pool.
@@ -846,7 +846,7 @@ PROFILE_OVERRIDES = {
 
 # Deterministic data recipe (not ad-hoc random drift):
 # fixed per-chunk quotas that are auditable and repeatable.
-RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_targeted_recovery_v14")
+RECIPE_NAME = os.getenv("RECIPE_NAME", "v6_targeted_recovery_v15")
 PROFILE_RECIPES = {
     "v6_targeted_v1": [
         ("clean", 0.30),
@@ -1009,6 +1009,18 @@ PROFILE_RECIPES = {
         ("book_page_reference", 0.06),
         ("diagtransfer_hatched", 0.04),
         ("tilt_anchor", 0.04),
+    ],
+    "v6_targeted_recovery_v15": [
+        # Target remaining 12 failures — 7/12 from clean render on hard board themes
+        ("clean", 0.30),              # UP from 0.22 — chalk_old, stone, bases, blue3, dash
+        ("dark_anchor_clean", 0.15),  # DOWN from 0.20
+        ("shirt_print_reference", 0.14),
+        ("broadcast_dark_sparse", 0.12),
+        ("wood_3d_arrow_clean", 0.10),
+        ("digital_overlay_clean", 0.08), # UP from 0.06 — olive, green-plastic failures
+        ("book_page_reference", 0.05),
+        ("diagtransfer_hatched", 0.03),
+        ("tilt_anchor", 0.03),
     ],
 }
 DEFAULT_PROFILE_WEIGHTS = PROFILE_RECIPES.get(RECIPE_NAME, PROFILE_RECIPES["v6_mono_logo_recovery_v6"])
