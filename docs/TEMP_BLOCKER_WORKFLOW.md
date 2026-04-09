@@ -39,6 +39,9 @@ python3 scripts/promote_v6_temp_blocker.py --source-path temp/<file> --status pe
 This assigns or preserves a stable blocker ID and records the inbox file in the manifest.
 It also copies the image into the managed blocker store using a stable filename based on blocker ID.
 
+`source_path` records the original inbox path for traceability.
+The required runtime artifact is `managed_path`; older inbox files do not need to remain present forever.
+
 3. Verify the real board position from the image itself.
 
 Do not recycle recognizer output back into truth unless it has been visually verified.

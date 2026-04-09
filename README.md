@@ -26,11 +26,20 @@ Training, evaluation, and recognizer source-of-truth repo.
 
 ## Exports
 
+Current prod source checkpoint:
+- `models/model_hybrid_v6_targeted_recovery_v14_latest_best_2.pt`
+
+Current prod bundle alias:
+- `model_hybrid_v6_prod_v14r2_50h_108s.pt`
+
 Export the deployable recognizer bundle to the parent workspace:
 
 ```bash
 python3 /Users/guru/workspace/current/chessbot/chessbot-train/scripts/export_recognizer_bundle.py --write-manifest
 ```
+
+The bundle export keeps the training artifact name in source, ships the prod alias in
+`/Users/guru/workspace/current/chessbot/recognizer`, and prunes stale bundled checkpoints.
 
 Export selected or all checkpoints to the parent workspace:
 

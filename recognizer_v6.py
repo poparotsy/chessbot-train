@@ -40,17 +40,24 @@ IMG_SIZE = 64
 FEN_CHARS = "1PNBRQKpnbrqk"
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 def _resolve_default_model_path():
-    model_name = "model_hybrid_v6_champion_48of50.pt"
+    model_names = [
+        "model_hybrid_v6_prod_v14r2_50h_108s.pt",
+        "model_hybrid_v6_targeted_recovery_v14_latest_best_2.pt",
+    ]
     search_roots = [
         THIS_DIR,
         os.path.dirname(THIS_DIR),
         os.path.dirname(os.path.dirname(THIS_DIR)),
     ]
-    for root in search_roots:
-        candidate = os.path.abspath(os.path.join(root, "models", model_name))
-        if os.path.exists(candidate):
-            return candidate
-    return os.path.abspath(os.path.join(THIS_DIR, "models", model_name))
+    for model_name in model_names:
+        for root in search_roots:
+            direct_candidate = os.path.abspath(os.path.join(root, model_name))
+            if os.path.exists(direct_candidate):
+                return direct_candidate
+            models_candidate = os.path.abspath(os.path.join(root, "models", model_name))
+            if os.path.exists(models_candidate):
+                return models_candidate
+    return os.path.abspath(os.path.join(THIS_DIR, "models", model_names[0]))
 
 
 DEFAULT_MODEL_PATH = _resolve_default_model_path()
