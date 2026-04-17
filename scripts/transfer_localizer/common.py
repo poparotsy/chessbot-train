@@ -40,6 +40,16 @@ def write_jsonl(path: Path, rows: Iterable[dict]) -> None:
             handle.write(json.dumps(row, ensure_ascii=True) + "\n")
 
 
+def load_jsonl(path: Path) -> list[dict]:
+    rows = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
 def order_corners(corners) -> list[list[float]]:
     pts = np.asarray(corners, dtype=np.float32).reshape(4, 2)
     sums = pts.sum(axis=1)
@@ -58,6 +68,17 @@ def corners_to_bbox(corners) -> list[float]:
     x1 = float(np.max(pts[:, 0]))
     y1 = float(np.max(pts[:, 1]))
     return [x0, y0, x1, y1]
+
+
+def normalize_localizer_manifest_row(row: dict) -> dict:
+    normalized = dict(row)
+    corners = normalized.get("corners_px")
+    if corners is not None:
+        normalized["corners_px"] = order_corners(corners)
+        normalized["bbox_xyxy"] = corners_to_bbox(normalized["corners_px"])
+    elif normalized.get("bbox_xyxy") is not None:
+        normalized["bbox_xyxy"] = [float(v) for v in normalized["bbox_xyxy"]]
+    return normalized
 
 
 def bbox_area(box: list[float]) -> float:
@@ -171,4 +192,3 @@ def median_or_zero(values: list[float]) -> float:
 
 def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-

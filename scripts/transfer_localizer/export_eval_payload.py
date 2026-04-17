@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export a Kaggle-friendly payload for zero-training board-localizer benchmarking."""
+"""Export a benchmark and training payload for transfer-localizer work."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from common import TRAIN_DIR, corners_to_bbox, ensure_dir, load_json, now_iso, order_corners, write_json, write_jsonl
+from common import TRAIN_DIR, corners_to_bbox, ensure_dir, load_json, load_jsonl, normalize_localizer_manifest_row, now_iso, order_corners, write_json, write_jsonl
 
 
 DEFAULT_OUTPUT_DIR = TRAIN_DIR / "generated" / "transfer_localizer_v1"
@@ -36,11 +36,13 @@ def _write_status(status_root: Path, **fields: object) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Export Kaggle-ready eval payload for zero-shot localizer benchmarking.")
+    parser = argparse.ArgumentParser(description="Export localizer payloads for zero-shot benchmarking and fine-tune manifests.")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--stress-dir", default=str(DEFAULT_STRESS_DIR))
     parser.add_argument("--blocker-manifest", default=str(DEFAULT_BLOCKER_MANIFEST))
     parser.add_argument("--template-dir", default=str(DEFAULT_TEMPLATE_DIR))
+    parser.add_argument("--sam2-jsonl", action="append", default=None, help="Optional SAM2 propagated manifest JSONL(s).")
+    parser.add_argument("--val-ratio", type=float, default=0.15, help="Synthetic validation fraction for fine-tune manifests.")
     return parser.parse_args()
 
 
@@ -106,6 +108,33 @@ def _ensure_stress_suite(stress_dir: Path) -> None:
     _log(f"stress_suite={stress_dir}")
 
 
+def _synthetic_split(index: int, total: int, val_ratio: float) -> str:
+    val_every = max(2, int(round(1.0 / max(1e-6, val_ratio))))
+    if total <= 1:
+        return "train"
+    return "val" if (index % val_every) == 0 else "train"
+
+
+def _load_sam2_rows(paths: list[str] | None) -> list[dict]:
+    if not paths:
+        return []
+    rows: list[dict] = []
+    for raw_path in paths:
+        path = Path(raw_path)
+        if not path.exists():
+            raise FileNotFoundError(f"SAM2 manifest not found: {path}")
+        for row in load_jsonl(path):
+            normalized = normalize_localizer_manifest_row(row)
+            normalized.setdefault("split", "sam2_real")
+            normalized.setdefault("source_type", "sam2_real")
+            normalized.setdefault("source_id", normalized.get("id"))
+            normalized.setdefault("truth_fen", None)
+            normalized.setdefault("label_status", "labeled")
+            normalized.setdefault("domain_tags", ["sam2"])
+            rows.append(normalized)
+    return rows
+
+
 def main() -> int:
     args = parse_args()
     output_dir = Path(args.output_dir)
@@ -124,6 +153,8 @@ def main() -> int:
     required_template_names = {str(item["source_template"]) for item in stress_manifest["items"]}
     template_truth_map = _build_template_truth_map(Path(args.template_dir), required_template_names)
     synthetic_rows = []
+    localizer_train_rows = []
+    localizer_val_rows = []
     synthetic_items = stress_manifest["items"]
     _log(f"synthetic_images={len(synthetic_items)}")
     _write_status(output_dir, stage="copying_synthetic", synthetic_total=len(synthetic_items), synthetic_done=0)
@@ -134,25 +165,34 @@ def main() -> int:
         _copy_file(src, dst)
         template_name = str(item["source_template"])
         template_truth = template_truth_map[template_name]
-        synthetic_rows.append(
-            {
-                "id": f"synthetic-{file_name.rsplit('.', 1)[0]}",
-                "image_path": f"images/{file_name}",
-                "split": "synthetic",
-                "source_type": "synthetic",
-                "source_id": file_name,
-                "truth_fen": str(stress_truth[file_name]),
-                "synthetic_template": template_name,
-                "synthetic_template_corners_px": template_truth["corners_px"],
-                "synthetic_template_bbox_xyxy": template_truth["bbox_xyxy"],
-                "synthetic_source_size": item.get("source_size"),
-                "synthetic_detector_tag": item.get("detector_tag"),
-                "synthetic_detector_score": item.get("detector_score"),
-                "synthetic_detector_support_ratio": item.get("detector_support_ratio"),
-                "blocker_id": None,
-                "original_filename": file_name,
-            }
-        )
+        row = {
+            "id": f"synthetic-{file_name.rsplit('.', 1)[0]}",
+            "image_path": f"images/{file_name}",
+            "split": "synthetic",
+            "source_type": "synthetic",
+            "source_id": file_name,
+            "truth_fen": str(stress_truth[file_name]),
+            "corners_px": template_truth["corners_px"],
+            "bbox_xyxy": template_truth["bbox_xyxy"],
+            "synthetic_template": template_name,
+            "synthetic_template_corners_px": template_truth["corners_px"],
+            "synthetic_template_bbox_xyxy": template_truth["bbox_xyxy"],
+            "synthetic_source_size": item.get("source_size"),
+            "synthetic_detector_tag": item.get("detector_tag"),
+            "synthetic_detector_score": item.get("detector_score"),
+            "synthetic_detector_support_ratio": item.get("detector_support_ratio"),
+            "blocker_id": None,
+            "original_filename": file_name,
+            "label_status": "labeled",
+            "domain_tags": ["synthetic", "stress_suite"],
+        }
+        synthetic_rows.append(row)
+        fine_tune_row = dict(row)
+        fine_tune_row["split"] = _synthetic_split(idx, len(synthetic_items), float(args.val_ratio))
+        if fine_tune_row["split"] == "train":
+            localizer_train_rows.append(fine_tune_row)
+        else:
+            localizer_val_rows.append(fine_tune_row)
         if idx == 1 or idx % 20 == 0 or idx == len(synthetic_items):
             _log(f"synthetic_progress={idx}/{len(synthetic_items)}")
             _write_status(output_dir, stage="copying_synthetic", synthetic_total=len(synthetic_items), synthetic_done=idx)
@@ -183,11 +223,15 @@ def main() -> int:
                 "source_type": "real_blocker",
                 "source_id": str(item["blocker_id"]),
                 "truth_fen": str(item["truth_fen"]),
+                "corners_px": None,
+                "bbox_xyxy": None,
                 "synthetic_template": None,
                 "synthetic_template_corners_px": None,
                 "synthetic_template_bbox_xyxy": None,
                 "blocker_id": str(item["blocker_id"]),
                 "original_filename": str(item["original_filename"]),
+                "label_status": "needs_annotation",
+                "domain_tags": ["real", "blocker"],
             }
         )
         _log(f"blocker_progress={idx}/{len(locked_cases)} {item['blocker_id']}")
@@ -200,11 +244,17 @@ def main() -> int:
             blocker_done=idx,
         )
 
-    all_rows = synthetic_rows + blocker_rows
+    sam2_rows = _load_sam2_rows(args.sam2_jsonl)
+    all_rows = synthetic_rows + blocker_rows + sam2_rows
+    localizer_train_rows.extend([row for row in sam2_rows if str(row.get("split")) not in {"val", "eval"}])
+    localizer_val_rows.extend([row for row in sam2_rows if str(row.get("split")) in {"val", "eval"}])
     _log("=== WRITING MANIFESTS ===")
     _write_status(output_dir, stage="writing_manifests", total_rows=len(all_rows))
     write_jsonl(manifests_dir / "synthetic.jsonl", synthetic_rows)
     write_jsonl(manifests_dir / "real_blockers.jsonl", blocker_rows)
+    write_jsonl(manifests_dir / "localizer_train.jsonl", localizer_train_rows)
+    write_jsonl(manifests_dir / "localizer_val.jsonl", localizer_val_rows)
+    write_jsonl(manifests_dir / "localizer_all.jsonl", localizer_train_rows + localizer_val_rows + blocker_rows)
     write_jsonl(manifests_dir / "all.jsonl", all_rows)
     write_json(
         manifests_dir / "summary.json",
@@ -212,18 +262,25 @@ def main() -> int:
             "generated_at": now_iso(),
             "synthetic_count": len(synthetic_rows),
             "real_blocker_count": len(blocker_rows),
+            "sam2_count": len(sam2_rows),
+            "localizer_train_count": len(localizer_train_rows),
+            "localizer_val_count": len(localizer_val_rows),
             "total_count": len(all_rows),
         },
     )
 
     _log(f"synthetic_count={len(synthetic_rows)}")
     _log(f"real_blocker_count={len(blocker_rows)}")
+    _log(f"sam2_count={len(sam2_rows)}")
+    _log(f"localizer_train_manifest={manifests_dir / 'localizer_train.jsonl'}")
+    _log(f"localizer_val_manifest={manifests_dir / 'localizer_val.jsonl'}")
     _log(f"all_manifest={manifests_dir / 'all.jsonl'}")
     _write_status(
         output_dir,
         stage="complete",
         synthetic_count=len(synthetic_rows),
         real_blocker_count=len(blocker_rows),
+        sam2_count=len(sam2_rows),
         total_count=len(all_rows),
         all_manifest=str(manifests_dir / "all.jsonl"),
     )

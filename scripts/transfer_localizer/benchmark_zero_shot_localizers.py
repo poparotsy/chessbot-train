@@ -24,13 +24,13 @@ os.environ.setdefault("USE_TF", "0")
 os.environ.setdefault("USE_FLAX", "0")
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 
-import torch
 from PIL import Image
 from huggingface_hub.utils import disable_progress_bars
-from transformers import AutoModelForZeroShotObjectDetection, AutoProcessor, Owlv2ForObjectDetection, Owlv2Processor
 from transformers.utils import logging as transformers_logging
+import torch
 
 from common import TRAIN_DIR, bbox_iou, choose_best_candidate, ensure_dir, mean_or_zero, median_or_zero, now_iso, overlay_boxes, square_crop_from_bbox, write_json
+from localizers import DEFAULT_ZERO_SHOT_MODELS, detect_zero_shot_boxes, run_name_for_model
 
 
 DEFAULT_DATA_ROOT = TRAIN_DIR / "generated" / "transfer_localizer_v1"
@@ -38,25 +38,7 @@ DEFAULT_REPORTS_DIR = TRAIN_DIR / "reports" / "transfer_localizer_v1"
 DEFAULT_VIZ_DIR = TRAIN_DIR / "generated" / "transfer_localizer_v1" / "viz"
 DEFAULT_QUICK_IMAGES_DIR = TRAIN_DIR / "images_4_test"
 DEFAULT_QUICK_SUITE_JSON = TRAIN_DIR / "scripts" / "testdata" / "v6_quick_cases.json"
-MODEL_RUN_NAMES = {
-    "google/owlv2-base-patch16-ensemble": "owlv2-base-ens",
-    "google/owlv2-base-patch16": "owlv2-base",
-    "google/owlv2-large-patch14-ensemble": "owlv2-large-ens",
-    "google/owlvit-base-patch32": "owlvit-base32",
-    "IDEA-Research/grounding-dino-tiny": "grounding-dino-tiny",
-    "IDEA-Research/grounding-dino-base": "grounding-dino-base",
-    "iSEE-Laboratory/llmdet_base": "llmdet-base",
-    "iSEE-Laboratory/llmdet_large": "llmdet-large",
-}
-DEFAULT_MODELS = [
-    "IDEA-Research/grounding-dino-tiny",
-    "IDEA-Research/grounding-dino-base",
-    "google/owlv2-base-patch16-ensemble",
-    "google/owlv2-base-patch16",
-    "google/owlvit-base-patch32",
-    "iSEE-Laboratory/llmdet_base",
-    "google/owlv2-large-patch14-ensemble",
-]
+DEFAULT_MODELS = DEFAULT_ZERO_SHOT_MODELS
 
 disable_progress_bars()
 transformers_logging.set_verbosity_error()
@@ -145,34 +127,6 @@ def _load_recognizer_module():
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
-
-
-def _queries_for_model(model_id: str) -> list[str]:
-    if "owlv2" in model_id.lower():
-        return ["a photo of a chessboard", "a photo of a chess board"]
-    return ["a chessboard", "a chess board"]
-
-
-def _run_name_for_model(model_id: str) -> str:
-    if model_id in MODEL_RUN_NAMES:
-        return MODEL_RUN_NAMES[model_id]
-    return model_id.split("/")[-1].replace("_", "-")
-
-
-def _load_model_and_processor(model_id: str, device: str, quiet: bool = False, prefix: str | None = None):
-    model_id_l = model_id.lower()
-    _log("loading_processor", quiet, prefix)
-    if "owlv2" in model_id_l:
-        processor = Owlv2Processor.from_pretrained(model_id)
-    elif "owlvit" in model_id_l:
-        processor = AutoProcessor.from_pretrained(model_id, use_fast=False)
-        _log("loading_model", quiet, prefix)
-        model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id)
-    else:
-        processor = AutoProcessor.from_pretrained(model_id)
-        _log("loading_model", quiet, prefix)
-        model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id)
-    return processor, model.to(device)
 
 
 def _unsupported_model_report(model_id: str, run_name: str, reason: str) -> dict:
@@ -299,87 +253,6 @@ def _compare_markdown(compare_payload: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _detect_boxes(image: Image.Image, model_id: str, processor, model, device: str, threshold: float, text_threshold: float) -> list[dict]:
-    query_labels = _queries_for_model(model_id)
-    text_labels = [query_labels]
-    start = time.perf_counter()
-    if "owlv2" in model_id.lower():
-        inputs = processor(text=text_labels, images=image, return_tensors="pt")
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-        with torch.no_grad():
-            outputs = model(**inputs)
-        results = processor.post_process_grounded_object_detection(
-            outputs=outputs,
-            target_sizes=torch.tensor([(image.height, image.width)], device=device),
-            threshold=threshold,
-            text_labels=text_labels,
-        )[0]
-        elapsed = time.perf_counter() - start
-        rows = []
-        for box, score, label in zip(results["boxes"], results["scores"], results["text_labels"]):
-            rows.append(
-                {
-                    "box": [float(x) for x in box.tolist()],
-                    "score": float(score.item()),
-                    "label": str(label),
-                    "elapsed_sec": float(elapsed),
-                }
-            )
-        return rows
-
-    if "owlvit" in model_id.lower():
-        inputs = processor(text=text_labels, images=image, return_tensors="pt")
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-        with torch.no_grad():
-            outputs = model(**inputs)
-        results = processor.post_process_object_detection(
-            outputs=outputs,
-            threshold=threshold,
-            target_sizes=torch.tensor([(image.height, image.width)], device=device),
-        )[0]
-        elapsed = time.perf_counter() - start
-        rows = []
-        for box, score, label_idx in zip(results["boxes"], results["scores"], results["labels"]):
-            idx = int(label_idx.item()) if hasattr(label_idx, "item") else int(label_idx)
-            label = query_labels[idx] if 0 <= idx < len(query_labels) else str(idx)
-            rows.append(
-                {
-                    "box": [float(x) for x in box.tolist()],
-                    "score": float(score.item()),
-                    "label": str(label),
-                    "elapsed_sec": float(elapsed),
-                }
-            )
-        return rows
-
-    inputs = processor(images=image, text=text_labels, return_tensors="pt")
-    inputs = {k: v.to(device) for k, v in inputs.items()}
-    with torch.no_grad():
-        outputs = model(**inputs)
-    results = processor.post_process_grounded_object_detection(
-        outputs,
-        inputs["input_ids"],
-        threshold=threshold,
-        text_threshold=text_threshold,
-        target_sizes=[image.size[::-1]],
-    )[0]
-    elapsed = time.perf_counter() - start
-    label_values = results.get("text_labels", results.get("labels", []))
-    rows = []
-    for box, score, label in zip(results["boxes"], results["scores"], label_values):
-        if isinstance(label, list):
-            label = ", ".join(label)
-        rows.append(
-            {
-                "box": [float(x) for x in box.tolist()],
-                "score": float(score.item()),
-                "label": str(label),
-                "elapsed_sec": float(elapsed),
-            }
-        )
-    return rows
-
-
 def _run_deterministic_refinement(image_path: Path, crop_box: list[int], board_perspective: str) -> dict:
     rec = _load_recognizer_module()
     image = Image.open(image_path).convert("RGB")
@@ -424,7 +297,13 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
     _log(f"model_id={model_id}", args.quiet, log_prefix)
     _log(f"device={args.device}", args.quiet, log_prefix)
     try:
-        processor, model = _load_model_and_processor(model_id, args.device, args.quiet, log_prefix)
+        detect_zero_shot_boxes(
+            image=Image.new("RGB", (64, 64), color="white"),
+            model_id=model_id,
+            device=args.device,
+            threshold=float(args.threshold),
+            text_threshold=float(args.text_threshold),
+        )
     except Exception as exc:
         report = _unsupported_model_report(model_id, run_name, str(exc))
         write_json(reports_dir / f"{run_name}.json", report)
@@ -454,17 +333,16 @@ def benchmark_model(args: argparse.Namespace, model_id: str, run_name: str) -> d
         if row["source_type"] == "quick_suite":
             image_path = Path(row["image_path"])
         image = Image.open(image_path).convert("RGB")
-        detections = _detect_boxes(
+        start = time.perf_counter()
+        detections = detect_zero_shot_boxes(
             image=image,
             model_id=model_id,
-            processor=processor,
-            model=model,
             device=args.device,
             threshold=float(args.threshold),
             text_threshold=float(args.text_threshold),
         )
         if detections:
-            inference_times.append(float(detections[0]["elapsed_sec"]))
+            inference_times.append(float(time.perf_counter() - start))
             detection_count += 1
         best = choose_best_candidate(detections, image.width, image.height)
         if best is None:
@@ -787,16 +665,16 @@ def main() -> int:
     runs = []
     if args.all_models:
         for model_id in DEFAULT_MODELS:
-            runs.append((model_id, _run_name_for_model(model_id)))
+            runs.append((model_id, run_name_for_model(model_id)))
     else:
         if not args.model_id:
             raise SystemExit("--model-id or --all-models is required")
         if len(args.model_id) == 1:
             model_id = args.model_id[0]
-            runs.append((model_id, args.run_name or _run_name_for_model(model_id)))
+            runs.append((model_id, args.run_name or run_name_for_model(model_id)))
         else:
             for model_id in args.model_id:
-                runs.append((model_id, _run_name_for_model(model_id)))
+                runs.append((model_id, run_name_for_model(model_id)))
 
     try:
         if _supports_parallel_gpu_runs(args, runs):
